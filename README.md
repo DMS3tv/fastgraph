@@ -37,9 +37,27 @@ Plain TXT, two columns: `frequency_hz  magnitude_db`
 One header line is OK (will be skipped if non-numeric).  
 Mono file applies to both ears equally.
 
-## Packaging (optional)
+## Packaging For macOS
+
+You must build the `.app` on a Mac. This Linux workspace cannot produce a
+working macOS app bundle directly.
+
+On your Mac:
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed main.py --name "DMS Fastgraph"
+cd /path/to/dms-vibecode-trash-2026-edition
+python3 -m venv .venv
+source .venv/bin/activate
+./build_macos.sh
 ```
+
+The finished app bundle will be created at:
+
+```bash
+dist/DMS Fastgraph.app
+```
+
+Notes:
+
+- The app bundle includes a microphone usage description for macOS permission prompts.
+- If Gatekeeper warns about the app because it is unsigned, right-click the app and choose `Open`.

@@ -13,6 +13,7 @@ Bottom viewport:
 from typing import Optional
 import numpy as np
 import pyqtgraph as pg
+from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
 
@@ -67,7 +68,7 @@ class DualPlotWidget(QWidget):
         layout.setSpacing(4)
 
         self._top_plot = _make_plot_widget("Measurements")
-        self._bot_plot = _make_plot_widget("RMS Average")
+        self._bot_plot = _make_plot_widget("RMS Average (1/48 Oct)")
 
         layout.addWidget(self._top_plot, 1)
         layout.addWidget(self._bot_plot, 1)
@@ -112,6 +113,10 @@ class DualPlotWidget(QWidget):
         if self._bot_item:
             self._bot_plot.removeItem(self._bot_item)
             self._bot_item = None
+
+    def bottom_plot_global_rect(self) -> QRect:
+        top_left = self._bot_plot.mapToGlobal(self._bot_plot.rect().topLeft())
+        return QRect(top_left, self._bot_plot.size())
 
     # ------------------------------------------------------------------
     # Internal drawing

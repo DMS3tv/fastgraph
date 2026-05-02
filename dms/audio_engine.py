@@ -53,6 +53,44 @@ def device_channel_count(device_name: str, kind: str = "input") -> int:
     return d[f"max_{kind}_channels"]
 
 
+def _extract_aligned_sweep_recording(
+    recording: np.ndarray,
+    sweep: np.ndarray,
+) -> np.ndarray:
+    """
+    Find the sweep's actual start in the recording and return the aligned slice.
+
+    This avoids buffer-size-dependent truncation when stream latency shifts the
+    captured sweep away from the nominal pre-silence boundary.
+    """
+    rec = recording.astype(np.float64, copy=False)
+    sw = sweep.astype(np.float64, copy=False)
+
+    if len(rec) < len(sw):
+        raise ValueError("Recording shorter than expected.")
+
+    full_len = len(rec) + len(sw) - 1
+    nfft = int(2 ** np.ceil(np.log2(full_len)))
+
+    # Convolution with the time-reversed sweep gives us the valid correlation
+    # sequence, offset by len(sw) - 1 samples.
+    corr_full = np.fft.irfft(
+        np.fft.rfft(rec, n=nfft) * np.fft.rfft(sw[::-1], n=nfft),
+        n=nfft,
+    )[:full_len]
+    corr_valid = corr_full[len(sw) - 1: len(rec)]
+
+    if len(corr_valid) == 0:
+        raise ValueError("Unable to align recording to sweep.")
+
+    start_idx = int(np.argmax(np.abs(corr_valid)))
+    end_idx = start_idx + len(sw)
+    if end_idx > len(rec):
+        raise ValueError("Aligned recording shorter than expected.")
+
+    return rec[start_idx:end_idx].astype(np.float32, copy=False)
+
+
 # ---------------------------------------------------------------------------
 # Level monitor — runs as a background InputStream
 # ---------------------------------------------------------------------------
@@ -250,12 +288,12 @@ class SweepWorker(QObject):
 
         self.progress.emit(1.0)
 
-        # Extract the recording aligned to sweep start
+        # Extract the recording aligned to the actual sweep start.
         rec_mono = recording[:, 0]
-        sweep_rec = rec_mono[pre_n: pre_n + sweep_n]
-
-        if len(sweep_rec) < sweep_n:
-            self.error.emit("Recording shorter than expected.")
+        try:
+            sweep_rec = _extract_aligned_sweep_recording(rec_mono, sweep)
+        except ValueError as exc:
+            self.error.emit(str(exc))
             return
 
         self.finished.emit(sweep_rec, sweep)

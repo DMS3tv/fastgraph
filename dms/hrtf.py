@@ -2,6 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 from scipy.interpolate import interp1d
+import re
 
 
 class HRTFCurve:
@@ -39,7 +40,7 @@ def _load_hrtf_file(path: str) -> tuple[np.ndarray, np.ndarray]:
             line = line.strip()
             if not line or line.startswith("#") or line.startswith("*"):
                 continue
-            parts = line.split()
+            parts = [p for p in re.split(r"[\s,]+", line) if p]
             if len(parts) < 2:
                 continue
             try:

@@ -90,11 +90,6 @@ class SessionDialog(QDialog):
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
-        # Restore last values
-        self._rig.setText(self._settings.get("last_rig") or "")
-        self._brand.setText(self._settings.get("last_brand") or "")
-        self._model.setText(self._settings.get("last_model") or "")
-
     def _validate_and_accept(self) -> None:
         missing = []
         if not self._rig.text().strip():
@@ -106,12 +101,6 @@ class SessionDialog(QDialog):
         if missing:
             self._status.setText(f"Required: {', '.join(missing)}")
             return
-
-        self._settings.update({
-            "last_rig": self._rig.text().strip(),
-            "last_brand": self._brand.text().strip(),
-            "last_model": self._model.text().strip(),
-        })
         self.accept()
 
     def session_data(self) -> SessionData:

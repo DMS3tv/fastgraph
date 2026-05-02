@@ -34,28 +34,6 @@ def generate_log_sweep(
         sweep[-fade_n:] *= fade[::-1]
 
     return sweep.astype(np.float32)
-
-
-def generate_inverse_filter(
-    sweep: np.ndarray,
-    fs: int,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
-) -> np.ndarray:
-    """
-    Time-reversed sweep with spectral amplitude correction (Farina method).
-    The log sweep's spectral envelope rises at ~3 dB/oct; the inverse filter
-    compensates so that the deconvolved IR is flat.
-    """
-    inv = sweep[::-1].copy().astype(np.float64)
-    n = len(inv)
-    # Amplitude envelope: (f2/f1)^(-t/T) applied in time domain
-    t = np.arange(n) / fs
-    T = n / fs
-    inv *= (f_high / f_low) ** (-t / T)
-    return inv.astype(np.float32)
-
-
 # ---------------------------------------------------------------------------
 # Frequency response computation
 # ---------------------------------------------------------------------------
@@ -208,8 +186,8 @@ def smooth_fractional_octave(
     """
     Apply Gaussian smoothing on a log-frequency axis.
 
-    The smoothing bandwidth is specified in fractional octaves using
-    the full-width at half maximum of the Gaussian window.
+    The smoothing bandwidth is specified in fractional octaves using the
+    full-width at half maximum of the Gaussian window.
     """
     if len(freqs) < 3 or len(freqs) != len(mag_db) or fraction <= 0:
         return freqs, mag_db

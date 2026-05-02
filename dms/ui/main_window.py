@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStatusBar,
     QVBoxLayout,
@@ -42,6 +43,8 @@ from dms.processing import (
     compute_rms_average,
     downsample_to_log_points,
     generate_log_sweep,
+    normalize_at_1khz,
+    smooth_fractional_octave,
 )
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
@@ -61,6 +64,7 @@ class AppState:
 _MEASUREMENT_F_MIN = 20.0
 _MEASUREMENT_F_MAX = 20000.0
 _DISPLAY_AVG_POINTS = 1200
+_DISPLAY_AVG_SMOOTHING = 48
 _METER_UPDATE_MS = 220
 
 
@@ -137,12 +141,16 @@ class PassFailDialog(QDialog):
     def __init__(self, index: int, total: int, parent=None) -> None:
         super().__init__(parent)
         self._choice = self.CANCEL
-        self.setModal(True)
+        self.setModal(False)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setWindowTitle("Review Measurement")
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setMinimumWidth(360)
+        self.setMinimumHeight(150)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
 
         summary = QLabel(
             f"Review measurement {index} of {total} and choose whether to keep it."
@@ -158,20 +166,48 @@ class PassFailDialog(QDialog):
         layout.addWidget(detail)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(10)
 
         keep_btn = QPushButton("Keep")
+        keep_btn.setDefault(True)
+        keep_btn.setStyleSheet(
+            "QPushButton {"
+            " background-color: #1f7a3f;"
+            " color: white;"
+            " border: 1px solid #2ca85a;"
+            " border-radius: 6px;"
+            " padding: 8px 16px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #24914a; }"
+        )
         keep_btn.clicked.connect(self._accept_keep)
         button_row.addWidget(keep_btn)
 
         fail_btn = QPushButton("Fail / Redo")
+        fail_btn.setStyleSheet(
+            "QPushButton {"
+            " background-color: #8d2b2b;"
+            " color: white;"
+            " border: 1px solid #b63b3b;"
+            " border-radius: 6px;"
+            " padding: 8px 16px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #a73333; }"
+        )
         fail_btn.clicked.connect(self._accept_fail)
         button_row.addWidget(fail_btn)
 
         cancel_btn = QPushButton("Cancel Queue")
+        cancel_btn.setStyleSheet(
+            "QPushButton { padding: 8px 16px; border-radius: 6px; }"
+        )
         cancel_btn.clicked.connect(self._accept_cancel)
         button_row.addWidget(cancel_btn)
 
         layout.addLayout(button_row)
+        self.adjustSize()
 
     def choice(self) -> str:
         return self._choice
@@ -209,6 +245,7 @@ class MainWindow(QMainWindow):
 
         self._sweep_thread: Optional[_SweepThread] = None
         self._active_sweep_worker: Optional[SweepWorker] = None
+        self._pass_fail_dialog: Optional[PassFailDialog] = None
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
@@ -242,31 +279,33 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
 
-        root = QVBoxLayout(central)
+        root = QHBoxLayout(central)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        top_bar = self._build_top_bar()
-        root.addWidget(top_bar, 0)
-
-        content = QHBoxLayout()
-        content.setSpacing(8)
         self._plots = DualPlotWidget()
-        content.addWidget(self._plots, 1)
+        root.addWidget(self._plots, 1)
 
-        right = self._build_right_panel()
-        content.addWidget(right, 0)
-        root.addLayout(content, 1)
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        controls_scroll.setMinimumWidth(340)
+        controls_scroll.setMaximumWidth(380)
+        controls_scroll.setWidget(self._build_control_panel())
+        root.addWidget(controls_scroll, 0)
 
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
         self._statusbar.showMessage("Ready.")
 
-    def _build_top_bar(self) -> QWidget:
+    def _build_control_panel(self) -> QWidget:
         panel = QWidget()
-        layout = QHBoxLayout(panel)
+        layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
         session_box = QGroupBox("Session")
         sb_layout = QVBoxLayout(session_box)
@@ -305,13 +344,64 @@ class MainWindow(QMainWindow):
         layout.addWidget(dev_box)
 
         meter_box = QGroupBox("Input Level")
-        meter_layout = QVBoxLayout(meter_box)
-        self._level_meter = LevelMeterWidget()
+        meter_layout = QHBoxLayout(meter_box)
+        meter_layout.setSpacing(12)
+        self._level_meter = LevelMeterWidget(
+            orientation=Qt.Orientation.Horizontal
+        )
         self._level_status_label = QLabel("Live RMS monitor")
-        self._level_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        meter_layout.addWidget(self._level_meter, 0, Qt.AlignmentFlag.AlignCenter)
-        meter_layout.addWidget(self._level_status_label)
+        self._level_status_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._level_status_label.setWordWrap(True)
+        meter_layout.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
+        meter_layout.addWidget(self._level_status_label, 1)
         layout.addWidget(meter_box)
+
+        queue_box = QGroupBox("Queue")
+        queue_layout = QVBoxLayout(queue_box)
+
+        n_layout = QHBoxLayout()
+        n_layout.addWidget(QLabel("N kept measurements:"))
+        self._queue_n_spin = QSpinBox()
+        self._queue_n_spin.setRange(1, 100)
+        self._queue_n_spin.setValue(int(self._settings.get("queue_count") or 5))
+        n_layout.addWidget(self._queue_n_spin)
+        queue_layout.addLayout(n_layout)
+
+        self._queue_progress_label = QLabel("Kept: 0 / 0")
+        queue_layout.addWidget(self._queue_progress_label)
+
+        self._queue_progress_bar = QProgressBar()
+        self._queue_progress_bar.setRange(0, 1)
+        self._queue_progress_bar.setValue(0)
+        queue_layout.addWidget(self._queue_progress_bar)
+
+        btn_row = QHBoxLayout()
+        self._start_queue_btn = QPushButton("Start Queue")
+        self._start_queue_btn.setObjectName("btn_start")
+        self._start_queue_btn.clicked.connect(self._start_queue)
+        btn_row.addWidget(self._start_queue_btn)
+
+        self._cancel_queue_btn = QPushButton("Cancel Queue")
+        self._cancel_queue_btn.setObjectName("btn_cancel")
+        self._cancel_queue_btn.clicked.connect(self._cancel_queue)
+        btn_row.addWidget(self._cancel_queue_btn)
+        queue_layout.addLayout(btn_row)
+
+        self._sweep_progress = QProgressBar()
+        self._sweep_progress.setRange(0, 100)
+        self._sweep_progress.setValue(0)
+        queue_layout.addWidget(self._sweep_progress)
+
+        self._queue_hint_label = QLabel(
+            "After each sweep, pass/fail opens in a review popup."
+        )
+        self._queue_hint_label.setWordWrap(True)
+        self._queue_hint_label.setStyleSheet("color: #888;")
+        queue_layout.addWidget(self._queue_hint_label)
+
+        layout.addWidget(queue_box)
 
         hrtf_box = QGroupBox("HRTF Compensation")
         hrtf_layout = QVBoxLayout(hrtf_box)
@@ -367,62 +457,26 @@ class MainWindow(QMainWindow):
 
         export_btn = QPushButton("Export Average…")
         export_btn.clicked.connect(self._export)
+        export_btn.setStyleSheet(
+            "QPushButton {"
+            " background-color: #b98616;"
+            " color: white;"
+            " border: 1px solid #d7a52d;"
+            " border-radius: 6px;"
+            " padding: 8px 14px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #cf981e; }"
+            "QPushButton:disabled {"
+            " background-color: #5b4a22;"
+            " color: #b9b0a0;"
+            " border: 1px solid #6b5a31;"
+            "}"
+        )
         misc_layout.addWidget(export_btn)
         self._export_btn = export_btn
 
         layout.addWidget(misc_box)
-        return panel
-
-    def _build_right_panel(self) -> QWidget:
-        panel = QWidget()
-        panel.setFixedWidth(280)
-        layout = QVBoxLayout(panel)
-        layout.setSpacing(10)
-
-        queue_box = QGroupBox("Queue")
-        queue_layout = QVBoxLayout(queue_box)
-
-        n_layout = QHBoxLayout()
-        n_layout.addWidget(QLabel("N kept measurements:"))
-        self._queue_n_spin = QSpinBox()
-        self._queue_n_spin.setRange(1, 100)
-        self._queue_n_spin.setValue(int(self._settings.get("queue_count") or 5))
-        n_layout.addWidget(self._queue_n_spin)
-        queue_layout.addLayout(n_layout)
-
-        self._queue_progress_label = QLabel("Kept: 0 / 0")
-        queue_layout.addWidget(self._queue_progress_label)
-
-        self._queue_progress_bar = QProgressBar()
-        self._queue_progress_bar.setRange(0, 1)
-        self._queue_progress_bar.setValue(0)
-        queue_layout.addWidget(self._queue_progress_bar)
-
-        btn_row = QHBoxLayout()
-        self._start_queue_btn = QPushButton("Start Queue")
-        self._start_queue_btn.setObjectName("btn_start")
-        self._start_queue_btn.clicked.connect(self._start_queue)
-        btn_row.addWidget(self._start_queue_btn)
-
-        self._cancel_queue_btn = QPushButton("Cancel Queue")
-        self._cancel_queue_btn.setObjectName("btn_cancel")
-        self._cancel_queue_btn.clicked.connect(self._cancel_queue)
-        btn_row.addWidget(self._cancel_queue_btn)
-        queue_layout.addLayout(btn_row)
-
-        self._sweep_progress = QProgressBar()
-        self._sweep_progress.setRange(0, 100)
-        self._sweep_progress.setValue(0)
-        queue_layout.addWidget(self._sweep_progress)
-
-        self._queue_hint_label = QLabel(
-            "After each sweep, pass/fail opens in a review popup."
-        )
-        self._queue_hint_label.setWordWrap(True)
-        self._queue_hint_label.setStyleSheet("color: #888;")
-        queue_layout.addWidget(self._queue_hint_label)
-
-        layout.addWidget(queue_box)
         layout.addStretch(1)
         return panel
 
@@ -793,13 +847,14 @@ class MainWindow(QMainWindow):
                 f_low=_MEASUREMENT_F_MIN,
                 f_high=_MEASUREMENT_F_MAX,
             )
+            mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
 
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
                 n_points=300,
                 f_ref=1000.0,
-                normalize_ref=False,
+                normalize_ref=True,
             )
 
             self._pending_curve = (freqs_ds, mag_ds)
@@ -813,6 +868,7 @@ class MainWindow(QMainWindow):
 
     def _on_sweep_error(self, message: str) -> None:
         self._cleanup_sweep_thread()
+        self._close_pass_fail_dialog()
         self._pending_curve = None
         self._sweep_progress.setValue(0)
 
@@ -835,6 +891,7 @@ class MainWindow(QMainWindow):
         if self._state != AppState.PASS_FAIL or self._pending_curve is None:
             return
 
+        self._close_pass_fail_dialog()
         self._kept_curves.append(self._pending_curve)
         self._pending_curve = None
         self._queue_index += 1
@@ -856,6 +913,7 @@ class MainWindow(QMainWindow):
         if self._state != AppState.PASS_FAIL:
             return
 
+        self._close_pass_fail_dialog()
         self._pending_curve = None
         self._state = AppState.QUEUE_RUNNING
         self._apply_state_ui()
@@ -867,6 +925,7 @@ class MainWindow(QMainWindow):
 
     def _cancel_queue(self) -> None:
         self._abort_active_sweep()
+        self._close_pass_fail_dialog()
         self._pending_curve = None
         self._queue_target = 0
         self._queue_index = 0
@@ -900,12 +959,32 @@ class MainWindow(QMainWindow):
         if self._state != AppState.PASS_FAIL or self._pending_curve is None:
             return
 
+        if self._pass_fail_dialog is not None:
+            self._pass_fail_dialog.raise_()
+            self._pass_fail_dialog.activateWindow()
+            return
+
         dlg = PassFailDialog(
             index=self._queue_index + 1,
             total=max(self._queue_target, self._queue_index + 1),
             parent=self,
         )
-        dlg.exec()
+        dlg.adjustSize()
+        target_rect = self._plots.bottom_plot_global_rect()
+        x = target_rect.center().x() - dlg.width() // 2
+        y = target_rect.center().y() - dlg.height() // 2
+        x = max(target_rect.left() + 12, min(x, target_rect.right() - dlg.width() - 12))
+        y = max(target_rect.top() + 12, min(y, target_rect.bottom() - dlg.height() - 12))
+        dlg.move(x, y)
+        dlg.finished.connect(lambda _result: self._handle_pass_fail_choice(dlg))
+        self._pass_fail_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _handle_pass_fail_choice(self, dlg: PassFailDialog) -> None:
+        if self._pass_fail_dialog is dlg:
+            self._pass_fail_dialog = None
 
         choice = dlg.choice()
         if choice == PassFailDialog.KEEP:
@@ -914,6 +993,14 @@ class MainWindow(QMainWindow):
             self._on_fail()
         else:
             self._cancel_queue()
+
+    def _close_pass_fail_dialog(self) -> None:
+        if self._pass_fail_dialog is None:
+            return
+        dlg = self._pass_fail_dialog
+        self._pass_fail_dialog = None
+        dlg.blockSignals(True)
+        dlg.close()
 
     def _recompute_average(self) -> None:
         if not self._kept_curves:
@@ -926,7 +1013,7 @@ class MainWindow(QMainWindow):
             f_ref=1000.0,
             f_min=_MEASUREMENT_F_MIN,
             f_max=_MEASUREMENT_F_MAX,
-            normalize_ref=False,
+            normalize_ref=True,
         )
         self._average = (freqs, mag_db)
 
@@ -947,8 +1034,20 @@ class MainWindow(QMainWindow):
 
         return freqs, mag_db
 
+    def _bottom_curve_for_display(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
+        curve = self._bottom_curve_for_display_and_export()
+        if curve is None:
+            return None
+
+        freqs, mag_db = curve
+        return smooth_fractional_octave(
+            freqs,
+            mag_db,
+            fraction=_DISPLAY_AVG_SMOOTHING,
+        )
+
     def _update_plots(self, *_args, show_pending: bool = False) -> None:
-        avg = self._bottom_curve_for_display_and_export()
+        avg = self._bottom_curve_for_display()
 
         kept = list(self._kept_curves)
         if show_pending and self._pending_curve is not None:
@@ -1108,6 +1207,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Error", str(exc))
 
     def closeEvent(self, event) -> None:
+        self._close_pass_fail_dialog()
         try:
             self._device_check_timer.stop()
         except Exception:

@@ -17,8 +17,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name="DMS Fastgraph",
     debug=False,
@@ -27,14 +25,24 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    exclude_binaries=True,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
 )
 
-app = BUNDLE(
+coll = COLLECT(
     exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    name="DMS Fastgraph",
+)
+
+app = BUNDLE(
+    coll,
     name="DMS Fastgraph.app",
     icon=None,
     bundle_identifier="com.dms.fastgraph",

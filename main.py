@@ -4,11 +4,13 @@ from PyQt6.QtCore import Qt
 from dms.ui.main_window import MainWindow
 from dms.settings_manager import SettingsManager
 from dms.session import SessionData
+from dms.version import __version__
 
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("DMS Fastgraph")
+    app.setApplicationVersion(__version__)
 
     settings = SettingsManager()
 

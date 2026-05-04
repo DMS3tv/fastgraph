@@ -19,6 +19,8 @@ _DEFAULTS: dict[str, Any] = {
     "pre_sweep_silence": 0.2,
     "post_sweep_silence": 0.5,
     "latency": "low",
+    "update_check_enabled": True,
+    "update_feed_url": "",
 }
 
 

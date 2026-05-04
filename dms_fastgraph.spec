@@ -1,3 +1,6 @@
+from dms.version import __version__
+
+
 a = Analysis(
     ["main.py"],
     pathex=[],
@@ -49,8 +52,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "DMS Fastgraph",
         "CFBundleDisplayName": "DMS Fastgraph",
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleShortVersionString": __version__,
+        "CFBundleVersion": __version__,
         "NSMicrophoneUsageDescription": (
             "DMS Fastgraph needs microphone access to record headphone measurements."
         ),

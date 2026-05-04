@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
-from PyQt6.QtCore import QThread, QTimer, Qt
+from PyQt6.QtCore import QThread, QTimer, Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,6 +49,8 @@ from dms.processing import (
 )
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
+from dms.update_checker import UpdateCheckWorker
+from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
@@ -269,6 +272,7 @@ class MainWindow(QMainWindow):
         self._refresh_devices()
         self._start_level_monitor()
         self._apply_state_ui()
+        self._start_update_check()
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -303,6 +307,7 @@ class MainWindow(QMainWindow):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
         self._statusbar.showMessage("Ready.")
+        self._build_update_indicator()
 
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
@@ -506,6 +511,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(misc_box)
         layout.addStretch(1)
         return panel
+
+    def _build_update_indicator(self) -> None:
+        self._update_button = QPushButton("Update")
+        self._update_button.setVisible(False)
+        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_button.setToolTip("A new app version is available.")
+        self._update_button.setStyleSheet(
+            "QPushButton {"
+            " background-color: #2f4f2f;"
+            " color: #d9fdd3;"
+            " border: 1px solid #4e7c4e;"
+            " border-radius: 10px;"
+            " padding: 2px 10px;"
+            " font-size: 12px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #386038; }"
+        )
+        self._update_button.clicked.connect(self._open_update_url)
+        self._statusbar.addPermanentWidget(self._update_button)
+        self._pending_update_url: Optional[str] = None
+        self._update_check_thread: Optional[QThread] = None
 
     def _current_output_device(self) -> Optional[str]:
         return self._out_dev_combo.currentData()
@@ -734,6 +761,55 @@ class MainWindow(QMainWindow):
 
     def _on_level_error(self, message: str) -> None:
         self._statusbar.showMessage(message)
+
+    def _start_update_check(self) -> None:
+        enabled = bool(self._settings.get("update_check_enabled"))
+        feed_url = str(self._settings.get("update_feed_url") or "").strip()
+        if not enabled or not feed_url:
+            return
+
+        worker = UpdateCheckWorker(current_version=__version__, feed_url=feed_url)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.update_available.connect(self._on_update_available)
+        worker.up_to_date.connect(self._on_update_up_to_date)
+        worker.check_failed.connect(self._on_update_check_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._update_check_thread = thread
+        thread.start()
+
+    def _on_update_available(
+        self,
+        latest_version: str,
+        release_url: str,
+        summary: str,
+    ) -> None:
+        self._pending_update_url = release_url
+        self._update_button.setVisible(True)
+        summary_text = f" - {summary}" if summary else ""
+        self._update_button.setToolTip(
+            f"v{latest_version} is available{summary_text}"
+        )
+        self._statusbar.showMessage(
+            f"Update available: v{latest_version}. Click 'Update' to open release notes."
+        )
+
+    def _on_update_up_to_date(self, _latest_version: str) -> None:
+        self._pending_update_url = None
+        self._update_button.setVisible(False)
+
+    def _on_update_check_failed(self, _error: str) -> None:
+        # Keep this fully non-intrusive by silently failing.
+        self._pending_update_url = None
+        self._update_button.setVisible(False)
+
+    def _open_update_url(self) -> None:
+        if not self._pending_update_url:
+            return
+        QDesktopServices.openUrl(QUrl(self._pending_update_url))
 
     def _apply_state_ui(self) -> None:
         idle = self._state == AppState.IDLE
@@ -1343,6 +1419,13 @@ class MainWindow(QMainWindow):
 
         try:
             self._level_monitor.stop()
+        except Exception:
+            pass
+
+        try:
+            if self._update_check_thread is not None and self._update_check_thread.isRunning():
+                self._update_check_thread.quit()
+                self._update_check_thread.wait(500)
         except Exception:
             pass
 

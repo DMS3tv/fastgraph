@@ -37,6 +37,36 @@ Plain TXT, two columns: `frequency_hz  magnitude_db`
 One header line is OK (will be skipped if non-numeric).  
 Mono file applies to both ears equally.
 
+## Quiet Update Indicator (No Popups)
+
+The app supports a non-intrusive update badge in the bottom-right status area.
+It only appears when a newer version is found.
+
+Add these keys to your config file at:
+
+- macOS: `~/Library/Application Support/DMSFastgraph/settings.json`
+- Windows: `%APPDATA%/DMSFastgraph/settings.json`
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/DMSFastgraph/settings.json`
+
+Example:
+
+```json
+{
+  "update_check_enabled": true,
+  "update_feed_url": "https://example.com/dms-fastgraph-update.json"
+}
+```
+
+The feed URL should return JSON like:
+
+```json
+{
+  "version": "1.0.1",
+  "url": "https://github.com/your-org/dms-fastgraph/releases/tag/v1.0.1",
+  "summary": "Minor bug fixes"
+}
+```
+
 ## Packaging For macOS
 
 You must build the `.app` on a Mac. This Linux workspace cannot produce a

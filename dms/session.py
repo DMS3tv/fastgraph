@@ -13,7 +13,7 @@ class SessionData:
     firmware: str = ""
     eq_applied: bool = False
     anc_mode: bool = False
-    anc_mode_name: str = ""
+    transparency_mode: bool = False
     form_factor: str = "over-ear"
     open_back: bool = True
     pads_notes: str = ""
@@ -41,9 +41,13 @@ class SessionData:
         if self.firmware:
             lines.append(f"* Firmware: {self.firmware}")
         lines.append(f"* EQ Applied: {'Yes' if self.eq_applied else 'No'}")
-        lines.append(
-            f"* ANC/Transparency: {'Yes — ' + self.anc_mode_name if self.anc_mode else 'No'}"
-        )
+        if self.anc_mode:
+            anc_line = "ANC"
+        elif self.transparency_mode:
+            anc_line = "Transparency"
+        else:
+            anc_line = "Off"
+        lines.append(f"* ANC/Transparency: {anc_line}")
         lines.append(f"* Form Factor: {self.form_factor}")
         lines.append(
             f"* Acoustic Type: {'Open Back' if self.open_back else 'Closed Back'}"

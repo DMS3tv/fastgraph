@@ -394,6 +394,29 @@ class MainWindow(QMainWindow):
         self._version_label.setStyleSheet("color: #8b95a6; font-size: 11px;")
         self._version_label.setToolTip("DMS Fastgraph version")
         self._statusbar.addPermanentWidget(self._version_label)
+        self._feedback_btn = QPushButton("Report Bugs / Feedback")
+        self._feedback_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._feedback_btn.setToolTip("Open feedback form")
+        self._feedback_btn.setStyleSheet(
+            "QPushButton {"
+            " background-color: #6f1f1f;"
+            " color: #ffd7d7;"
+            " border: 1px solid #a63b3b;"
+            " border-radius: 10px;"
+            " padding: 2px 10px;"
+            " font-size: 11px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #822727; }"
+        )
+        self._feedback_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl(
+                    "https://docs.google.com/forms/d/e/1FAIpQLScHMtJluNWrJnYH2_gcqnrRyhtWF_FQnOB5msfU-NKTFAyElw/viewform?usp=publish-editor"
+                )
+            )
+        )
+        self._statusbar.addPermanentWidget(self._feedback_btn)
         self._build_update_indicator()
 
     def _build_control_panel(self) -> QWidget:
@@ -1556,6 +1579,7 @@ class MainWindow(QMainWindow):
                 output_path=Path(path_str),
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
+                n_sweeps=len(self._kept_curves),
             )
             self._statusbar.showMessage(f"Exported: {path_str}")
         except Exception as exc:

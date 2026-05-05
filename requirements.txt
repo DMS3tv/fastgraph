@@ -3,3 +3,5 @@ pyqtgraph>=0.13.3
 numpy>=1.24.0
 scipy>=1.10.0
 sounddevice==0.4.6
+paramiko>=3.4.0
+cryptography>=42.0.0

@@ -66,6 +66,10 @@ class SessionDialog(QDialog):
 
         self._form_factor = QComboBox()
         self._form_factor.addItems(["over-ear", "on-ear", "in-ear"])
+        self._form_factor.currentTextChanged.connect(self._on_form_factor_changed)
+
+        self._in_ear_fitment = QComboBox()
+        self._in_ear_fitment.addItems(["shallow fitment", "mid fitment", "deep fitment"])
 
         self._open_back = QComboBox()
         self._open_back.addItems(["open back", "closed back", "semi-open"])
@@ -90,10 +94,13 @@ class SessionDialog(QDialog):
         form.addRow("", self._anc)
         form.addRow("", self._transparency)
         form.addRow("Form Factor", self._form_factor)
+        form.addRow("In-ear Fitment", self._in_ear_fitment)
         form.addRow("Acoustic Type", self._open_back)
         form.addRow("Pads / Tips Notes", self._pads)
         form.addRow("Connection", self._connection)
+        self._fitment_label = form.labelForField(self._in_ear_fitment)
         self._load_initial_values()
+        self._sync_in_ear_fitment_visibility()
 
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
@@ -140,6 +147,9 @@ class SessionDialog(QDialog):
         self._anc.setChecked(s.anc_mode)
         self._transparency.setChecked(getattr(s, "transparency_mode", False))
         self._form_factor.setCurrentText(s.form_factor)
+        fitment = getattr(s, "in_ear_fitment", "")
+        if fitment:
+            self._in_ear_fitment.setCurrentText(fitment)
         self._open_back.setCurrentText("open back" if s.open_back else "closed back")
         self._pads.setText(s.pads_notes)
         self._connection.setCurrentText(s.connection)
@@ -156,6 +166,11 @@ class SessionDialog(QDialog):
             anc_mode=self._anc.isChecked(),
             transparency_mode=self._transparency.isChecked(),
             form_factor=self._form_factor.currentText(),
+            in_ear_fitment=(
+                self._in_ear_fitment.currentText()
+                if self._form_factor.currentText() == "in-ear"
+                else ""
+            ),
             open_back=self._open_back.currentText() == "open back",
             pads_notes=self._pads.text().strip(),
             connection=self._connection.currentText(),
@@ -174,3 +189,12 @@ class SessionDialog(QDialog):
         self._anc.blockSignals(True)
         self._anc.setChecked(False)
         self._anc.blockSignals(False)
+
+    def _on_form_factor_changed(self, _value: str) -> None:
+        self._sync_in_ear_fitment_visibility()
+
+    def _sync_in_ear_fitment_visibility(self) -> None:
+        is_in_ear = self._form_factor.currentText() == "in-ear"
+        self._in_ear_fitment.setVisible(is_in_ear)
+        if self._fitment_label is not None:
+            self._fitment_label.setVisible(is_in_ear)

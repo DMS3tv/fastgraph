@@ -9,16 +9,18 @@ from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QThread, QTimer, Qt, QUrl
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -26,6 +28,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStatusBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -425,6 +428,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
+        self._clear_metadata_btn = QPushButton("Clear Metadata")
+        self._clear_metadata_btn.clicked.connect(self._clear_metadata)
+        layout.addWidget(self._clear_metadata_btn)
+
         session_box = QGroupBox("Session")
         sb_layout = QVBoxLayout(session_box)
         self._session_name_label = QLabel("")
@@ -437,7 +444,7 @@ class MainWindow(QMainWindow):
         sb_layout.addWidget(self._session_rig_label)
         sb_layout.addWidget(self._metadata_btn)
         self._refresh_session_labels()
-        layout.addWidget(session_box)
+        layout.addWidget(self._make_collapsible_section("Session", session_box))
 
         dev_box = QGroupBox("Devices")
         dev_layout = QVBoxLayout(dev_box)
@@ -467,7 +474,7 @@ class MainWindow(QMainWindow):
         refresh_btn.clicked.connect(self._refresh_devices)
         dev_layout.addWidget(refresh_btn)
 
-        layout.addWidget(dev_box)
+        layout.addWidget(self._make_collapsible_section("Devices", dev_box))
 
         meter_box = QGroupBox("Input Level")
         meter_layout = QHBoxLayout(meter_box)
@@ -482,7 +489,7 @@ class MainWindow(QMainWindow):
         self._level_status_label.setWordWrap(True)
         meter_layout.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
         meter_layout.addWidget(self._level_status_label, 1)
-        layout.addWidget(meter_box)
+        layout.addWidget(self._make_collapsible_section("Input Level", meter_box))
 
         queue_box = QGroupBox("Queue")
         queue_layout = QVBoxLayout(queue_box)
@@ -498,6 +505,35 @@ class MainWindow(QMainWindow):
         self._queue_n_spin.setFixedWidth(110)
         n_layout.addWidget(self._queue_n_spin)
         queue_layout.addLayout(n_layout)
+
+        level_layout = QHBoxLayout()
+        level_label = QLabel("Output level:")
+        level_label.setStyleSheet("font-weight: 600; color: #9ad3f6;")
+        level_layout.addWidget(level_label)
+        self._queue_level_spin = QDoubleSpinBox()
+        self._queue_level_spin.setRange(-120.0, 0.0)
+        self._queue_level_spin.setSingleStep(0.5)
+        self._queue_level_spin.setDecimals(1)
+        self._queue_level_spin.setSuffix(" dB")
+        self._queue_level_spin.setFixedWidth(110)
+        persist_output_level = bool(self._settings.get("queue_output_level_persist"))
+        initial_output_level = float(self._settings.get("queue_output_level_db") or -6.0)
+        if not persist_output_level:
+            initial_output_level = -6.0
+        self._queue_level_spin.setValue(max(-120.0, min(0.0, initial_output_level)))
+        self._queue_level_spin.valueChanged.connect(self._on_queue_level_changed)
+        level_layout.addWidget(self._queue_level_spin)
+        self._queue_level_persist_toggle = ToggleSwitch("")
+        self._queue_level_persist_toggle.setChecked(persist_output_level)
+        self._queue_level_persist_toggle.stateChanged.connect(
+            self._on_queue_level_persist_changed
+        )
+        level_layout.addWidget(self._queue_level_persist_toggle)
+        self._queue_level_persist_label = QLabel("Remember this level")
+        self._queue_level_persist_label.setStyleSheet("color: #d8e0ec;")
+        level_layout.addWidget(self._queue_level_persist_label)
+        level_layout.addStretch(1)
+        queue_layout.addLayout(level_layout)
 
         self._queue_progress_label = QLabel("Kept: 0")
         queue_layout.addWidget(self._queue_progress_label)
@@ -531,7 +567,7 @@ class MainWindow(QMainWindow):
         self._queue_hint_label.setStyleSheet("color: #888;")
         queue_layout.addWidget(self._queue_hint_label)
 
-        layout.addWidget(queue_box)
+        layout.addWidget(self._make_collapsible_section("Queue", queue_box))
 
         bottom_box = QGroupBox("Bottom View")
         bottom_layout = QVBoxLayout(bottom_box)
@@ -563,7 +599,10 @@ class MainWindow(QMainWindow):
         self._hrtf_label.setWordWrap(True)
         bottom_layout.addWidget(self._hrtf_label)
 
-        layout.addWidget(bottom_box, 1)
+        layout.addWidget(
+            self._make_collapsible_section("Bottom View", bottom_box, collapsed=True),
+            1,
+        )
 
         misc_box = QGroupBox("Tools")
         misc_layout = QVBoxLayout(misc_box)
@@ -593,6 +632,22 @@ class MainWindow(QMainWindow):
         misc_layout.addWidget(test_level_btn)
         self._test_level_btn = test_level_btn
 
+        layout.addWidget(self._make_collapsible_section("Tools", misc_box, collapsed=True))
+
+        export_box = QGroupBox("Export")
+        export_layout = QVBoxLayout(export_box)
+
+        export_dir_row = QHBoxLayout()
+        export_dir_row.addWidget(QLabel("Directory:"))
+        self._export_dir_input = QLineEdit()
+        self._export_dir_input.setPlaceholderText("Default: choose at export")
+        self._export_dir_input.setText(str(self._settings.get("export_directory") or ""))
+        export_dir_row.addWidget(self._export_dir_input, 1)
+        export_dir_btn = QPushButton("Browse…")
+        export_dir_btn.clicked.connect(self._choose_export_directory)
+        export_dir_row.addWidget(export_dir_btn)
+        export_layout.addLayout(export_dir_row)
+
         export_btn = QPushButton("Export Average…")
         export_btn.clicked.connect(self._export)
         export_btn.setStyleSheet(
@@ -611,12 +666,93 @@ class MainWindow(QMainWindow):
             " border: 1px solid #6b5a31;"
             "}"
         )
-        misc_layout.addWidget(export_btn)
+        export_layout.addWidget(export_btn)
         self._export_btn = export_btn
+        layout.addWidget(export_box)
 
-        layout.addWidget(misc_box)
         layout.addStretch(1)
         return panel
+
+    def _make_collapsible_section(
+        self,
+        title: str,
+        content_widget: QWidget,
+        collapsed: bool = False,
+    ) -> QWidget:
+        if isinstance(content_widget, QGroupBox):
+            content_widget.setTitle("")
+        section = QWidget()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(6)
+
+        toggle = QToolButton()
+        toggle.setText(title)
+        toggle.setCheckable(True)
+        toggle.setChecked(not collapsed)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setArrowType(
+            Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow
+        )
+        toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        toggle.setStyleSheet(
+            "QToolButton {"
+            " background-color: #3a2612;"
+            " border: 1px solid #a8741d;"
+            " color: #ffdca1;"
+            " border-radius: 10px;"
+            " padding: 6px 10px;"
+            " font-weight: 700;"
+            " text-align: left;"
+            "}"
+            "QToolButton:hover {"
+            " background-color: #4a3117;"
+            " border-color: #d49c2a;"
+            "}"
+            "QToolButton:pressed {"
+            " background-color: #2d1d0e;"
+            "}"
+        )
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(content_widget)
+        full_height = max(1, content_widget.sizeHint().height())
+        container.setMaximumHeight(full_height if not collapsed else 0)
+        container.setVisible(not collapsed)
+
+        anim = QPropertyAnimation(container, b"maximumHeight", section)
+        anim.setDuration(160)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        def on_toggle(checked: bool) -> None:
+            toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+            )
+            anim.stop()
+            target = max(1, content_widget.sizeHint().height())
+            if checked:
+                container.setVisible(True)
+                anim.setStartValue(container.maximumHeight())
+                anim.setEndValue(target)
+            else:
+                anim.setStartValue(container.maximumHeight())
+                anim.setEndValue(0)
+            anim.start()
+
+        toggle.toggled.connect(on_toggle)
+        def on_finished() -> None:
+            if toggle.isChecked():
+                container.setMaximumHeight(max(1, content_widget.sizeHint().height()))
+            else:
+                container.setVisible(False)
+        anim.finished.connect(on_finished)
+
+        section_layout.addWidget(toggle)
+        section_layout.addWidget(container)
+        return section
 
     def _build_update_indicator(self) -> None:
         self._update_button = QPushButton("Update")
@@ -930,6 +1066,9 @@ class MainWindow(QMainWindow):
             self._in_dev_combo,
             self._ch_combo,
             self._queue_n_spin,
+            self._queue_level_spin,
+            self._queue_level_persist_toggle,
+            self._queue_level_persist_label,
             self._variation_toggle,
             self._hrtf_toggle,
             self._hrtf_load_btn,
@@ -940,6 +1079,7 @@ class MainWindow(QMainWindow):
             self._undo_btn,
             self._clear_btn,
             self._metadata_btn,
+            self._clear_metadata_btn,
         ):
             widget.setEnabled(idle)
 
@@ -1033,6 +1173,9 @@ class MainWindow(QMainWindow):
             f_low=_MEASUREMENT_F_MIN,
             f_high=_MEASUREMENT_F_MAX,
         )
+        output_level_db = float(self._queue_level_spin.value())
+        output_gain = 10.0 ** (output_level_db / 20.0)
+        sweep = (sweep * output_gain).astype(np.float32, copy=False)
 
         worker = SweepWorker()
         worker.finished.connect(self._on_sweep_finished)
@@ -1471,6 +1614,43 @@ class MainWindow(QMainWindow):
             self._refresh_window_title()
             self._statusbar.showMessage("Headphone metadata updated.")
 
+    def _clear_metadata(self) -> None:
+        self._session = SessionData(
+            rig="Unknown Rig",
+            brand="Unknown",
+            model="Unknown",
+        )
+        self._refresh_session_labels()
+        self._refresh_window_title()
+        self._statusbar.showMessage("Headphone metadata cleared.")
+
+    def _on_queue_level_changed(self, value: float) -> None:
+        clamped = max(-120.0, min(0.0, float(value)))
+        if abs(clamped - float(value)) > 1e-9:
+            self._queue_level_spin.blockSignals(True)
+            self._queue_level_spin.setValue(clamped)
+            self._queue_level_spin.blockSignals(False)
+        if self._queue_level_persist_toggle.isChecked():
+            self._settings.set("queue_output_level_db", clamped)
+
+    def _on_queue_level_persist_changed(self, _state: int) -> None:
+        persist = self._queue_level_persist_toggle.isChecked()
+        self._settings.set("queue_output_level_persist", persist)
+        if persist:
+            self._settings.set("queue_output_level_db", float(self._queue_level_spin.value()))
+
+    def _choose_export_directory(self) -> None:
+        current = self._export_dir_input.text().strip()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Export Directory",
+            current or "",
+        )
+        if not chosen:
+            return
+        self._export_dir_input.setText(chosen)
+        self._settings.set("export_directory", chosen)
+
     def _open_calibration(self) -> None:
         input_device = self._current_input_device()
         if not input_device:
@@ -1561,14 +1741,21 @@ class MainWindow(QMainWindow):
         compensated = self._is_hrtf_active()
         filename = build_filename(self._session, compensated=compensated)
 
+        default_dir = self._export_dir_input.text().strip() or str(
+            self._settings.get("export_directory") or ""
+        )
+        default_path = str(Path(default_dir) / filename) if default_dir else filename
         path_str, _ = QFileDialog.getSaveFileName(
             self,
             "Export Average",
-            filename,
+            default_path,
             "Text Files (*.txt);;All Files (*)",
         )
         if not path_str:
             return
+        export_dir = str(Path(path_str).parent)
+        self._export_dir_input.setText(export_dir)
+        self._settings.set("export_directory", export_dir)
 
         freqs, mag_db = curve
         try:

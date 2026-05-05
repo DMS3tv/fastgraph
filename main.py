@@ -9,7 +9,7 @@ from dms.version import __version__
 
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setApplicationName("DMS Fastgraph")
+    app.setApplicationName("DMS Fastgraph Beta")
     app.setApplicationVersion(__version__)
 
     settings = SettingsManager()

@@ -4,7 +4,6 @@ User plays a 94 dB pistonphone tone into the microphone while this dialog
 records RMS, then stores Pa/FS sensitivity.
 """
 
-import threading
 import numpy as np
 import sounddevice as sd
 from PyQt6.QtWidgets import (
@@ -100,8 +99,6 @@ class CalibrationDialog(QDialog):
             return
 
         n_ch = dev["max_input_channels"]
-        ch = min(self._channel, n_ch - 1)
-
         try:
             self._stream = sd.InputStream(
                 device=self._device,
@@ -115,6 +112,7 @@ class CalibrationDialog(QDialog):
         except Exception as e:
             self._status.setText(f"Stream error: {e}")
             self._start_btn.setEnabled(True)
+            self._capturing = False
             return
 
         # Stop after 3 seconds

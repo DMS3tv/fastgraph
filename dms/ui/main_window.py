@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
+import sounddevice as sd
 from PyQt6.QtCore import QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -70,6 +72,8 @@ _MEASUREMENT_F_MAX = 20000.0
 _DISPLAY_AVG_POINTS = 1200
 _DISPLAY_AVG_SMOOTHING = 48
 _METER_UPDATE_MS = 140
+_MAX_SWEEP_ATTEMPTS = 3
+_QUEUE_AMBIENT_WARN_DBFS = -45.0
 
 
 class _SweepThread(QThread):
@@ -89,10 +93,14 @@ class TestLevelDialog(QDialog):
     def __init__(
         self,
         snapshot_fn: Callable[[], tuple[float, Optional[float], str]],
+        play_noise_fn: Optional[Callable[[], Optional[str]]] = None,
+        calibrated: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._snapshot_fn = snapshot_fn
+        self._play_noise_fn = play_noise_fn
+        self._calibrated = calibrated
         self.setWindowTitle("DMS fastgraph — Test Level")
         self.setMinimumWidth(360)
 
@@ -100,7 +108,7 @@ class TestLevelDialog(QDialog):
 
         intro = QLabel(
             "Live input test level for the currently selected input channel.\n"
-            "Use only after device calibration is available."
+            "If calibrated, SPL is shown. Otherwise, use dBFS + noise ping to verify routing."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -117,6 +125,23 @@ class TestLevelDialog(QDialog):
         self._spl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._spl_label.setStyleSheet("font-size: 30px; font-weight: bold;")
         layout.addWidget(self._spl_label)
+
+        self._hint_label = QLabel("")
+        self._hint_label.setWordWrap(True)
+        self._hint_label.setStyleSheet("color: #8ea1b7;")
+        if self._calibrated:
+            self._hint_label.setText("SPL is calibrated for this input device.")
+        else:
+            self._hint_label.setText(
+                "This device is not SPL-calibrated yet. dB SPL is unavailable; "
+                "use dBFS changes to confirm signal."
+            )
+        layout.addWidget(self._hint_label)
+
+        if self._play_noise_fn is not None:
+            self._noise_btn = QPushButton("Play Noise Ping")
+            self._noise_btn.clicked.connect(self._play_noise_ping)
+            layout.addWidget(self._noise_btn)
 
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
@@ -136,13 +161,30 @@ class TestLevelDialog(QDialog):
         else:
             self._spl_label.setText(f"{spl:.1f} dB SPL")
 
+    def _play_noise_ping(self) -> None:
+        if self._play_noise_fn is None:
+            return
+        err = self._play_noise_fn()
+        if err:
+            self._hint_label.setText(err)
+        elif self._calibrated:
+            self._hint_label.setText("Noise ping sent. Confirm input response and SPL stability.")
+        else:
+            self._hint_label.setText("Noise ping sent. Confirm input level responds in dBFS.")
+
 
 class PassFailDialog(QDialog):
     KEEP = "keep"
     FAIL = "fail"
     CANCEL = "cancel"
 
-    def __init__(self, index: int, total: int, parent=None) -> None:
+    def __init__(
+        self,
+        index: int,
+        total: int,
+        timing_quality: Optional[tuple[float, float, float, float]] = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._choice = self.CANCEL
         self.setModal(False)
@@ -168,6 +210,47 @@ class PassFailDialog(QDialog):
         detail.setWordWrap(True)
         detail.setStyleSheet("color: #888;")
         layout.addWidget(detail)
+
+        if timing_quality is not None:
+            start_conf, end_conf, drift_ms, snr_db = timing_quality
+            timing_box = QFrame()
+            timing_box.setStyleSheet(
+                "QFrame {"
+                " border: 1px solid #3a4a5c;"
+                " border-radius: 6px;"
+                " background-color: rgba(90, 120, 160, 0.12);"
+                "}"
+            )
+            timing_box_layout = QVBoxLayout(timing_box)
+            timing_box_layout.setContentsMargins(10, 8, 10, 8)
+            timing_box_layout.setSpacing(4)
+            timing = QLabel(
+                f"Timing Quality - start: {start_conf:.1f}, "
+                f"end: {end_conf:.1f}, drift: {drift_ms:.1f} ms, SNR: {snr_db:.1f} dB"
+            )
+            timing.setWordWrap(True)
+            timing.setStyleSheet("color: #9fb7d1;")
+            timing_box_layout.addWidget(timing)
+            timing_box.setToolTip(
+                "Timing quality guide:\n"
+                "Start confidence: higher is better.\n"
+                "End confidence: higher is better.\n"
+                "Drift (ms): lower is better.\n\n"
+                "SNR (dB): higher is better.\n\n"
+                "Confidence guide (rough):\n"
+                ">= 12 strong, 9-12 good, 7-9 borderline, < 7 weak.\n\n"
+                "Drift guide:\n"
+                "< 5 ms excellent\n"
+                "5-15 ms good\n"
+                "15-35 ms acceptable\n"
+                "> 35 ms may hurt repeatability.\n\n"
+                "SNR guide:\n"
+                ">= 35 dB excellent\n"
+                "25-35 dB good\n"
+                "15-25 dB usable\n"
+                "< 15 dB noisy."
+            )
+            layout.addWidget(timing_box)
 
         button_row = QHBoxLayout()
         button_row.setSpacing(10)
@@ -258,6 +341,7 @@ class MainWindow(QMainWindow):
         self._displayed_level_dbfs = -60.0
         self._last_input_devices: list[str] = []
         self._last_output_devices: list[str] = []
+        self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -861,6 +945,22 @@ class MainWindow(QMainWindow):
             )
             return
 
+        ambient_dbfs = float(self._last_level_dbfs)
+        if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
+            choice = QMessageBox.question(
+                self,
+                "Ambient Level Warning",
+                "Current ambient/input RMS looks high before queue start:\n"
+                f"{ambient_dbfs:.1f} dBFS (warning threshold: {_QUEUE_AMBIENT_WARN_DBFS:.1f} dBFS).\n\n"
+                "This can reduce measurement SNR.\n"
+                "Start queue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                self._statusbar.showMessage("Queue start canceled due to high ambient level.")
+                return
+
         self._queue_target = int(self._queue_n_spin.value())
         self._queue_index = 0
         self._current_sweep_attempts = 0
@@ -902,6 +1002,7 @@ class MainWindow(QMainWindow):
             return
 
         self._level_monitor.stop()
+        self._last_timing_quality = None
 
         sweep = generate_log_sweep(
             duration=float(self._settings.get("sweep_duration")),
@@ -914,6 +1015,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._on_sweep_finished)
         worker.error.connect(self._on_sweep_error)
         worker.progress.connect(self._on_sweep_progress)
+        worker.timing_quality.connect(self._on_timing_quality)
 
         self._active_sweep_worker = worker
         self._sweep_thread = _SweepThread(
@@ -927,6 +1029,13 @@ class MainWindow(QMainWindow):
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
             latency=str(self._settings.get("latency")),
+            start_alignment_confidence_min=float(
+                self._settings.get("start_alignment_confidence_min")
+            ),
+            end_marker_confidence_min=float(
+                self._settings.get("end_marker_confidence_min")
+            ),
+            timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -938,6 +1047,11 @@ class MainWindow(QMainWindow):
 
     def _on_sweep_progress(self, frac: float) -> None:
         self._sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
+
+    def _on_timing_quality(
+        self, start_conf: float, end_conf: float, drift_ms: float, snr_db: float
+    ) -> None:
+        self._last_timing_quality = (start_conf, end_conf, drift_ms, snr_db)
 
     def _on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
@@ -953,7 +1067,7 @@ class MainWindow(QMainWindow):
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
-                n_points=300,
+                n_points=600,
                 f_ref=1000.0,
                 normalize_ref=True,
             )
@@ -962,7 +1076,14 @@ class MainWindow(QMainWindow):
             self._state = AppState.PASS_FAIL
             self._apply_state_ui()
             self._update_plots(show_pending=True)
-            self._statusbar.showMessage("Sweep complete. Waiting for review.")
+            timing_msg = ""
+            if self._last_timing_quality is not None:
+                start_conf, end_conf, drift_ms, snr_db = self._last_timing_quality
+                timing_msg = (
+                    f" Timing Quality: start {start_conf:.1f}, "
+                    f"end {end_conf:.1f}, drift {drift_ms:.1f} ms, SNR {snr_db:.1f} dB."
+                )
+            self._statusbar.showMessage(f"Sweep complete. Waiting for review.{timing_msg}")
             QTimer.singleShot(0, self._show_pass_fail_dialog)
         except Exception as exc:
             self._on_sweep_error(f"Processing error: {exc}")
@@ -971,12 +1092,45 @@ class MainWindow(QMainWindow):
         self._cleanup_sweep_thread()
         self._close_pass_fail_dialog()
         self._pending_curve = None
+        self._last_timing_quality = None
         self._sweep_progress.setValue(0)
 
-        if self._queue_active():
-            self._state = AppState.IDLE
-        else:
-            self._state = AppState.IDLE
+        is_timing_quality_error = any(
+            token in message.lower()
+            for token in ["start-alignment confidence", "end-marker confidence", "timing drift"]
+        )
+        if (
+            self._queue_active()
+            and is_timing_quality_error
+            and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS
+        ):
+            self._state = AppState.QUEUE_RUNNING
+            self._apply_state_ui()
+            self._start_level_monitor()
+            retry_msg = (
+                f"{message}\n\n"
+                f"Measurement {self._queue_index + 1} did not meet timing quality.\n"
+                f"Retry attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?"
+            )
+            choice = QMessageBox.question(
+                self,
+                "Timing Quality Retry",
+                retry_msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self._statusbar.showMessage(
+                    f"{message} Retrying measurement {self._queue_index + 1} "
+                    f"({self._current_sweep_attempts}/{_MAX_SWEEP_ATTEMPTS})..."
+                )
+                QTimer.singleShot(150, self._start_next_sweep)
+                return
+            self._cancel_queue()
+            self._statusbar.showMessage("Queue canceled by user after timing-quality retry prompt.")
+            return
+
+        self._state = AppState.IDLE
 
         self._apply_state_ui()
         self._start_level_monitor()
@@ -1070,6 +1224,7 @@ class MainWindow(QMainWindow):
         dlg = PassFailDialog(
             index=self._queue_index + 1,
             total=max(self._queue_target, self._queue_index + 1),
+            timing_quality=self._last_timing_quality,
             parent=self,
         )
         dlg.adjustSize()
@@ -1329,17 +1484,37 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._cal_store.is_calibrated(input_device):
-            QMessageBox.information(
-                self,
-                "Calibration Required",
-                "This feature requires 94 dB SPL calibration for the "
-                "currently selected input device.",
-            )
-            return
-
-        dlg = TestLevelDialog(self._level_snapshot, self)
+        calibrated = self._cal_store.is_calibrated(input_device)
+        dlg = TestLevelDialog(
+            self._level_snapshot,
+            play_noise_fn=self._play_test_noise,
+            calibrated=calibrated,
+            parent=self,
+        )
         dlg.exec()
+
+    def _play_test_noise(self) -> Optional[str]:
+        output_device = self._current_output_device()
+        if not output_device:
+            return "No output device selected."
+        fs = int(self._settings.get("sample_rate"))
+        dur_s = 1.8
+        n = int(round(fs * dur_s))
+        if n <= 0:
+            return "Invalid sample rate for noise ping."
+        noise = (np.random.randn(n).astype(np.float32) * 0.04)
+        fade_n = min(max(8, int(0.01 * fs)), n // 2)
+        if fade_n > 0:
+            fade = np.linspace(0.0, 1.0, fade_n, dtype=np.float32)
+            noise[:fade_n] *= fade
+            noise[-fade_n:] *= fade[::-1]
+        try:
+            sd.stop()
+            sd.play(noise, samplerate=fs, device=output_device, blocking=False)
+        except Exception as exc:
+            return f"Noise ping failed: {exc}"
+        self._statusbar.showMessage("Played test noise ping on selected output device.")
+        return None
 
     def _level_snapshot(self) -> tuple[float, Optional[float], str]:
         input_device = self._current_input_device() or ""
@@ -1425,5 +1600,5 @@ class MainWindow(QMainWindow):
 
     def _refresh_window_title(self) -> None:
         self.setWindowTitle(
-            f"DMS fastgraph — {self._session.display_name()} @ {self._session.rig}"
+            f"DMS fastgraph Beta — {self._session.display_name()} @ {self._session.rig}"
         )

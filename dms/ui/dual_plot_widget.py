@@ -14,8 +14,9 @@ from typing import Optional
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QRect, QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
+import pyqtgraph.exporters
 
 
 pg.setConfigOption("background", "#1a1a1a")
@@ -80,6 +81,8 @@ class DualPlotWidget(QWidget):
 
         self._top_plot = _make_plot_widget("All Measurements (Top)")
         self._bot_plot = _make_plot_widget("Averaged Result (1/48 Oct RMS)")
+        self._setup_plot_context_menu(self._top_plot, "top_plot")
+        self._setup_plot_context_menu(self._bot_plot, "bottom_plot")
 
         layout.addWidget(self._top_plot, 1)
         layout.addWidget(self._bot_plot, 1)
@@ -156,6 +159,45 @@ class DualPlotWidget(QWidget):
 
     def bottom_plot_pixmap(self):
         return self._bot_plot.grab()
+
+    def _setup_plot_context_menu(self, pw: pg.PlotWidget, default_name: str) -> None:
+        # Hide pyqtgraph's large default context menu and replace with export-only options.
+        pw.setMenuEnabled(False)
+        pw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        pw.customContextMenuRequested.connect(
+            lambda pos, target=pw, name=default_name: self._show_export_menu(target, pos, name)
+        )
+
+    def _show_export_menu(self, pw: pg.PlotWidget, pos, default_name: str) -> None:
+        menu = QMenu(self)
+        export_png = menu.addAction("Export PNG...")
+        export_svg = menu.addAction("Export SVG...")
+        choice = menu.exec(pw.mapToGlobal(pos))
+        if choice is None:
+            return
+
+        if choice == export_png:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Plot PNG",
+                f"{default_name}.png",
+                "PNG Image (*.png)",
+            )
+            if path:
+                exporter = pyqtgraph.exporters.ImageExporter(pw.plotItem)
+                exporter.export(path)
+            return
+
+        if choice == export_svg:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Plot SVG",
+                f"{default_name}.svg",
+                "SVG Vector Image (*.svg)",
+            )
+            if path:
+                exporter = pyqtgraph.exporters.SVGExporter(pw.plotItem)
+                exporter.export(path)
 
     # ------------------------------------------------------------------
     # Internal drawing

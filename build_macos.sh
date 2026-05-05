@@ -26,4 +26,4 @@ rm -rf build dist
 
 echo
 echo "Built app bundle:"
-echo "  $ROOT_DIR/dist/DMS Fastgraph.app"
+echo "  $ROOT_DIR/dist/DMS Fastgraph Beta.app"

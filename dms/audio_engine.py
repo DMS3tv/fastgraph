@@ -53,42 +53,41 @@ def device_channel_count(device_name: str, kind: str = "input") -> int:
     return d[f"max_{kind}_channels"]
 
 
-def _extract_aligned_sweep_recording(
-    recording: np.ndarray,
-    sweep: np.ndarray,
-) -> np.ndarray:
-    """
-    Find the sweep's actual start in the recording and return the aligned slice.
-
-    This avoids buffer-size-dependent truncation when stream latency shifts the
-    captured sweep away from the nominal pre-silence boundary.
-    """
-    rec = recording.astype(np.float64, copy=False)
-    sw = sweep.astype(np.float64, copy=False)
-
-    if len(rec) < len(sw):
-        raise ValueError("Recording shorter than expected.")
-
-    full_len = len(rec) + len(sw) - 1
+def _normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
+    """Return valid cross-correlation sequence between signal and pattern."""
+    sig = signal.astype(np.float64, copy=False)
+    pat = pattern.astype(np.float64, copy=False)
+    full_len = len(sig) + len(pat) - 1
     nfft = int(2 ** np.ceil(np.log2(full_len)))
-
-    # Convolution with the time-reversed sweep gives us the valid correlation
-    # sequence, offset by len(sw) - 1 samples.
     corr_full = np.fft.irfft(
-        np.fft.rfft(rec, n=nfft) * np.fft.rfft(sw[::-1], n=nfft),
+        np.fft.rfft(sig, n=nfft) * np.fft.rfft(pat[::-1], n=nfft),
         n=nfft,
     )[:full_len]
-    corr_valid = corr_full[len(sw) - 1: len(rec)]
+    return corr_full[len(pat) - 1: len(sig)]
 
-    if len(corr_valid) == 0:
-        raise ValueError("Unable to align recording to sweep.")
 
-    start_idx = int(np.argmax(np.abs(corr_valid)))
-    end_idx = start_idx + len(sw)
-    if end_idx > len(rec):
-        raise ValueError("Aligned recording shorter than expected.")
+def _peak_to_rms_confidence(values: np.ndarray) -> float:
+    if len(values) == 0:
+        return 0.0
+    peak = float(np.max(np.abs(values)))
+    rms = float(np.sqrt(np.mean(np.square(values))))
+    return peak / max(rms, 1e-12)
 
-    return rec[start_idx:end_idx].astype(np.float32, copy=False)
+
+def _build_end_marker(fs: int) -> np.ndarray:
+    """
+    Build a short broadband chirp marker used to validate end timing.
+    """
+    dur_s = 0.018
+    n = max(8, int(round(dur_s * fs)))
+    t = np.arange(n, dtype=np.float64) / float(fs)
+    f0 = 3500.0
+    f1 = 10500.0
+    k = (f1 - f0) / max(dur_s, 1e-9)
+    phase = 2.0 * np.pi * (f0 * t + 0.5 * k * t * t)
+    marker = np.sin(phase)
+    marker *= np.hanning(n)
+    return (0.5 * marker).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +178,7 @@ class SweepWorker(QObject):
     finished = pyqtSignal(np.ndarray, np.ndarray)   # recording, sweep
     error = pyqtSignal(str)
     progress = pyqtSignal(float)                     # 0.0 … 1.0
+    timing_quality = pyqtSignal(float, float, float, float)  # start_conf, end_conf, drift_ms, snr_db
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -198,6 +198,9 @@ class SweepWorker(QObject):
         pre_silence: float = 0.2,
         post_silence: float = 0.5,
         latency: str = "low",
+        start_alignment_confidence_min: float = 9.0,
+        end_marker_confidence_min: float = 7.0,
+        timing_drift_max_ms: float = 35.0,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -205,6 +208,7 @@ class SweepWorker(QObject):
             self._run_inner(
                 sweep, output_device, input_device, input_channel,
                 fs, buffer_size, pre_silence, post_silence, latency,
+                start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -214,6 +218,7 @@ class SweepWorker(QObject):
     def _run_inner(
         self, sweep, output_device, input_device, input_channel,
         fs, buffer_size, pre_silence, post_silence, latency,
+        start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
     ) -> None:
         in_dev = device_by_name(input_device)
         out_dev = device_by_name(output_device)
@@ -237,16 +242,21 @@ class SweepWorker(QObject):
         pre_n = int(pre_silence * fs)
         post_n = int(post_silence * fs)
         sweep_n = len(sweep)
-        total_n = pre_n + sweep_n + post_n
+        marker = _build_end_marker(fs)
+        marker_gap_n = int(round(0.03 * fs))
+        excitation = np.concatenate(
+            [sweep.astype(np.float32, copy=False), np.zeros(marker_gap_n, dtype=np.float32), marker]
+        )
+        total_n = pre_n + len(excitation) + post_n
 
         # Build output signal (stereo if needed, sweep on both channels)
         if n_out_ch >= 2:
             out_signal = np.zeros((total_n, 2), dtype=np.float32)
-            out_signal[pre_n: pre_n + sweep_n, 0] = sweep
-            out_signal[pre_n: pre_n + sweep_n, 1] = sweep
+            out_signal[pre_n: pre_n + len(excitation), 0] = excitation
+            out_signal[pre_n: pre_n + len(excitation), 1] = excitation
         else:
             out_signal = np.zeros((total_n, 1), dtype=np.float32)
-            out_signal[pre_n: pre_n + sweep_n, 0] = sweep
+            out_signal[pre_n: pre_n + len(excitation), 0] = excitation
 
         if self._abort.is_set():
             return
@@ -288,12 +298,81 @@ class SweepWorker(QObject):
 
         self.progress.emit(1.0)
 
-        # Extract the recording aligned to the actual sweep start.
         rec_mono = recording[:, 0]
+        if len(rec_mono) < sweep_n:
+            self.error.emit("Recording shorter than expected.")
+            return
+
         try:
-            sweep_rec = _extract_aligned_sweep_recording(rec_mono, sweep)
+            corr_valid = _normalized_corr_valid(rec_mono, sweep.astype(np.float32, copy=False))
+            if len(corr_valid) == 0:
+                raise ValueError("Unable to align recording to sweep.")
+            start_conf = _peak_to_rms_confidence(corr_valid)
+            if start_conf < float(start_alignment_confidence_min):
+                raise ValueError(
+                    f"Low start-alignment confidence ({start_conf:.1f}). "
+                    "Please reduce noise, increase playback level, or use higher latency."
+                )
+
+            start_idx = int(np.argmax(np.abs(corr_valid)))
+            end_idx = start_idx + sweep_n
+            if end_idx > len(rec_mono):
+                raise ValueError("Aligned recording shorter than expected.")
+            sweep_rec = rec_mono[start_idx:end_idx].astype(np.float32, copy=False)
+
+            # Validate end timing using a dedicated marker near the sweep end.
+            expected_marker = start_idx + sweep_n + marker_gap_n
+            marker_search = int(round(0.08 * fs))
+            search_start = max(0, expected_marker - marker_search)
+            search_stop = min(len(rec_mono), expected_marker + marker_search + len(marker))
+            marker_region = rec_mono[search_start:search_stop]
+            marker_corr = _normalized_corr_valid(marker_region, marker)
+            if len(marker_corr) == 0:
+                raise ValueError("Unable to verify end marker timing.")
+            marker_conf = _peak_to_rms_confidence(marker_corr)
+            if marker_conf < float(end_marker_confidence_min):
+                raise ValueError(
+                    f"Low end-marker confidence ({marker_conf:.1f}). "
+                    "Timing reliability is low; retrying is recommended."
+                )
+
+            marker_offset = int(np.argmax(np.abs(marker_corr)))
+            marker_start = search_start + marker_offset
+            timing_err = abs(marker_start - expected_marker)
+            max_drift_samples = int(round((float(timing_drift_max_ms) / 1000.0) * fs))
+            if timing_err > max_drift_samples:
+                ms = 1000.0 * timing_err / float(fs)
+                raise ValueError(
+                    f"Timing drift too large ({ms:.1f} ms). "
+                    "Please retry and consider high latency mode."
+                )
+            drift_ms = 1000.0 * timing_err / float(fs)
+
+            # Estimate simple measurement SNR from ambient segments near the sweep.
+            noise_win_n = int(round(0.12 * fs))
+            pre_noise = rec_mono[max(0, start_idx - noise_win_n):start_idx]
+            post_noise_start = marker_start + len(marker)
+            post_noise = rec_mono[
+                post_noise_start:min(len(rec_mono), post_noise_start + noise_win_n)
+            ]
+            noise_parts = [seg for seg in (pre_noise, post_noise) if len(seg) > 8]
+            if noise_parts:
+                noise_concat = np.concatenate(noise_parts)
+                noise_rms = float(np.sqrt(np.mean(np.square(noise_concat))))
+            else:
+                noise_rms = 0.0
+            signal_rms = float(np.sqrt(np.mean(np.square(sweep_rec))))
+            if noise_rms > 1e-12 and signal_rms > 0.0:
+                snr_db = 20.0 * np.log10(signal_rms / noise_rms)
+            elif signal_rms > 0.0:
+                snr_db = 120.0
+            else:
+                snr_db = 0.0
         except ValueError as exc:
             self.error.emit(str(exc))
             return
 
+        self.timing_quality.emit(
+            float(start_conf), float(marker_conf), float(drift_ms), float(snr_db)
+        )
         self.finished.emit(sweep_rec, sweep)

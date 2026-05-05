@@ -105,7 +105,7 @@ def normalize_at_1khz(
 def downsample_to_log_points(
     freqs: np.ndarray,
     mag_db: np.ndarray,
-    n_points: int = 300,
+    n_points: int = 600,
     f_ref: float = 1000.0,
     normalize_ref: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:

@@ -36,18 +36,27 @@ def get_input_devices() -> list[dict]:
         return []
 
 
-def device_by_name(name: str) -> Optional[dict]:
+def device_by_name(name: str, kind: Optional[str] = None) -> Optional[dict]:
     try:
-        for d in sd.query_devices():
-            if d["name"] == name:
-                return d
+        matches = [d for d in sd.query_devices() if d["name"] == name]
+        if not matches:
+            return None
+        if kind == "input":
+            input_matches = [d for d in matches if d.get("max_input_channels", 0) > 0]
+            if input_matches:
+                return max(input_matches, key=lambda d: int(d.get("max_input_channels", 0)))
+        elif kind == "output":
+            output_matches = [d for d in matches if d.get("max_output_channels", 0) > 0]
+            if output_matches:
+                return max(output_matches, key=lambda d: int(d.get("max_output_channels", 0)))
+        return matches[0]
     except Exception:
         pass
     return None
 
 
 def device_channel_count(device_name: str, kind: str = "input") -> int:
-    d = device_by_name(device_name)
+    d = device_by_name(device_name, kind=kind)
     if d is None:
         return 0
     return d[f"max_{kind}_channels"]
@@ -114,7 +123,7 @@ class LevelMonitor(QObject):
             self._channel = channel_index
             self._running = True
         try:
-            dev = device_by_name(device_name)
+            dev = device_by_name(device_name, kind="input")
             if dev is None:
                 self.error_occurred.emit(f"Device not found: {device_name}")
                 return
@@ -220,8 +229,8 @@ class SweepWorker(QObject):
         fs, buffer_size, pre_silence, post_silence, latency,
         start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
     ) -> None:
-        in_dev = device_by_name(input_device)
-        out_dev = device_by_name(output_device)
+        in_dev = device_by_name(input_device, kind="input")
+        out_dev = device_by_name(output_device, kind="output")
         if in_dev is None:
             self.error.emit(f"Input device unavailable: {input_device}")
             return

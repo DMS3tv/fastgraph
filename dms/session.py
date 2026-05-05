@@ -15,6 +15,7 @@ class SessionData:
     anc_mode: bool = False
     transparency_mode: bool = False
     form_factor: str = "over-ear"
+    in_ear_fitment: str = ""
     open_back: bool = True
     pads_notes: str = ""
     connection: str = "wired analog"
@@ -49,6 +50,8 @@ class SessionData:
             anc_line = "Off"
         lines.append(f"* ANC/Transparency: {anc_line}")
         lines.append(f"* Form Factor: {self.form_factor}")
+        if self.form_factor == "in-ear" and self.in_ear_fitment:
+            lines.append(f"* In-ear Fitment: {self.in_ear_fitment}")
         lines.append(
             f"* Acoustic Type: {'Open Back' if self.open_back else 'Closed Back'}"
         )

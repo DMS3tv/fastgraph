@@ -420,6 +420,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1100, 700)
 
         self._build_ui()
+        if bool(self._settings.get("bluetooth_headphone_mode")):
+            self._apply_bluetooth_headphone_mode_settings(notify=False)
         self._restore_hrtf_state()
         self._refresh_devices()
         self._start_level_monitor()
@@ -493,6 +495,24 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+
+        bt_mode_box = QGroupBox("Measurement Mode")
+        bt_mode_layout = QVBoxLayout(bt_mode_box)
+        self._bluetooth_mode_toggle = ToggleSwitch("Bluetooth Headphone Mode")
+        self._bluetooth_mode_toggle.setChecked(
+            bool(self._settings.get("bluetooth_headphone_mode"))
+        )
+        self._bluetooth_mode_toggle.stateChanged.connect(
+            self._on_bluetooth_mode_changed
+        )
+        bt_mode_layout.addWidget(self._bluetooth_mode_toggle)
+        bt_hint = QLabel(
+            "Applies safer timing settings for Bluetooth latency/jitter paths."
+        )
+        bt_hint.setWordWrap(True)
+        bt_hint.setStyleSheet("color: #91a2ba;")
+        bt_mode_layout.addWidget(bt_hint)
+        layout.addWidget(bt_mode_box)
 
         self._clear_metadata_btn = QPushButton("Clear Metadata")
         self._clear_metadata_btn.clicked.connect(self._clear_metadata)
@@ -594,10 +614,19 @@ class MainWindow(QMainWindow):
         self._queue_level_persist_toggle.stateChanged.connect(
             self._on_queue_level_persist_changed
         )
-        level_layout.addWidget(self._queue_level_persist_toggle)
+        persist_layout = QVBoxLayout()
+        persist_layout.setContentsMargins(0, 0, 0, 0)
+        persist_layout.setSpacing(2)
+        persist_layout.addWidget(
+            self._queue_level_persist_toggle,
+            0,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
         self._queue_level_persist_label = QLabel("Remember this level")
         self._queue_level_persist_label.setStyleSheet("color: #d8e0ec;")
-        level_layout.addWidget(self._queue_level_persist_label)
+        self._queue_level_persist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        persist_layout.addWidget(self._queue_level_persist_label)
+        level_layout.addLayout(persist_layout)
         level_layout.addStretch(1)
         queue_layout.addLayout(level_layout)
 
@@ -1155,6 +1184,7 @@ class MainWindow(QMainWindow):
             self._queue_level_spin,
             self._queue_level_persist_toggle,
             self._queue_level_persist_label,
+            self._bluetooth_mode_toggle,
             self._variation_toggle,
             self._hrtf_toggle,
             self._hrtf_load_btn,
@@ -1281,6 +1311,9 @@ class MainWindow(QMainWindow):
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
             latency=str(self._settings.get("latency")),
+            bluetooth_headphone_mode=bool(
+                self._settings.get("bluetooth_headphone_mode")
+            ),
             start_alignment_confidence_min=float(
                 self._settings.get("start_alignment_confidence_min")
             ),
@@ -1724,6 +1757,46 @@ class MainWindow(QMainWindow):
         self._settings.set("queue_output_level_persist", persist)
         if persist:
             self._settings.set("queue_output_level_db", float(self._queue_level_spin.value()))
+
+    def _on_bluetooth_mode_changed(self, _state: int) -> None:
+        enabled = self._bluetooth_mode_toggle.isChecked()
+        self._settings.set("bluetooth_headphone_mode", enabled)
+        if enabled:
+            self._apply_bluetooth_headphone_mode_settings(notify=True)
+            return
+        self._apply_standard_measurement_mode_settings()
+        self._statusbar.showMessage("Bluetooth headphone mode disabled.")
+
+    def _apply_bluetooth_headphone_mode_settings(self, notify: bool) -> None:
+        # Conservative defaults for Bluetooth transport jitter/latency.
+        updates = {
+            "sweep_duration": 3.5,
+            "latency": "high",
+            "buffer_size": 512,
+            "pre_sweep_silence": 0.6,
+            "post_sweep_silence": 0.8,
+            "start_alignment_confidence_min": 3.0,
+            "end_marker_confidence_min": 2.5,
+            "timing_drift_max_ms": 120.0,
+        }
+        self._settings.update(updates)
+        if notify:
+            self._statusbar.showMessage(
+                "Bluetooth mode applied: high latency, 512 buffer, and Bluetooth-safe timing thresholds."
+            )
+
+    def _apply_standard_measurement_mode_settings(self) -> None:
+        updates = {
+            "sweep_duration": 2.0,
+            "latency": "low",
+            "buffer_size": 1024,
+            "pre_sweep_silence": 0.2,
+            "post_sweep_silence": 0.5,
+            "start_alignment_confidence_min": 9.0,
+            "end_marker_confidence_min": 7.0,
+            "timing_drift_max_ms": 35.0,
+        }
+        self._settings.update(updates)
 
     def _choose_export_directory(self) -> None:
         current = self._export_dir_input.text().strip()

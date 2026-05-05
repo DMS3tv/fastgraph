@@ -21,6 +21,7 @@ _DEFAULTS: dict[str, Any] = {
     "pre_sweep_silence": 0.2,
     "post_sweep_silence": 0.5,
     "latency": "low",
+    "bluetooth_headphone_mode": False,
     "start_alignment_confidence_min": 9.0,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,

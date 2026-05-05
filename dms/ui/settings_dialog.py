@@ -116,7 +116,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel(
             '<span style="color:#888; font-size:11px;">'
             "Buffer size / latency mode affect reliability on some OSes.<br>"
-            "If recording has artifacts, increase buffer size or use 'high' latency."
+            "If recording has artifacts/dropouts, increase buffer size or use 'high' latency.<br>"
+            "If timing drift/latency is unstable (especially Bluetooth), try lowering buffer size."
             "</span>"
         ))
         layout.addWidget(QLabel(

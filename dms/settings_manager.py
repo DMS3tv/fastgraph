@@ -26,6 +26,10 @@ _DEFAULTS: dict[str, Any] = {
     "timing_drift_max_ms": 35.0,
     "update_check_enabled": True,
     "update_feed_url": "",
+    "squiglink_host": "sftp.squig.link",
+    "squiglink_port": 2022,
+    "squiglink_remember_credentials": False,
+    "squiglink_credentials_encrypted": None,
 }
 
 

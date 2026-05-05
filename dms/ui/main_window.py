@@ -4,6 +4,7 @@ Orchestrates: device selectors, level meter, dual plot, queue control,
 pass/fail UI, HRTF selector, settings/calibration, and export.
 """
 
+import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -12,6 +13,7 @@ import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -51,8 +53,10 @@ from dms.processing import (
     normalize_at_1khz,
     smooth_fractional_octave,
 )
+from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
+from dms.squiglink import upload_export_sftp
 from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
@@ -313,6 +317,68 @@ class PassFailDialog(QDialog):
     def _accept_cancel(self) -> None:
         self._choice = self.CANCEL
         self.accept()
+
+
+class SquiglinkAuthDialog(QDialog):
+    def __init__(
+        self,
+        parent=None,
+        initial_username: str = "",
+        initial_password: str = "",
+        remember: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Upload to Squiglink")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Enter your Squiglink SFTP credentials."))
+
+        layout.addWidget(QLabel("Username"))
+        self._username = QLineEdit()
+        self._username.setText(initial_username)
+        layout.addWidget(self._username)
+
+        layout.addWidget(QLabel("Password"))
+        self._password = QLineEdit()
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._password.setText(initial_password)
+        layout.addWidget(self._password)
+
+        self._remember = QCheckBox("Remember credentials on this device")
+        self._remember.setChecked(remember)
+        layout.addWidget(self._remember)
+
+        self._status = QLabel("")
+        self._status.setStyleSheet("color: #ff8888;")
+        layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        upload_btn = QPushButton("Upload")
+        upload_btn.clicked.connect(self._accept_if_valid)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(upload_btn)
+        layout.addLayout(btn_row)
+
+    def _accept_if_valid(self) -> None:
+        if not self.username():
+            self._status.setText("Username is required.")
+            return
+        if not self.password():
+            self._status.setText("Password is required.")
+            return
+        self.accept()
+
+    def username(self) -> str:
+        return self._username.text().strip()
+
+    def password(self) -> str:
+        return self._password.text()
+
+    def remember_credentials(self) -> bool:
+        return self._remember.isChecked()
 
 
 class MainWindow(QMainWindow):
@@ -668,6 +734,26 @@ class MainWindow(QMainWindow):
         )
         export_layout.addWidget(export_btn)
         self._export_btn = export_btn
+
+        self._upload_btn = QPushButton("Upload to Squiglink")
+        self._upload_btn.clicked.connect(self._upload_to_squiglink)
+        self._upload_btn.setStyleSheet(
+            "QPushButton {"
+            " background-color: #1d5e33;"
+            " color: #d7ffe3;"
+            " border: 1px solid #2f7f49;"
+            " border-radius: 6px;"
+            " padding: 8px 14px;"
+            " font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #257743; }"
+            "QPushButton:disabled {"
+            " background-color: #244031;"
+            " color: #88a091;"
+            " border: 1px solid #345345;"
+            "}"
+        )
+        export_layout.addWidget(self._upload_btn)
         layout.addWidget(export_box)
 
         layout.addStretch(1)
@@ -1777,7 +1863,100 @@ class MainWindow(QMainWindow):
         self._export_btn.setToolTip(
             "Export averaged FR as a REW-style TXT file (available in all bottom-view modes)."
         )
-        self._export_btn.setEnabled(self._state == AppState.IDLE and self._average is not None)
+        enabled = self._state == AppState.IDLE and self._average is not None
+        self._export_btn.setEnabled(enabled)
+        self._upload_btn.setEnabled(enabled)
+
+    def _squiglink_endpoint(self) -> tuple[str, int]:
+        host = str(self._settings.get("squiglink_host") or "").strip()
+        port = int(self._settings.get("squiglink_port") or 22)
+        return host, port
+
+    def _upload_to_squiglink(self) -> None:
+        curve = self._bottom_curve_for_display_and_export()
+        if curve is None:
+            QMessageBox.information(
+                self,
+                "Nothing to Upload",
+                "No averaged curve available yet.",
+            )
+            return
+
+        host, port = self._squiglink_endpoint()
+        if not host:
+            QMessageBox.warning(
+                self,
+                "Squiglink Not Configured",
+                "Squiglink SFTP host is not configured yet. Add it later in settings.json.",
+            )
+            return
+
+        saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
+        remember_saved = bool(self._settings.get("squiglink_remember_credentials"))
+        auth = SquiglinkAuthDialog(
+            self,
+            initial_username=saved[0] if saved else "",
+            initial_password=saved[1] if saved else "",
+            remember=remember_saved,
+        )
+        if auth.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        username = auth.username()
+        password = auth.password()
+        remember = auth.remember_credentials()
+        self._settings.set("squiglink_remember_credentials", remember)
+        if remember:
+            self._settings.set(
+                "squiglink_credentials_encrypted",
+                encrypt_credentials(username, password),
+            )
+        else:
+            self._settings.set("squiglink_credentials_encrypted", None)
+
+        compensated = self._is_hrtf_active()
+        filename = build_filename(self._session, compensated=compensated)
+        freqs, mag_db = curve
+
+        tmp_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".txt",
+                prefix="dms_sq_",
+                delete=False,
+            ) as tmp:
+                tmp_path = Path(tmp.name)
+            final_tmp = tmp_path.with_name(filename)
+            tmp_path.rename(final_tmp)
+            tmp_path = final_tmp
+            export_curve(
+                freqs=freqs,
+                mag_db=mag_db,
+                session=self._session,
+                output_path=tmp_path,
+                compensated=compensated,
+                hrtf=self._hrtf if compensated else None,
+                n_sweeps=len(self._kept_curves),
+            )
+            upload_export_sftp(
+                local_path=tmp_path,
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+            )
+            self._statusbar.showMessage("Upload to Squiglink completed successfully.")
+            QMessageBox.information(self, "Upload Complete", "Upload to Squiglink completed successfully.")
+        except Exception as exc:
+            self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
+            QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def closeEvent(self, event) -> None:
         self._close_pass_fail_dialog()

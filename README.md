@@ -31,6 +31,24 @@ CoreAudio is used automatically. No extra steps.
 
 WASAPI or MME backends are used. No extra steps.
 
+## Packaging For Windows
+
+Build the Windows app on a Windows machine:
+
+```powershell
+cd C:\path\to\fastgraph
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
+.\build_windows.ps1
+```
+
+The finished app folder and shareable zip will be created at:
+
+```powershell
+dist\DMS Fastgraph Beta
+dist\DMS Fastgraph Beta-windows-x64.zip
+```
+
 ## HRTF Files
 
 Plain TXT, two columns: `frequency_hz  magnitude_db`  

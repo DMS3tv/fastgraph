@@ -33,6 +33,7 @@ def export_curve(
     output_path: Path,
     compensated: bool,
     hrtf: Optional[HRTFCurve] = None,
+    n_sweeps: Optional[int] = None,
 ) -> None:
     """Write REW-compatible TXT file."""
     header = session.to_rew_header()
@@ -43,6 +44,8 @@ def export_curve(
         f"* Export Date: {now}",
         f"* Compensated: {'Yes' if compensated else 'No'}",
     ]
+    if n_sweeps is not None and n_sweeps > 0:
+        lines.append(f"* Average Sweeps: {int(n_sweeps)}")
     if compensated and hrtf:
         lines.append(f"* HRTF File: {hrtf.name}")
 

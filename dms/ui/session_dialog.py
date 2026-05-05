@@ -9,6 +9,15 @@ from dms.settings_manager import SettingsManager
 
 
 class SessionDialog(QDialog):
+    _RIG_OPTIONS = [
+        "KB500X",
+        "B&K 4128",
+        "B&K 5128",
+        "KB006X",
+        "EARS PRO 711",
+        "RA0402 (711)",
+    ]
+
     def __init__(
         self,
         settings: SettingsManager,
@@ -40,7 +49,9 @@ class SessionDialog(QDialog):
             w.setPlaceholderText(placeholder)
             return w
 
-        self._rig = line("e.g. B&K 5128")
+        self._rig = QComboBox()
+        self._rig.setEditable(False)
+        self._rig.addItems(self._RIG_OPTIONS)
         self._brand = line("e.g. Sennheiser")
         self._model = line("e.g. HD 800 S")
         self._model_number = line("optional")
@@ -48,8 +59,10 @@ class SessionDialog(QDialog):
         self._firmware = line("optional")
 
         self._eq = QCheckBox("EQ applied")
-        self._anc = QCheckBox("ANC / transparency active")
-        self._anc_name = line("mode name if applicable")
+        self._anc = QCheckBox("ANC active")
+        self._transparency = QCheckBox("Transparency active")
+        self._anc.toggled.connect(self._on_anc_toggled)
+        self._transparency.toggled.connect(self._on_transparency_toggled)
 
         self._form_factor = QComboBox()
         self._form_factor.addItems(["over-ear", "on-ear", "in-ear"])
@@ -75,7 +88,7 @@ class SessionDialog(QDialog):
         form.addRow("Firmware", self._firmware)
         form.addRow("", self._eq)
         form.addRow("", self._anc)
-        form.addRow("ANC Mode Name", self._anc_name)
+        form.addRow("", self._transparency)
         form.addRow("Form Factor", self._form_factor)
         form.addRow("Acoustic Type", self._open_back)
         form.addRow("Pads / Tips Notes", self._pads)
@@ -99,7 +112,7 @@ class SessionDialog(QDialog):
 
     def _validate_and_accept(self) -> None:
         missing = []
-        if not self._rig.text().strip():
+        if not self._rig.currentText().strip():
             missing.append("Rig")
         if not self._brand.text().strip():
             missing.append("Brand")
@@ -115,7 +128,9 @@ class SessionDialog(QDialog):
             return
 
         s = self._initial_session
-        self._rig.setText(s.rig)
+        rig_idx = self._rig.findText(s.rig)
+        if rig_idx >= 0:
+            self._rig.setCurrentIndex(rig_idx)
         self._brand.setText(s.brand)
         self._model.setText(s.model)
         self._model_number.setText(s.model_number)
@@ -123,7 +138,7 @@ class SessionDialog(QDialog):
         self._firmware.setText(s.firmware)
         self._eq.setChecked(s.eq_applied)
         self._anc.setChecked(s.anc_mode)
-        self._anc_name.setText(s.anc_mode_name)
+        self._transparency.setChecked(getattr(s, "transparency_mode", False))
         self._form_factor.setCurrentText(s.form_factor)
         self._open_back.setCurrentText("open back" if s.open_back else "closed back")
         self._pads.setText(s.pads_notes)
@@ -131,7 +146,7 @@ class SessionDialog(QDialog):
 
     def session_data(self) -> SessionData:
         return SessionData(
-            rig=self._rig.text().strip(),
+            rig=self._rig.currentText().strip(),
             brand=self._brand.text().strip(),
             model=self._model.text().strip(),
             model_number=self._model_number.text().strip(),
@@ -139,9 +154,23 @@ class SessionDialog(QDialog):
             firmware=self._firmware.text().strip(),
             eq_applied=self._eq.isChecked(),
             anc_mode=self._anc.isChecked(),
-            anc_mode_name=self._anc_name.text().strip(),
+            transparency_mode=self._transparency.isChecked(),
             form_factor=self._form_factor.currentText(),
             open_back=self._open_back.currentText() == "open back",
             pads_notes=self._pads.text().strip(),
             connection=self._connection.currentText(),
         )
+
+    def _on_anc_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        self._transparency.blockSignals(True)
+        self._transparency.setChecked(False)
+        self._transparency.blockSignals(False)
+
+    def _on_transparency_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        self._anc.blockSignals(True)
+        self._anc.setChecked(False)
+        self._anc.blockSignals(False)

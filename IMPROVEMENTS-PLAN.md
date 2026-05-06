@@ -117,6 +117,8 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 
 ## Working Session Notes
 
+- 2026-05-06: Bumped app version from `0.1.3` to `0.2.0` in `dms/version.py`.
+- Versioning guidance for future workers: when a session lands notable user-facing behavior changes, increment the app version in `dms/version.py` and add a short note in this plan so release intent stays visible.
 - 2026-05-06: Implemented fixture-free measurement import by drag-dropping local `.txt` files onto the top viewport.
 - Import rules: accept local `.txt` only; parse permissive two-column REW-style text (whitespace/comma delimiters, header/comment skipping); require at least 2 valid rows and at least 2 positive-frequency rows; sort ascending by frequency before use.
 - Runtime behavior: import is allowed only while app state is idle; valid files append to kept curves and trigger recompute/update; mixed drops show warnings and keep partial success.

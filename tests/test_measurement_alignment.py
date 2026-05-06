@@ -762,6 +762,40 @@ def test_sample_rate_drift_produces_drift_failure_when_large() -> None:
         align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
 
+def test_bluetooth_stretched_playback_keeps_end_marker_confidence() -> None:
+    fs = 8_000
+    sweep = _test_sweep(int(round(3.5 * fs)))
+    layout = build_measurement_layout(
+        sweep=sweep,
+        fs=fs,
+        pre_silence_s=0.6,
+        post_silence_s=0.8,
+        bluetooth_headphone_mode=True,
+    )
+    stretched_excitation = _time_stretch(layout.excitation, 1.04)
+    rec = np.zeros(
+        layout.excitation_start_sample
+        + len(stretched_excitation)
+        + layout.post_silence_samples
+        + 512,
+        dtype=np.float32,
+    )
+    _write_at(rec, layout.excitation_start_sample, stretched_excitation)
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.end.marker_confidence >= 2.5
+    assert result.diagnostics.raw_marker_confidence == pytest.approx(
+        result.end.marker_confidence
+    )
+    assert result.end.spacing_error_samples <= int(round(960.0 * fs / 48000.0))
+    assert result.diagnostics.marker_template_stretch is not None
+    assert result.diagnostics.marker_template_stretch > 1.0
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
+    )
+
+
 def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
     sweep, layout = _layout(bluetooth=True)
     bad_rec = np.zeros(layout.total_samples, dtype=np.float32)

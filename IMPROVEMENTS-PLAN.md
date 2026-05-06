@@ -2,6 +2,17 @@
 
 This is a living working plan for improving DMS Fastgraph over the next few sessions. The priority order is intentional: measurement trust first, then architecture and tests, then workflow polish, persistence, export, and release quality.
 
+## Fast-Track Priority Guide
+
+For the next few sessions, optimize for faster progress on measurement reliability rather than broad app hardening.
+
+- [ ] **[NOW] Bluetooth profile behavior** - Preserve custom standard-mode settings, make Bluetooth mode a clear profile, and keep the proven Bluetooth defaults easy to reason about.
+- [ ] **[NOW] Structured retry cleanup** - Use the new failure reasons for retry decisions instead of string matching, because this is small and directly supports Bluetooth reliability.
+- [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
+- [ ] **[NEXT] Settings validation for measurement-critical fields** - Validate sweep duration, buffer, latency, silence, confidence, and drift settings before broader settings architecture work.
+- [ ] **[DEFER] Large architecture split** - Main-window/controller extraction is valuable, but not needed before the Bluetooth workflow is reliable.
+- [ ] **[DEFER] Persistence, release docs, upload polish, and broad CI** - Keep these visible but postpone until measurement reliability feels stable in real use.
+
 ## Review Snapshot
 
 ### App Purpose
@@ -22,14 +33,14 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 ### Current Concerns
 
 - [ ] **[P0] Bluetooth measurement reliability is the top product risk** - Wireless headphones can introduce wake-up delay, codec buffering, latency jitter, sample-rate drift, and false marker locks. The current app has some compensation, but the detection logic is still hard to reason about and hard to regression test.
-- [ ] **[P0] Automated test suite is still narrow outside measurement timing** - The repo now has focused measurement layout/alignment tests, but processing, settings, export, HRTF, queue retry, fake-device, and UI-controller paths still need coverage.
-- [ ] **[P0] Hardware-dependent logic still needs a broader simulator** - Synthetic recording tests exist for alignment, but there is no fake audio backend for queue/retry behavior or full play/record orchestration.
+- [ ] **[P1][NEXT] Automated test suite is still narrow outside measurement timing** - Focus next test expansion on settings/profile behavior and queue retry only. Defer processing, export, HRTF, and broad UI-controller coverage.
+- [ ] **[P1][NEXT] Hardware-dependent logic still needs a focused simulator** - Add a minimal fake audio backend for queue/retry diagnostics. Defer a full play/record orchestration simulator.
 - [x] **[P0] False marker peak regression is covered** - End-marker scoring now evaluates ordered marker pairs, so louder false marker-like peaks no longer beat the valid pair in the focused synthetic Bluetooth test.
-- [ ] **[P1] Measurement engine is improved but still concentrated** - Sweep construction and alignment have been extracted, but `SweepWorker._run_inner()` still mixes device I/O, progress polling, validation, Qt signals, and user-facing error flow.
-- [ ] **[P1] Main window does too much** - `MainWindow` handles UI construction, queue state, measurement orchestration, device monitoring, export, upload, settings, metadata, HRTF, calibration, update checks, and error prompts.
-- [ ] **[P1] Settings are weakly typed** - Settings load/save silently ignores failures, has no schema validation, and Bluetooth mode overwrites normal-mode values with hard-coded defaults.
-- [ ] **[P2] Measurement sessions are not durable** - Metadata and kept curves are in memory only, so a queue cannot be resumed after restart or crash.
-- [ ] **[P2] Network upload blocks the UI** - Squiglink upload runs synchronously from the main window.
+- [ ] **[P2][DEFER] Measurement engine is improved but still concentrated** - `SweepWorker._run_inner()` still mixes I/O, progress polling, Qt signals, and error flow. Defer unless it blocks fake-audio retry tests.
+- [ ] **[P2][DEFER] Main window does too much** - A controller split is valuable but large. Defer until Bluetooth measurement behavior is solid.
+- [ ] **[P0][NOW] Measurement settings need profile-aware handling** - Bluetooth mode should stop overwriting custom standard-mode values permanently.
+- [ ] **[P2][DEFER] Measurement sessions are not durable** - Useful for long-term workflow quality, but not needed for the immediate Bluetooth reliability push.
+- [ ] **[P2][DEFER] Network upload blocks the UI** - Annoying during upload workflows, but not central to measurement trust. Defer unless users hit it often.
 
 ## P0: Measurement Trust And Bluetooth Reliability
 
@@ -39,35 +50,35 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Add acceptance tests for current failure modes** - Done for low start confidence, low end-marker confidence, short/truncated recordings, drift rejection, sample-rate drift, and retry-after-failure.
 - [x] **Harden end-marker pair scoring** - Done in `dms/measurement_alignment.py`. Detection now compares ordered marker-pair candidates, prefers low timing/spacing error before raw peak strength, and rejects duplicated or reversed marker selections.
 - [x] **Introduce typed diagnostics** - `MeasurementDiagnostics`, `MeasurementAlignmentError`, failure reason constants, and a formatter now expose selected start candidate, marker positions, confidence metrics, drift, SNR, Bluetooth mode, latency, thresholds, retry reason, and buffer size when available.
-- [ ] **Separate retry reason from user copy** - Structured failure reasons now exist, but the main window still uses string matching for retry eligibility. Replace that with diagnostics reasons in a later cleanup slice.
-- [ ] **Preserve custom normal-mode settings** - When Bluetooth mode is enabled, store the user's previous non-Bluetooth sweep duration, buffer, latency, silence, confidence, and drift settings. When Bluetooth mode is disabled, restore those values instead of forcing hard-coded defaults.
-- [ ] **Make Bluetooth mode a named profile** - Treat Bluetooth as a measurement profile with explicit defaults and rationale, not a scattered set of settings updates. Keep PyQt6, `sounddevice`, `numpy`/`scipy`, and `pyqtgraph` as the default stack.
+- [ ] **[NOW] Separate retry reason from user copy** - Structured failure reasons now exist, but the main window still uses string matching for retry eligibility. This is a small, high-leverage cleanup.
+- [ ] **[NOW] Preserve custom normal-mode settings** - When Bluetooth mode is enabled, store the user's previous non-Bluetooth sweep duration, buffer, latency, silence, confidence, and drift settings. When Bluetooth mode is disabled, restore those values instead of forcing hard-coded defaults.
+- [ ] **[NOW] Make Bluetooth mode a named profile** - Treat Bluetooth as a measurement profile with explicit defaults and rationale, not a scattered set of settings updates. Keep PyQt6, `sounddevice`, `numpy`/`scipy`, and `pyqtgraph` as the default stack.
 - [x] **Add diagnostics UI for failed runs** - Retry prompts, final sweep errors, and successful review dialogs now include formatted diagnostics with confidence, marker positions, drift, SNR, Bluetooth mode, latency mode, thresholds, and buffer size where available.
-- [ ] **Add a measurement debug export** - Add an optional debug export for failed runs containing enough metadata to reproduce alignment decisions without sharing private user settings.
+- [ ] **[DEFER] Add a measurement debug export** - Diagnostics are visible in-app now. Defer file export until real-world failures show we need shareable debug bundles.
 
 ## P1: Architecture And Testability
 
-- [ ] **Split queue orchestration from UI** - Extract queue state, retry counting, keep/fail/cancel transitions, and progress updates into a small controller that can be tested without rendering the main window.
-- [ ] **Split device handling from UI** - Extract device enumeration, selected device persistence, channel refresh, and hot-plug handling behind a small service with fake-device tests.
-- [ ] **Split export/upload flow** - Move export path selection, filename construction, temporary-file handling, and Squiglink upload orchestration away from `MainWindow`.
-- [ ] **Keep view composition in `MainWindow`** - Let `MainWindow` assemble widgets and route signals, while controllers own behavior.
-- [ ] **Add `pytest` coverage across the app** - `pytest` has been added as dev tooling in `requirements-dev.txt`, and measurement layout/alignment tests exist. Still cover `processing.py`, export filename/header behavior, HRTF file loading, settings migration/validation, and queue retry behavior.
-- [ ] **Add a fake audio backend** - Create an interface around `sounddevice.playrec`, `sounddevice.play`, and `InputStream` so tests can run without real headphones, microphones, or audio permissions.
-- [ ] **Add typed settings definitions** - Centralize defaults, allowed ranges, migrations, and validation. Invalid settings should fall back safely and report a recoverable warning instead of failing silently.
-- [ ] **Reduce silent exception handling** - Replace broad `except/pass` blocks with logged or surfaced errors where they affect measurement reliability, settings persistence, calibration, export, upload, or device state.
-- [ ] **Add lightweight CI checks** - Run `py_compile`, unit tests, lint/type checks, and packaging smoke checks on every PR or release branch.
+- [ ] **[DEFER] Split queue orchestration from UI** - Defer the full controller extraction. If queue retry becomes hard to test, add a narrow fake-audio seam first.
+- [ ] **[DEFER] Split device handling from UI** - Defer until duplicate device names or hot-plug behavior become a real blocker.
+- [ ] **[DEFER] Split export/upload flow** - Defer; not measurement-critical.
+- [ ] **[DEFER] Keep view composition in `MainWindow`** - Defer as part of the larger main-window split.
+- [ ] **[NEXT] Add targeted `pytest` coverage across critical paths** - Cover Bluetooth profile restore, settings validation, and queue retry diagnostics first. Defer processing/export/HRTF breadth.
+- [ ] **[NEXT] Add a minimal fake audio backend** - Create only the seam needed to simulate play/record success, timing failure, retry, and diagnostics emission.
+- [ ] **[NEXT] Add typed measurement-setting validation** - Start with defaults/ranges for Bluetooth-critical settings only. Defer a full settings schema/migration system.
+- [ ] **[DEFER] Reduce silent exception handling broadly** - Fix only measurement/settings failures for now. Defer calibration/export/upload cleanup.
+- [ ] **[DEFER] Add lightweight CI checks** - Useful before release, but local compile/tests are enough while iterating quickly.
 
 ## P2: Workflow, Data, And Release Quality
 
-- [ ] **Add session/project save-load** - Persist metadata, kept curves, average state, HRTF choice, measurement settings profile, diagnostics, and export directory so a measurement session can be reopened.
-- [ ] **Add autosave or recovery** - Store enough queue progress to recover from accidental close, device failure, or crash during long wireless-headphone test sessions.
-- [ ] **Sanitize export filenames** - Remove or replace characters that are unsafe on Windows/macOS/Linux and prevent accidental path issues from metadata.
-- [ ] **Validate HRTF files** - Check for sorted frequencies, duplicate frequencies, non-finite values, and out-of-band coverage. Show actionable import errors.
-- [ ] **Move Squiglink upload off the UI thread** - Use a background worker with progress, cancellation, timeout handling, and clearer authentication errors.
-- [ ] **Improve device identity persistence** - Store device name plus host API, device index, channel counts, and last-seen metadata so duplicate names and device reorderings are less risky.
-- [ ] **Improve calibration durability** - Record calibration date, sample rate, channel, device identity, reference SPL, and notes, not just Pa/FS sensitivity.
-- [ ] **Update README and build docs** - Fix the stale macOS path, document setup/build/test commands, and add a hardware smoke-test checklist for wired and Bluetooth measurement paths.
-- [ ] **Add release checklist** - Include version bump, compile/test pass, package build, launch smoke test, device permission check, export check, and Squiglink upload check.
+- [ ] **[DEFER] Add session/project save-load** - Valuable for workflow, but postpone until measurement acceptance is more stable.
+- [ ] **[DEFER] Add autosave or recovery** - Defer with session/project persistence.
+- [ ] **[DEFER] Sanitize export filenames** - Small and worthwhile, but not part of the current reliability push.
+- [ ] **[DEFER] Validate HRTF files** - Defer unless HRTF import errors become common.
+- [ ] **[DEFER] Move Squiglink upload off the UI thread** - Defer unless upload freezes interrupt active measurement sessions.
+- [ ] **[DEFER] Improve device identity persistence** - Defer unless duplicate device names or device reordering cause bad selections.
+- [ ] **[DEFER] Improve calibration durability** - Defer until calibration workflow gets a dedicated pass.
+- [ ] **[DEFER] Update README and build docs** - Save for release hardening.
+- [ ] **[DEFER] Add release checklist** - Save for release hardening.
 
 ## Suggested Session Order
 
@@ -76,9 +87,11 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 1C: Expanded synthetic Bluetooth fixtures** - Completed. Added broader failure fixtures for jitter, truncated tails, clipped starts, false peaks, codec ringing, sample-rate drift, and retry-after-failure.
 - [x] **Session 1D: Marker scoring and drift robustness** - Completed. The false-marker `xfail` is now a passing regression test, and ordered pair scoring protects against loud false, reversed, or duplicated marker artifacts.
 - [x] **Session 2: Diagnostics object and UI details** - Completed. Alignment success/failure now emits structured diagnostics, and the UI surfaces those details without changing retry behavior.
-- [ ] **Session 3: Bluetooth profile behavior** - Preserve normal-mode settings, formalize measurement profiles, and tune Bluetooth defaults using synthetic and hardware results.
-- [ ] **Session 4: Main window split** - Extract queue, device, and export/upload controllers while preserving existing UI behavior.
-- [ ] **Session 5: Persistence and release hardening** - Add project save-load, filename/HRTF validation, upload worker, README updates, and CI/release checklist.
+- [ ] **Session 3: Bluetooth profile behavior** - Preserve normal-mode settings, formalize measurement profiles, and move retry eligibility to structured failure reasons.
+- [ ] **Session 4: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
+- [ ] **Session 5: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
+- [ ] **Deferred Session: Main window split** - Extract queue, device, and export/upload controllers later, after reliability stabilizes.
+- [ ] **Deferred Session: Persistence and release hardening** - Save project persistence, filename/HRTF validation, upload worker, docs, CI, and release checklist for a later polish pass.
 
 ## Acceptance Criteria For This Plan
 
@@ -93,4 +106,5 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Reliability for high-latency wireless headphones is the highest priority.
 - The goal is a practical multi-session roadmap, not an immediate full rewrite.
 - Completed P0 extraction work should preserve existing measurement behavior unless a later tuning slice explicitly changes thresholds, profiles, or retry policy.
-- The next best technical step is Bluetooth profile behavior: preserve custom normal-mode settings, formalize Bluetooth as a named profile, and eventually replace string-based retry matching with structured failure reasons.
+- The next best technical step is Bluetooth profile behavior: preserve custom normal-mode settings, formalize Bluetooth as a named profile, and replace string-based retry matching with structured failure reasons.
+- Deferred items are intentionally not abandoned; they are parked so the near-term work stays focused on reliable wireless-headphone measurement.

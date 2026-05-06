@@ -6,8 +6,8 @@ This is a living working plan for improving DMS Fastgraph over the next few sess
 
 For the next few sessions, optimize for faster progress on measurement reliability rather than broad app hardening.
 
-- [ ] **[NOW] Bluetooth profile behavior** - Preserve custom standard-mode settings, make Bluetooth mode a clear profile, and keep the proven Bluetooth defaults easy to reason about.
-- [ ] **[NOW] Structured retry cleanup** - Use the new failure reasons for retry decisions instead of string matching, because this is small and directly supports Bluetooth reliability.
+- [x] **[P0] Bluetooth profile behavior** - Bluetooth mode now preserves custom standard-mode settings and restores them when toggled off.
+- [x] **[P0] Structured retry cleanup** - Retry decisions now use typed failure reasons when diagnostics are available, with string matching kept only as a compatibility fallback.
 - [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
 - [ ] **[NEXT] Settings validation for measurement-critical fields** - Validate sweep duration, buffer, latency, silence, confidence, and drift settings before broader settings architecture work.
 - [ ] **[DEFER] Large architecture split** - Main-window/controller extraction is valuable, but not needed before the Bluetooth workflow is reliable.
@@ -38,7 +38,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **[P0] False marker peak regression is covered** - End-marker scoring now evaluates ordered marker pairs, so louder false marker-like peaks no longer beat the valid pair in the focused synthetic Bluetooth test.
 - [ ] **[P2][DEFER] Measurement engine is improved but still concentrated** - `SweepWorker._run_inner()` still mixes I/O, progress polling, Qt signals, and error flow. Defer unless it blocks fake-audio retry tests.
 - [ ] **[P2][DEFER] Main window does too much** - A controller split is valuable but large. Defer until Bluetooth measurement behavior is solid.
-- [ ] **[P0][NOW] Measurement settings need profile-aware handling** - Bluetooth mode should stop overwriting custom standard-mode values permanently.
+- [x] **[P0] Measurement settings need profile-aware handling** - Bluetooth mode now snapshots the user's standard measurement profile before applying Bluetooth defaults and restores that snapshot when disabled.
 - [ ] **[P2][DEFER] Measurement sessions are not durable** - Useful for long-term workflow quality, but not needed for the immediate Bluetooth reliability push.
 - [ ] **[P2][DEFER] Network upload blocks the UI** - Annoying during upload workflows, but not central to measurement trust. Defer unless users hit it often.
 
@@ -50,9 +50,9 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Add acceptance tests for current failure modes** - Done for low start confidence, low end-marker confidence, short/truncated recordings, drift rejection, sample-rate drift, and retry-after-failure.
 - [x] **Harden end-marker pair scoring** - Done in `dms/measurement_alignment.py`. Detection now compares ordered marker-pair candidates, prefers low timing/spacing error before raw peak strength, and rejects duplicated or reversed marker selections.
 - [x] **Introduce typed diagnostics** - `MeasurementDiagnostics`, `MeasurementAlignmentError`, failure reason constants, and a formatter now expose selected start candidate, marker positions, confidence metrics, drift, SNR, Bluetooth mode, latency, thresholds, retry reason, and buffer size when available.
-- [ ] **[NOW] Separate retry reason from user copy** - Structured failure reasons now exist, but the main window still uses string matching for retry eligibility. This is a small, high-leverage cleanup.
-- [ ] **[NOW] Preserve custom normal-mode settings** - When Bluetooth mode is enabled, store the user's previous non-Bluetooth sweep duration, buffer, latency, silence, confidence, and drift settings. When Bluetooth mode is disabled, restore those values instead of forcing hard-coded defaults.
-- [ ] **[NOW] Make Bluetooth mode a named profile** - Treat Bluetooth as a measurement profile with explicit defaults and rationale, not a scattered set of settings updates. Keep PyQt6, `sounddevice`, `numpy`/`scipy`, and `pyqtgraph` as the default stack.
+- [x] **[P0] Separate retry reason from user copy** - `MainWindow` now uses `MeasurementDiagnostics.failure_reason` for retry eligibility when available, with string matching retained only as a fallback for non-diagnostic errors.
+- [x] **[P0] Preserve custom normal-mode settings** - Bluetooth mode now stores the user's previous non-Bluetooth sweep duration, buffer, latency, silence, confidence, and drift settings, then restores them when disabled.
+- [x] **[P0] Make Bluetooth mode a named profile** - `dms/measurement_profiles.py` now defines standard and Bluetooth profile defaults plus pure snapshot/restore helpers.
 - [x] **Add diagnostics UI for failed runs** - Retry prompts, final sweep errors, and successful review dialogs now include formatted diagnostics with confidence, marker positions, drift, SNR, Bluetooth mode, latency mode, thresholds, and buffer size where available.
 - [ ] **[DEFER] Add a measurement debug export** - Diagnostics are visible in-app now. Defer file export until real-world failures show we need shareable debug bundles.
 
@@ -87,8 +87,8 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 1C: Expanded synthetic Bluetooth fixtures** - Completed. Added broader failure fixtures for jitter, truncated tails, clipped starts, false peaks, codec ringing, sample-rate drift, and retry-after-failure.
 - [x] **Session 1D: Marker scoring and drift robustness** - Completed. The false-marker `xfail` is now a passing regression test, and ordered pair scoring protects against loud false, reversed, or duplicated marker artifacts.
 - [x] **Session 2: Diagnostics object and UI details** - Completed. Alignment success/failure now emits structured diagnostics, and the UI surfaces those details without changing retry behavior.
-- [ ] **Session 3: Bluetooth profile behavior** - Preserve normal-mode settings, formalize measurement profiles, and move retry eligibility to structured failure reasons.
-- [ ] **Session 4: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
+- [x] **Session 3: Bluetooth profile behavior** - Completed. Normal-mode settings are preserved/restored around Bluetooth mode, Bluetooth defaults live in a pure profile helper, and retry eligibility now prefers structured failure reasons.
+- [ ] **Session 4: Focused fake-audio retry tests** - Next recommended session. Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
 - [ ] **Session 5: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
 - [ ] **Deferred Session: Main window split** - Extract queue, device, and export/upload controllers later, after reliability stabilizes.
 - [ ] **Deferred Session: Persistence and release hardening** - Save project persistence, filename/HRTF validation, upload worker, docs, CI, and release checklist for a later polish pass.
@@ -106,5 +106,5 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Reliability for high-latency wireless headphones is the highest priority.
 - The goal is a practical multi-session roadmap, not an immediate full rewrite.
 - Completed P0 extraction work should preserve existing measurement behavior unless a later tuning slice explicitly changes thresholds, profiles, or retry policy.
-- The next best technical step is Bluetooth profile behavior: preserve custom normal-mode settings, formalize Bluetooth as a named profile, and replace string-based retry matching with structured failure reasons.
+- The next best technical step is focused fake-audio retry tests: simulate queue retry behavior and diagnostics flow without requiring real headphones.
 - Deferred items are intentionally not abandoned; they are parked so the near-term work stays focused on reliable wireless-headphone measurement.

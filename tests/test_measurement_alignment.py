@@ -796,6 +796,28 @@ def test_bluetooth_stretched_playback_keeps_end_marker_confidence() -> None:
     )
 
 
+def test_bluetooth_profile_tail_covers_high_output_latency_recording_window() -> None:
+    fs = 8_000
+    sweep = _test_sweep(int(round(3.5 * fs)))
+    layout = build_measurement_layout(
+        sweep=sweep,
+        fs=fs,
+        pre_silence_s=0.6,
+        post_silence_s=2.0,
+        bluetooth_headphone_mode=True,
+    )
+    rec = np.zeros(layout.total_samples, dtype=np.float32)
+    bluetooth_delay = int(round(0.9 * fs))
+    _write_at(rec, layout.excitation_start_sample + bluetooth_delay, layout.excitation)
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.end.marker_confidence >= 2.5
+    assert result.end.timing_error_ms <= 5.0
+    assert result.end.spacing_error_samples == 0
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
 def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
     sweep, layout = _layout(bluetooth=True)
     bad_rec = np.zeros(layout.total_samples, dtype=np.float32)

@@ -96,6 +96,8 @@ def test_bluetooth_layout_includes_primer_and_primer_gap() -> None:
         + layout.pre_silence_samples
     )
     assert layout.sweep_start_sample > layout.excitation_start_sample
+    assert layout.end_marker_gap_samples == int(round(0.12 * fs))
+    assert layout.end_marker_pair_gap_samples == int(round(0.12 * fs))
     assert layout.end_marker_2_start_sample > layout.end_marker_1_start_sample
     assert layout.total_samples > layout.end_marker_2_start_sample
 

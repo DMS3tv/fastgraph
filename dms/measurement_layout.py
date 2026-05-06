@@ -30,6 +30,7 @@ class MeasurementSignalLayout:
     total_samples: int
     start_marker: np.ndarray
     end_marker: np.ndarray
+    end_marker_2: np.ndarray
     wake_primer: Optional[np.ndarray]
     excitation: np.ndarray
 
@@ -39,39 +40,103 @@ def _validate_fs(fs: int) -> None:
         raise ValueError("Sample rate must be positive.")
 
 
-def build_end_marker(fs: int) -> np.ndarray:
+def build_legacy_chirp_marker(fs: int, *, start_marker: bool = False) -> np.ndarray:
     """
-    Build a short broadband chirp marker used to validate end timing.
+    Build the previous short chirp marker for quick rollback/tests.
     """
     _validate_fs(fs)
-    dur_s = 0.032
+    dur_s = 0.022 if start_marker else 0.032
     n = max(8, int(round(dur_s * fs)))
     t = np.arange(n, dtype=np.float64) / float(fs)
-    # Keep energy in a Bluetooth/ANC-friendly range.
-    f0 = 1400.0
-    f1 = 6800.0
+    f0 = 1200.0 if start_marker else 1400.0
+    f1 = 5600.0 if start_marker else 6800.0
     k = (f1 - f0) / max(dur_s, 1e-9)
     phase = 2.0 * np.pi * (f0 * t + 0.5 * k * t * t)
     marker = np.sin(phase)
     marker *= np.hanning(n)
-    return (0.60 * marker).astype(np.float32)
+    gain = 0.45 if start_marker else 0.60
+    return (gain * marker).astype(np.float32)
+
+
+def build_coded_timing_marker(fs: int, code_id: str) -> np.ndarray:
+    """
+    Build a broadband coded marker packet for robust timing correlation.
+
+    The marker uses several headphone-friendly tones across short chips. Each
+    code id has a different sign/phase pattern, so end marker A cannot be
+    cleanly substituted for end marker B by one loud resonant artifact.
+    """
+    _validate_fs(fs)
+    code_key = str(code_id).lower()
+    code_seeds = {
+        "start": 3,
+        "end_a": 7,
+        "end_b": 13,
+    }
+    if code_key not in code_seeds:
+        raise ValueError("Unknown timing marker code id.")
+
+    dur_s = 0.056 if code_key == "start" else 0.072
+    n = max(32, int(round(dur_s * fs)))
+    chip_count = 7
+    chip_edges = np.linspace(0, n, chip_count + 1, dtype=int)
+    marker = np.zeros(n, dtype=np.float64)
+    t = np.arange(n, dtype=np.float64) / float(fs)
+
+    frequency_sets = {
+        "start": [650.0, 980.0, 1500.0, 2300.0, 3500.0, 5400.0, 7600.0],
+        "end_a": [600.0, 950.0, 1450.0, 2300.0, 3600.0, 5600.0, 7600.0],
+        "end_b": [760.0, 1180.0, 1780.0, 2750.0, 4300.0, 6500.0, 7900.0],
+    }
+    base_freqs = np.array(frequency_sets[code_key], dtype=np.float64)
+    usable = base_freqs[base_freqs < 0.45 * float(fs)]
+    if len(usable) < 3:
+        usable = np.linspace(0.12 * fs, 0.40 * fs, 3, dtype=np.float64)
+    weights = np.linspace(1.0, 0.72, len(usable), dtype=np.float64)
+
+    seed = code_seeds[code_key]
+    for chip_idx in range(chip_count):
+        lo = chip_edges[chip_idx]
+        hi = chip_edges[chip_idx + 1]
+        if hi <= lo:
+            continue
+        chip_t = t[lo:hi]
+        chip = np.zeros(hi - lo, dtype=np.float64)
+        for tone_idx, freq in enumerate(usable):
+            pattern = (seed + 3 * chip_idx + 5 * tone_idx + chip_idx * tone_idx) % 7
+            sign = 1.0 if pattern in {0, 1, 3} else -1.0
+            phase_offset = 0.41 * tone_idx + 0.29 * chip_idx + 0.17 * seed
+            chip += weights[tone_idx] * np.sin(
+                2.0 * np.pi * freq * chip_t + phase_offset
+            ) * sign
+        chip /= max(float(np.max(np.abs(chip))), 1e-12)
+        marker[lo:hi] = chip
+
+    marker *= np.hanning(n)
+    marker /= max(float(np.max(np.abs(marker))), 1e-12)
+    gain = 0.45 if code_key == "start" else 0.58
+    return (gain * marker).astype(np.float32)
+
+
+def build_end_marker(fs: int) -> np.ndarray:
+    """
+    Build coded end marker A used to validate timing.
+    """
+    return build_coded_timing_marker(fs, "end_a")
+
+
+def build_end_marker_2(fs: int) -> np.ndarray:
+    """
+    Build coded end marker B used to verify ordered marker identity.
+    """
+    return build_coded_timing_marker(fs, "end_b")
 
 
 def build_start_marker(fs: int) -> np.ndarray:
     """
-    Build a short chirp marker used to lock sweep start timing robustly.
+    Build a coded marker used to lock sweep start timing robustly.
     """
-    _validate_fs(fs)
-    dur_s = 0.022
-    n = max(8, int(round(dur_s * fs)))
-    t = np.arange(n, dtype=np.float64) / float(fs)
-    f0 = 1200.0
-    f1 = 5600.0
-    k = (f1 - f0) / max(dur_s, 1e-9)
-    phase = 2.0 * np.pi * (f0 * t + 0.5 * k * t * t)
-    marker = np.sin(phase)
-    marker *= np.hanning(n)
-    return (0.45 * marker).astype(np.float32)
+    return build_coded_timing_marker(fs, "start")
 
 
 def build_wake_primer(fs: int) -> np.ndarray:
@@ -124,6 +189,7 @@ def build_measurement_layout(
     start_marker = build_start_marker(fs)
     start_marker_gap_n = int(round(0.025 * fs))
     marker = build_end_marker(fs)
+    marker_2 = build_end_marker_2(fs)
     marker_gap_n = int(round(0.03 * fs))
     marker_pair_gap_n = int(round(0.05 * fs))
     excitation = np.concatenate(
@@ -134,7 +200,7 @@ def build_measurement_layout(
             np.zeros(marker_gap_n, dtype=np.float32),
             marker,
             np.zeros(marker_pair_gap_n, dtype=np.float32),
-            marker,
+            marker_2,
         ]
     )
 
@@ -163,6 +229,7 @@ def build_measurement_layout(
         total_samples=total_n,
         start_marker=start_marker,
         end_marker=marker,
+        end_marker_2=marker_2,
         wake_primer=wake_primer,
         excitation=excitation.astype(np.float32, copy=False),
     )

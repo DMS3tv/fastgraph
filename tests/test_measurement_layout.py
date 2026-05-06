@@ -2,9 +2,33 @@ import numpy as np
 import pytest
 
 from dms.measurement_layout import (
+    build_coded_timing_marker,
     build_measurement_layout,
     build_output_signal,
 )
+
+
+def test_coded_timing_markers_are_deterministic_and_distinct() -> None:
+    fs = 48_000
+
+    marker_a_1 = build_coded_timing_marker(fs, "end_a")
+    marker_a_2 = build_coded_timing_marker(fs, "end_a")
+    marker_b = build_coded_timing_marker(fs, "end_b")
+
+    np.testing.assert_array_equal(marker_a_1, marker_a_2)
+    assert marker_a_1.dtype == np.float32
+    assert marker_b.dtype == np.float32
+    assert len(marker_a_1) == len(marker_b)
+    assert not np.array_equal(marker_a_1, marker_b)
+
+    corr = float(
+        np.dot(marker_a_1, marker_b)
+        / (
+            np.sqrt(np.sum(np.square(marker_a_1)))
+            * np.sqrt(np.sum(np.square(marker_b)))
+        )
+    )
+    assert abs(corr) < 0.65
 
 
 def test_non_bluetooth_layout_positions_are_explicit() -> None:
@@ -40,6 +64,8 @@ def test_non_bluetooth_layout_positions_are_explicit() -> None:
         + len(layout.end_marker)
         + layout.end_marker_pair_gap_samples
     )
+    assert len(layout.end_marker_2) == len(layout.end_marker)
+    assert not np.array_equal(layout.end_marker, layout.end_marker_2)
     assert (
         layout.total_samples
         == layout.excitation_start_sample

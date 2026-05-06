@@ -1,10 +1,13 @@
 import numpy as np
 import pytest
 
+import dms.measurement_alignment as alignment_module
 from dms.measurement_alignment import (
     AlignmentSettings,
+    EndMarkerResult,
     MeasurementAlignmentError,
     MeasurementFailureReason,
+    MeasurementWarningReason,
     StartAlignmentResult,
     align_recording_to_layout,
     find_end_markers,
@@ -64,6 +67,7 @@ def test_aligns_clean_non_bluetooth_recording_with_fixed_latency() -> None:
         MeasurementFailureReason.LOW_START_CONFIDENCE,
         MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
         MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+        MeasurementFailureReason.END_MARKER_UNVERIFIED,
     ],
 )
 def test_retryable_timing_failure_uses_structured_reasons(reason: str) -> None:
@@ -75,7 +79,6 @@ def test_retryable_timing_failure_uses_structured_reasons(reason: str) -> None:
     [
         MeasurementFailureReason.SHORT_RECORDING,
         MeasurementFailureReason.SHORT_ALIGNED_RECORDING,
-        MeasurementFailureReason.END_MARKER_UNVERIFIED,
     ],
 )
 def test_retryable_timing_failure_rejects_non_retryable_reasons(reason: str) -> None:
@@ -197,8 +200,8 @@ def test_excessive_timing_drift_raises_existing_message() -> None:
     ] = layout.end_marker
     rec[
         layout.end_marker_2_start_sample + drift:
-        layout.end_marker_2_start_sample + drift + len(layout.end_marker)
-    ] = layout.end_marker
+        layout.end_marker_2_start_sample + drift + len(layout.end_marker_2)
+    ] = layout.end_marker_2
 
     with pytest.raises(ValueError, match="Timing drift too large"):
         align_recording_to_layout(
@@ -221,7 +224,7 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
         :layout.sweep_end_sample - layout.excitation_start_sample
     ]
     _write_at(rec, layout.end_marker_1_start_sample + drift, layout.end_marker)
-    _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker)
+    _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker_2)
 
     with pytest.raises(MeasurementAlignmentError, match="Timing drift too large") as exc:
         align_recording_to_layout(
@@ -242,6 +245,162 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
     assert diagnostics.timing_error_ms == pytest.approx(40.0)
 
 
+def test_bluetooth_marginal_drift_succeeds_with_warning() -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.1388 * layout.fs))
+    rec = _recording_with_shifted_end_markers(layout, drift, marker_scale=1.0)
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.diagnostics.failure_reason is None
+    assert (
+        result.diagnostics.warning_reason
+        == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
+    )
+    assert "Bluetooth timing drift is marginal" in result.diagnostics.warning_message
+    assert result.end.marker_confidence >= 2.5
+    assert result.end.timing_error_ms > result.diagnostics.timing_drift_max_ms
+    assert result.end.timing_error_ms <= 160.0
+
+
+def test_bluetooth_marginal_drift_accepts_weak_but_consistent_end_markers(monkeypatch) -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.1391 * layout.fs))
+    start_result = StartAlignmentResult(
+        selected_sweep_start=layout.sweep_start_sample,
+        sweep_correlation_candidate=layout.sweep_start_sample,
+        marker_locked_candidate=None,
+        start_confidence=3.0,
+        start_marker_confidence=52.5,
+    )
+    end_result = EndMarkerResult(
+        selected_sweep_start=layout.sweep_start_sample,
+        marker_1_start=layout.end_marker_1_start_sample + drift,
+        marker_2_start=layout.end_marker_2_start_sample + drift - 857,
+        marker_confidence=2.1,
+        timing_error_samples=drift,
+        timing_error_ms=1000.0 * drift / layout.fs,
+        spacing_error_samples=857,
+    )
+
+    monkeypatch.setattr(
+        alignment_module,
+        "find_start_alignment",
+        lambda *_args, **_kwargs: start_result,
+    )
+    monkeypatch.setattr(
+        alignment_module,
+        "find_end_markers",
+        lambda *_args, **_kwargs: end_result,
+    )
+
+    result = align_recording_to_layout(
+        _recording_from_layout(layout),
+        sweep,
+        layout,
+        _bluetooth_settings(),
+    )
+
+    assert result.diagnostics.failure_reason is None
+    assert (
+        result.diagnostics.warning_reason
+        == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
+    )
+    assert result.end.marker_confidence == pytest.approx(2.1)
+    assert "end confidence 2.1" in result.diagnostics.warning_message
+
+
+def test_bluetooth_marginal_drift_rejects_too_weak_end_markers(monkeypatch) -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.1391 * layout.fs))
+    start_result = StartAlignmentResult(
+        selected_sweep_start=layout.sweep_start_sample,
+        sweep_correlation_candidate=layout.sweep_start_sample,
+        marker_locked_candidate=None,
+        start_confidence=3.0,
+        start_marker_confidence=52.5,
+    )
+    end_result = EndMarkerResult(
+        selected_sweep_start=layout.sweep_start_sample,
+        marker_1_start=layout.end_marker_1_start_sample + drift,
+        marker_2_start=layout.end_marker_2_start_sample + drift,
+        marker_confidence=1.9,
+        timing_error_samples=drift,
+        timing_error_ms=1000.0 * drift / layout.fs,
+        spacing_error_samples=0,
+    )
+
+    monkeypatch.setattr(
+        alignment_module,
+        "find_start_alignment",
+        lambda *_args, **_kwargs: start_result,
+    )
+    monkeypatch.setattr(
+        alignment_module,
+        "find_end_markers",
+        lambda *_args, **_kwargs: end_result,
+    )
+
+    with pytest.raises(MeasurementAlignmentError, match="Low end-marker confidence") as exc:
+        align_recording_to_layout(
+            _recording_from_layout(layout),
+            sweep,
+            layout,
+            _bluetooth_settings(),
+        )
+
+    assert exc.value.reason == MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE
+
+
+def test_bluetooth_extreme_drift_still_fails() -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.180 * layout.fs))
+    rec = _recording_with_shifted_end_markers(layout, drift)
+
+    with pytest.raises(MeasurementAlignmentError) as exc:
+        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert exc.value.diagnostics.warning_reason is None
+    assert exc.value.reason in {
+        MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+        MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
+        MeasurementFailureReason.END_MARKER_UNVERIFIED,
+    }
+
+
+def test_bluetooth_end_marker_search_covers_marginal_ceiling_plus_slack() -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.165 * layout.fs))
+    rec = _recording_with_shifted_end_markers(layout, drift, marker_scale=1.0)
+
+    with pytest.raises(MeasurementAlignmentError, match="Timing drift too large") as exc:
+        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert exc.value.reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
+    assert exc.value.diagnostics.marker_1_start is not None
+    assert exc.value.diagnostics.marker_2_start is not None
+    assert exc.value.diagnostics.timing_error_ms > 160.0
+
+
+def test_bluetooth_marginal_drift_with_excessive_spacing_error_fails() -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.1388 * layout.fs))
+    spacing_extra = int(round(0.030 * layout.fs))
+    rec = _recording_with_shifted_end_markers(
+        layout,
+        drift,
+        marker_2_extra_shift=spacing_extra,
+    )
+
+    with pytest.raises(MeasurementAlignmentError, match="Timing drift too large") as exc:
+        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert exc.value.reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
+    assert exc.value.diagnostics.spacing_error_samples > int(
+        round(960.0 * layout.fs / 48000.0)
+    )
+
+
 def test_short_recording_raises_existing_message() -> None:
     sweep, layout = _layout()
 
@@ -258,7 +417,7 @@ def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
     rec[:layout.sweep_start_sample] = 0.01
-    noise_start = layout.end_marker_2_start_sample + len(layout.end_marker)
+    noise_start = layout.end_marker_2_start_sample + len(layout.end_marker_2)
     rec[noise_start:noise_start + int(round(0.12 * layout.fs))] = 0.01
 
     result = align_recording_to_layout(
@@ -311,6 +470,22 @@ def test_format_diagnostics_summary_is_plain_actionable_text() -> None:
     assert "SNR:" in summary
 
 
+def test_format_diagnostics_summary_includes_warning_text() -> None:
+    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    drift = int(round(0.1388 * layout.fs))
+    result = align_recording_to_layout(
+        _recording_with_shifted_end_markers(layout, drift),
+        sweep,
+        layout,
+        _bluetooth_settings(),
+    )
+
+    summary = format_diagnostics_summary(result.diagnostics)
+
+    assert "Warning reason: bluetooth_marginal_drift" in summary
+    assert "Warning: Bluetooth timing drift is marginal" in summary
+
+
 def test_end_marker_choice_prefers_acceptable_lower_drift_candidate() -> None:
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
@@ -355,6 +530,34 @@ def _write_at(rec: np.ndarray, start: int, values: np.ndarray) -> None:
     rec[lo:hi] += values[src_lo:src_hi]
 
 
+def _recording_with_shifted_end_markers(
+    layout,
+    drift_samples: int,
+    marker_2_extra_shift: int = 0,
+    marker_scale: float = 3.0,
+) -> np.ndarray:
+    rec = _recording_from_layout(layout)
+    marker_len = len(layout.end_marker)
+    marker_2_len = len(layout.end_marker_2)
+    rec[
+        layout.end_marker_1_start_sample:
+        layout.end_marker_1_start_sample + marker_len
+    ] = 0.0
+    rec[
+        layout.end_marker_2_start_sample:
+        layout.end_marker_2_start_sample + marker_2_len
+    ] = 0.0
+    marker_1 = (marker_scale * layout.end_marker).astype(np.float32)
+    marker_2 = (marker_scale * layout.end_marker_2).astype(np.float32)
+    _write_at(rec, layout.end_marker_1_start_sample + drift_samples, marker_1)
+    _write_at(
+        rec,
+        layout.end_marker_2_start_sample + drift_samples + marker_2_extra_shift,
+        marker_2,
+    )
+    return rec
+
+
 def _ringing_kernel(fs: int) -> np.ndarray:
     n = int(round(0.018 * fs))
     t = np.arange(n, dtype=np.float64) / float(fs)
@@ -362,6 +565,14 @@ def _ringing_kernel(fs: int) -> np.ndarray:
     kernel[0] += 1.0
     kernel /= np.sum(np.abs(kernel))
     return kernel.astype(np.float32)
+
+
+def _single_tone_marker_like_peak(layout, frequency: float = 2050.0) -> np.ndarray:
+    n = len(layout.end_marker)
+    t = np.arange(n, dtype=np.float64) / float(layout.fs)
+    tone = np.sin(2.0 * np.pi * frequency * t) * np.hanning(n)
+    tone /= max(float(np.max(np.abs(tone))), 1e-12)
+    return (2.5 * np.max(np.abs(layout.end_marker)) * tone).astype(np.float32)
 
 
 def _time_stretch(signal: np.ndarray, stretch: float) -> np.ndarray:
@@ -419,7 +630,10 @@ def test_truncated_tail_audio_reports_end_or_aligned_length_failure() -> None:
 
     with pytest.raises(
         ValueError,
-        match="Low end-marker confidence|Unable to verify end marker timing|Aligned recording shorter than expected",
+        match=(
+            "Low end-marker confidence|Unable to verify end marker timing|"
+            "Aligned recording shorter than expected|Timing drift too large"
+        ),
     ):
         align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
@@ -443,14 +657,71 @@ def test_false_marker_peak_does_not_beat_valid_marker_pair() -> None:
     assert result.end.spacing_error_samples == 0
 
 
+def test_single_band_marker_like_peak_does_not_beat_coded_marker_pair() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    delay = int(round(0.31 * layout.fs))
+    rec = _recording_from_layout(layout, delay_samples=delay)
+    false_offset = int(round(0.14 * layout.fs))
+    false_peak = _single_tone_marker_like_peak(layout)
+    _write_at(rec, delay + layout.end_marker_1_start_sample - false_offset, false_peak)
+    _write_at(rec, delay + layout.end_marker_2_start_sample + false_offset, false_peak)
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.end.marker_1_start == layout.end_marker_1_start_sample + delay
+    assert result.end.marker_2_start == layout.end_marker_2_start_sample + delay
+    assert result.end.timing_error_samples == 0
+    assert result.end.spacing_error_samples == 0
+
+
+def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    delay = int(round(0.22 * layout.fs))
+    rec = _recording_from_layout(layout, delay_samples=delay)
+    rec[
+        delay + layout.end_marker_1_start_sample:
+        delay + layout.end_marker_1_start_sample + len(layout.end_marker)
+    ] = 0.0
+    rec[
+        delay + layout.end_marker_2_start_sample:
+        delay + layout.end_marker_2_start_sample + len(layout.end_marker_2)
+    ] = 0.0
+    _write_at(rec, delay + layout.end_marker_1_start_sample, 2.0 * layout.end_marker_2)
+    _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
+
+    with pytest.raises(
+        MeasurementAlignmentError,
+        match="Low end-marker confidence|Unable to verify end marker timing|Timing drift too large",
+    ):
+        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+
+def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    delay = int(round(0.22 * layout.fs))
+    rec = _recording_from_layout(layout, delay_samples=delay)
+    rec[
+        delay + layout.end_marker_2_start_sample:
+        delay + layout.end_marker_2_start_sample + len(layout.end_marker_2)
+    ] = 0.0
+    _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
+
+    with pytest.raises(
+        MeasurementAlignmentError,
+        match="Low end-marker confidence|Unable to verify end marker timing|Timing drift too large",
+    ):
+        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+
 def test_loud_reversed_marker_artifacts_do_not_displace_ordered_pair() -> None:
     sweep, layout = _layout(bluetooth=True)
     delay = int(round(0.24 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     spacing = len(layout.end_marker) + layout.end_marker_pair_gap_samples
-    loud_marker = (1.6 * layout.end_marker).astype(np.float32)
-    _write_at(rec, delay + layout.end_marker_1_start_sample + spacing, loud_marker)
-    _write_at(rec, delay + layout.end_marker_2_start_sample - spacing, loud_marker)
+    loud_marker_1 = (1.6 * layout.end_marker).astype(np.float32)
+    loud_marker_2 = (1.6 * layout.end_marker_2).astype(np.float32)
+    _write_at(rec, delay + layout.end_marker_1_start_sample + spacing, loud_marker_2)
+    _write_at(rec, delay + layout.end_marker_2_start_sample - spacing, loud_marker_1)
 
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
@@ -476,15 +747,18 @@ def test_codec_like_marker_ringing_keeps_drift_near_true_marker() -> None:
 def test_sample_rate_drift_produces_drift_failure_when_large() -> None:
     sweep, layout = _layout(bluetooth=True)
     rec = _recording_from_layout(layout)
-    drift = int(round(0.14 * layout.fs))
+    drift = int(round(0.18 * layout.fs))
     rec[
         layout.end_marker_1_start_sample:
-        layout.end_marker_2_start_sample + len(layout.end_marker)
+        layout.end_marker_2_start_sample + len(layout.end_marker_2)
     ] = 0.0
     _write_at(rec, layout.end_marker_1_start_sample + drift, layout.end_marker)
-    _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker)
+    _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker_2)
 
-    with pytest.raises(ValueError, match="Timing drift too large"):
+    with pytest.raises(
+        ValueError,
+        match="Timing drift too large|Low end-marker confidence|Unable to verify end marker timing",
+    ):
         align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
 

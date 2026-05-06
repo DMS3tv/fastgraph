@@ -231,6 +231,11 @@ class PassFailDialog(QDialog):
 
         if timing_quality is not None:
             start_conf, end_conf, drift_ms, snr_db = timing_quality
+            warning_message = (
+                getattr(diagnostics, "warning_message", None)
+                if diagnostics is not None
+                else None
+            )
             timing_box = QFrame()
             timing_box.setStyleSheet(
                 "QFrame {"
@@ -249,6 +254,11 @@ class PassFailDialog(QDialog):
             timing.setWordWrap(True)
             timing.setStyleSheet("color: #9fb7d1;")
             timing_box_layout.addWidget(timing)
+            if warning_message:
+                warning = QLabel(f"Bluetooth timing marginal - {warning_message}")
+                warning.setWordWrap(True)
+                warning.setStyleSheet("color: #d9b35f;")
+                timing_box_layout.addWidget(warning)
             timing_box.setToolTip(
                 "Timing quality guide:\n"
                 "Start confidence: higher is better.\n"
@@ -1408,9 +1418,20 @@ class MainWindow(QMainWindow):
             timing_msg = ""
             if self._last_timing_quality is not None:
                 start_conf, end_conf, drift_ms, snr_db = self._last_timing_quality
+                warning_prefix = ""
+                warning_message = None
+                if self._last_measurement_diagnostics is not None:
+                    warning_message = getattr(
+                        self._last_measurement_diagnostics,
+                        "warning_message",
+                        None,
+                    )
+                if warning_message:
+                    warning_prefix = " Bluetooth timing marginal."
                 timing_msg = (
                     f" Timing Quality: start {start_conf:.1f}, "
                     f"end {end_conf:.1f}, drift {drift_ms:.1f} ms, SNR {snr_db:.1f} dB."
+                    f"{warning_prefix}"
                 )
             self._statusbar.showMessage(f"Sweep complete. Waiting for review.{timing_msg}")
             QTimer.singleShot(0, self._show_pass_fail_dialog)

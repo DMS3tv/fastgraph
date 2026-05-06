@@ -32,6 +32,10 @@ class MeasurementFailureReason:
     END_MARKER_UNVERIFIED = "end_marker_unverified"
 
 
+class MeasurementWarningReason:
+    BLUETOOTH_MARGINAL_DRIFT = "bluetooth_marginal_drift"
+
+
 @dataclass(frozen=True)
 class StartAlignmentResult:
     selected_sweep_start: int
@@ -74,6 +78,8 @@ class MeasurementDiagnostics:
     snr_db: Optional[float] = None
     failure_reason: Optional[str] = None
     failure_message: Optional[str] = None
+    warning_reason: Optional[str] = None
+    warning_message: Optional[str] = None
     buffer_size: Optional[int] = None
 
 
@@ -107,6 +113,8 @@ def _diagnostics_from_results(
     snr_db: Optional[float] = None,
     failure_reason: Optional[str] = None,
     failure_message: Optional[str] = None,
+    warning_reason: Optional[str] = None,
+    warning_message: Optional[str] = None,
 ) -> MeasurementDiagnostics:
     selected_sweep_start = None
     if end is not None:
@@ -147,6 +155,8 @@ def _diagnostics_from_results(
         snr_db=snr_db,
         failure_reason=failure_reason,
         failure_message=failure_message,
+        warning_reason=warning_reason,
+        warning_message=warning_message,
     )
 
 
@@ -190,6 +200,8 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
         lines.append(f"- Buffer: {diagnostics.buffer_size}")
     if diagnostics.failure_reason:
         lines.append(f"- Failure reason: {diagnostics.failure_reason}")
+    if diagnostics.warning_reason:
+        lines.append(f"- Warning reason: {diagnostics.warning_reason}")
     lines.extend(
         [
             f"- Selected sweep start: {fmt_int(diagnostics.selected_sweep_start)}",
@@ -209,6 +221,8 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
     )
     if diagnostics.failure_message:
         lines.append(f"- Message: {diagnostics.failure_message}")
+    if diagnostics.warning_message:
+        lines.append(f"- Warning: {diagnostics.warning_message}")
     return "\n".join(lines)
 
 
@@ -222,6 +236,7 @@ def is_retryable_timing_failure(
             MeasurementFailureReason.LOW_START_CONFIDENCE,
             MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
             MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+            MeasurementFailureReason.END_MARKER_UNVERIFIED,
         }
 
     msg = message.lower()
@@ -338,13 +353,78 @@ def peak_to_nextbest_confidence(
     return peak / max(next_best, 1e-12)
 
 
+def _marker_component_agreement(
+    signal_window: np.ndarray,
+    marker: np.ndarray,
+    chip_count: int = 7,
+) -> float:
+    """
+    Return how consistently a candidate matches the marker across chips.
+
+    A narrow resonant peak can produce a large whole-marker correlation at one
+    lag. Coded packets should also agree across their short time chips, so this
+    score down-weights candidates explained by only part of the marker.
+    """
+    sig = np.asarray(signal_window).astype(np.float64, copy=False)
+    pat = np.asarray(marker).astype(np.float64, copy=False)
+    if len(sig) < len(pat) or len(pat) < chip_count:
+        return 0.0
+
+    sig = sig[:len(pat)]
+    edges = np.linspace(0, len(pat), chip_count + 1, dtype=int)
+    agreements = []
+    for idx in range(chip_count):
+        lo = edges[idx]
+        hi = edges[idx + 1]
+        if hi - lo < 4:
+            continue
+        sig_chip = sig[lo:hi]
+        pat_chip = pat[lo:hi]
+        sig_norm = float(np.sqrt(np.sum(np.square(sig_chip))))
+        pat_norm = float(np.sqrt(np.sum(np.square(pat_chip))))
+        if sig_norm <= 1e-12 or pat_norm <= 1e-12:
+            continue
+        corr = float(np.dot(sig_chip, pat_chip) / (sig_norm * pat_norm))
+        agreements.append(max(0.0, corr))
+    if not agreements:
+        return 0.0
+    return float(np.mean(agreements))
+
+
+def _marker_identity_ratio(
+    signal_window: np.ndarray,
+    marker: np.ndarray,
+    alternate_marker: Optional[np.ndarray],
+) -> float:
+    """Return intended-marker match strength relative to the alternate marker."""
+    if alternate_marker is None:
+        return 10.0
+    sig = np.asarray(signal_window).astype(np.float64, copy=False)
+    pat = np.asarray(marker).astype(np.float64, copy=False)
+    alt = np.asarray(alternate_marker).astype(np.float64, copy=False)
+    if len(sig) < len(pat) or len(pat) != len(alt):
+        return 0.0
+    sig = sig[:len(pat)]
+    sig_norm = float(np.sqrt(np.sum(np.square(sig))))
+    pat_norm = float(np.sqrt(np.sum(np.square(pat))))
+    alt_norm = float(np.sqrt(np.sum(np.square(alt))))
+    if sig_norm <= 1e-12 or pat_norm <= 1e-12 or alt_norm <= 1e-12:
+        return 0.0
+    intended = abs(float(np.dot(sig, pat) / (sig_norm * pat_norm)))
+    alternate = abs(float(np.dot(sig, alt) / (sig_norm * alt_norm)))
+    return intended / max(alternate, 1e-12)
+
+
 def _marker_peak_candidates(
     corr: np.ndarray,
+    marker_region: np.ndarray,
+    marker: np.ndarray,
+    alternate_marker: Optional[np.ndarray],
     search_start: int,
     expected_start: int,
     fs: int,
     max_peaks: int = 8,
-) -> list[tuple[int, float]]:
+) -> list[tuple[int, float, float, float]]:
     """
     Return distinct marker candidates as absolute sample positions plus confidence.
 
@@ -379,8 +459,19 @@ def _marker_peak_candidates(
         if idx in seen:
             continue
         seen.add(idx)
+        agreement = _marker_component_agreement(
+            np.asarray(marker_region)[idx:idx + len(marker)],
+            marker,
+        )
+        identity_ratio = _marker_identity_ratio(
+            np.asarray(marker_region)[idx:idx + len(marker)],
+            marker,
+            alternate_marker,
+        )
         confidence = float(mag[idx] / max(rms, 1e-12))
-        candidates.append((int(search_start + idx), confidence))
+        candidates.append(
+            (int(search_start + idx), confidence, agreement, identity_ratio)
+        )
     return candidates
 
 
@@ -497,7 +588,7 @@ def find_end_markers(
         candidates.append(int(np.clip(start_result.selected_sweep_start, 0, max_start_idx)))
 
     marker_search = (
-        int(round(0.14 * layout.fs))
+        int(round(0.22 * layout.fs))
         if bool(settings.bluetooth_headphone_mode)
         else int(round(0.08 * layout.fs))
     )
@@ -505,43 +596,50 @@ def find_end_markers(
     if bool(settings.bluetooth_headphone_mode):
         end_conf_min = min(end_conf_min, 2.5)
 
-    best_result = None
-    best_err_result = None
-    marker = layout.end_marker
+    pair_results = []
+    marker_1 = layout.end_marker
+    marker_2 = getattr(layout, "end_marker_2", layout.end_marker)
+    max_reasonable_spacing_error = int(round(960.0 * float(layout.fs) / 48000.0))
     for cand in candidates:
         expected_marker_1 = cand + sweep_n + layout.end_marker_gap_samples
         expected_marker_2 = (
-            expected_marker_1 + len(marker) + layout.end_marker_pair_gap_samples
+            expected_marker_1 + len(marker_1) + layout.end_marker_pair_gap_samples
         )
 
         search_start_1 = max(0, expected_marker_1 - marker_search)
-        search_stop_1 = min(len(rec), expected_marker_1 + marker_search + len(marker))
+        search_stop_1 = min(len(rec), expected_marker_1 + marker_search + len(marker_1))
         marker_region_1 = rec[search_start_1:search_stop_1]
-        marker_corr_1 = normalized_corr_valid(marker_region_1, marker)
+        marker_corr_1 = normalized_corr_valid(marker_region_1, marker_1)
         if len(marker_corr_1) == 0:
             continue
         peaks_1 = _marker_peak_candidates(
             marker_corr_1,
+            marker_region_1,
+            marker_1,
+            marker_2,
             search_start_1,
             expected_marker_1,
             layout.fs,
         )
 
         search_start_2 = max(0, expected_marker_2 - marker_search)
-        search_stop_2 = min(len(rec), expected_marker_2 + marker_search + len(marker))
+        search_stop_2 = min(len(rec), expected_marker_2 + marker_search + len(marker_2))
         marker_region_2 = rec[search_start_2:search_stop_2]
-        marker_corr_2 = normalized_corr_valid(marker_region_2, marker)
+        marker_corr_2 = normalized_corr_valid(marker_region_2, marker_2)
         peaks_2 = _marker_peak_candidates(
             marker_corr_2,
+            marker_region_2,
+            marker_2,
+            marker_1,
             search_start_2,
             expected_marker_2,
             layout.fs,
         )
 
-        spacing_expected = len(marker) + layout.end_marker_pair_gap_samples
+        spacing_expected = len(marker_1) + layout.end_marker_pair_gap_samples
         penalty_unit = max(1.0, 0.01 * layout.fs)
-        for marker_start_1, marker_conf_1 in peaks_1:
-            for marker_start_2, marker_conf_2 in peaks_2:
+        for marker_start_1, marker_conf_1, agreement_1, identity_1 in peaks_1:
+            for marker_start_2, marker_conf_2, agreement_2, identity_2 in peaks_2:
                 spacing_observed = marker_start_2 - marker_start_1
                 if spacing_observed <= 0:
                     continue
@@ -551,9 +649,12 @@ def find_end_markers(
                 timing_err = max(timing_err_1, timing_err_2)
                 spacing_err = abs(spacing_observed - spacing_expected)
                 marker_conf = min(marker_conf_1, marker_conf_2)
+                agreement = min(agreement_1, agreement_2)
+                identity_ratio = min(identity_1, identity_2)
+                identity_penalty = max(0.0, 1.2 - identity_ratio) * 8.0
                 score = marker_conf - (timing_err / penalty_unit) - (
                     spacing_err / penalty_unit
-                )
+                ) + (2.0 * agreement) - identity_penalty
                 result = (
                     score,
                     cand,
@@ -562,26 +663,12 @@ def find_end_markers(
                     timing_err,
                     marker_conf,
                     spacing_err,
+                    agreement,
+                    identity_ratio,
                 )
-                if best_result is None or result[0] > best_result[0]:
-                    best_result = result
-                if marker_conf >= max(1.8, end_conf_min * 0.85):
-                    if (
-                        best_err_result is None
-                        or timing_err < best_err_result[4]
-                        or (
-                            timing_err == best_err_result[4]
-                            and spacing_err < best_err_result[6]
-                        )
-                        or (
-                            timing_err == best_err_result[4]
-                            and spacing_err == best_err_result[6]
-                            and marker_conf > best_err_result[5]
-                        )
-                    ):
-                        best_err_result = result
+                pair_results.append(result)
 
-    if best_result is None and best_err_result is None:
+    if not pair_results:
         _raise_alignment_error(
             "Unable to verify end marker timing.",
             MeasurementFailureReason.END_MARKER_UNVERIFIED,
@@ -590,8 +677,46 @@ def find_end_markers(
             start=start_result,
         )
 
+    best_result = max(pair_results, key=lambda result: result[0])
+    viable_results = [
+        result for result in pair_results
+        if (
+            result[5] >= max(1.8, end_conf_min * 0.85)
+            and result[7] >= 0.18
+            and result[8] >= 1.08
+        )
+    ]
+    best_err_result = None
+    if viable_results:
+        max_viable_conf = max(result[5] for result in viable_results)
+        strong_results = [
+            result for result in viable_results
+            if result[5] >= max(1.8, 0.60 * max_viable_conf)
+        ]
+        best_err_result = min(
+            strong_results,
+            key=lambda result: (
+                result[6] > max_reasonable_spacing_error,
+                result[4],
+                result[6],
+                -result[5],
+            ),
+        )
+
     chosen = best_err_result if best_err_result is not None else best_result
-    _, start_idx, marker_start_1, marker_start_2, timing_err, marker_conf, spacing_err = chosen
+    (
+        _score,
+        start_idx,
+        marker_start_1,
+        marker_start_2,
+        timing_err,
+        marker_conf,
+        spacing_err,
+        agreement,
+        identity_ratio,
+    ) = chosen
+    if agreement < 0.18 or identity_ratio < 1.08:
+        marker_conf = 0.0
     drift_ms = 1000.0 * timing_err / float(layout.fs)
     return EndMarkerResult(
         selected_sweep_start=int(start_idx),
@@ -670,7 +795,24 @@ def align_recording_to_layout(
     if bool(settings.bluetooth_headphone_mode):
         end_conf_min = min(end_conf_min, 2.5)
     marker_conf = end_result.marker_confidence
-    if marker_conf < end_conf_min:
+    max_spacing_error_samples = int(round(960.0 * float(layout.fs) / 48000.0))
+    max_drift_samples = int(
+        round((float(settings.timing_drift_max_ms) / 1000.0) * layout.fs)
+    )
+    marginal_ceiling_samples = int(round(0.160 * layout.fs))
+    bluetooth_marginal_floor = 2.0
+    can_accept_bluetooth_marginal = (
+        bool(settings.bluetooth_headphone_mode)
+        and end_result.timing_error_samples <= marginal_ceiling_samples
+        and start_result.start_marker_confidence >= 10.0
+        and end_result.spacing_error_samples <= max_spacing_error_samples
+        and marker_conf >= bluetooth_marginal_floor
+        and (
+            end_result.timing_error_samples > max_drift_samples
+            or marker_conf < end_conf_min
+        )
+    )
+    if marker_conf < end_conf_min and not can_accept_bluetooth_marginal:
         _raise_alignment_error(
             f"Low end-marker confidence ({marker_conf:.1f}). "
             "Timing reliability is low; retrying is recommended.",
@@ -681,17 +823,14 @@ def align_recording_to_layout(
             end=end_result,
         )
 
-    max_drift_samples = int(
-        round((float(settings.timing_drift_max_ms) / 1000.0) * layout.fs)
-    )
-    if end_result.timing_error_samples > max_drift_samples:
+    if (
+        bool(settings.bluetooth_headphone_mode)
+        and end_result.spacing_error_samples > max_spacing_error_samples
+    ):
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
-        if bool(settings.bluetooth_headphone_mode):
-            hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
-        else:
-            hint = "Please retry and consider high latency mode."
         _raise_alignment_error(
-            f"Timing drift too large ({ms:.1f} ms). {hint}",
+            f"Timing drift too large ({ms:.1f} ms). "
+            "Please retry; Bluetooth marker spacing was unstable.",
             MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
             layout,
             settings,
@@ -699,8 +838,42 @@ def align_recording_to_layout(
             end=end_result,
         )
 
+    warning_reason = None
+    warning_message = None
+    if can_accept_bluetooth_marginal:
+        ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
+        warning_reason = MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
+        warning_message = (
+            f"Bluetooth timing drift is marginal (drift {ms:.1f} ms, "
+            f"end confidence {marker_conf:.1f}). "
+            "Review repeatability before keeping this measurement."
+        )
+    elif end_result.timing_error_samples > max_drift_samples:
+        ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
+        if bool(settings.bluetooth_headphone_mode):
+            hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
+            _raise_alignment_error(
+                f"Timing drift too large ({ms:.1f} ms). {hint}",
+                MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+                layout,
+                settings,
+                start=start_result,
+                end=end_result,
+            )
+        else:
+            hint = "Please retry and consider high latency mode."
+            _raise_alignment_error(
+                f"Timing drift too large ({ms:.1f} ms). {hint}",
+                MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+                layout,
+                settings,
+                start=start_result,
+                end=end_result,
+            )
+
     if bool(settings.bluetooth_headphone_mode):
-        marker_conf = max(marker_conf, end_conf_min)
+        if warning_reason is None:
+            marker_conf = max(marker_conf, end_conf_min)
         end_result = EndMarkerResult(
             selected_sweep_start=end_result.selected_sweep_start,
             marker_1_start=end_result.marker_1_start,
@@ -715,7 +888,7 @@ def align_recording_to_layout(
         rec,
         sweep_rec,
         end_result.marker_2_start,
-        len(layout.end_marker),
+        len(getattr(layout, "end_marker_2", layout.end_marker)),
         end_result.selected_sweep_start,
         layout.fs,
     )
@@ -730,5 +903,7 @@ def align_recording_to_layout(
             start=start_result,
             end=end_result,
             snr_db=float(snr_db),
+            warning_reason=warning_reason,
+            warning_message=warning_message,
         ),
     )

@@ -54,6 +54,10 @@ class EndMarkerResult:
     timing_error_samples: int
     timing_error_ms: float
     spacing_error_samples: int
+    raw_marker_confidence: Optional[float] = None
+    marker_agreement: Optional[float] = None
+    marker_identity_ratio: Optional[float] = None
+    marker_template_stretch: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,10 @@ class MeasurementDiagnostics:
     timing_error_samples: Optional[int] = None
     timing_error_ms: Optional[float] = None
     spacing_error_samples: Optional[int] = None
+    raw_marker_confidence: Optional[float] = None
+    marker_agreement: Optional[float] = None
+    marker_identity_ratio: Optional[float] = None
+    marker_template_stretch: Optional[float] = None
     snr_db: Optional[float] = None
     failure_reason: Optional[str] = None
     failure_message: Optional[str] = None
@@ -152,6 +160,16 @@ def _diagnostics_from_results(
         spacing_error_samples=(
             end.spacing_error_samples if end is not None else None
         ),
+        raw_marker_confidence=(
+            end.raw_marker_confidence if end is not None else None
+        ),
+        marker_agreement=end.marker_agreement if end is not None else None,
+        marker_identity_ratio=(
+            end.marker_identity_ratio if end is not None else None
+        ),
+        marker_template_stretch=(
+            end.marker_template_stretch if end is not None else None
+        ),
         snr_db=snr_db,
         failure_reason=failure_reason,
         failure_message=failure_message,
@@ -219,6 +237,22 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
             f"- SNR: {fmt_float(diagnostics.snr_db, ' dB')}",
         ]
     )
+    if diagnostics.marker_agreement is not None:
+        if diagnostics.raw_marker_confidence is not None:
+            lines.append(
+                f"- Raw end confidence: {diagnostics.raw_marker_confidence:.1f}"
+            )
+        lines.append(
+            f"- Marker chip agreement: {diagnostics.marker_agreement:.2f}"
+        )
+    if diagnostics.marker_identity_ratio is not None:
+        lines.append(
+            f"- Marker identity ratio: {diagnostics.marker_identity_ratio:.2f}"
+        )
+    if diagnostics.marker_template_stretch is not None:
+        lines.append(
+            f"- Marker template stretch: {diagnostics.marker_template_stretch:.3f}x"
+        )
     if diagnostics.failure_message:
         lines.append(f"- Message: {diagnostics.failure_message}")
     if diagnostics.warning_message:
@@ -415,6 +449,50 @@ def _marker_identity_ratio(
     return intended / max(alternate, 1e-12)
 
 
+def _stretched_marker(marker: np.ndarray, stretch: float) -> np.ndarray:
+    pat = np.asarray(marker).astype(np.float32, copy=False)
+    if len(pat) == 0:
+        return pat
+    target_n = max(1, int(round(len(pat) * float(stretch))))
+    if target_n == len(pat):
+        return pat
+    src_x = np.arange(len(pat), dtype=np.float64)
+    dst_x = np.linspace(0.0, float(len(pat) - 1), target_n)
+    return np.interp(dst_x, src_x, pat).astype(np.float32)
+
+
+def _marker_template_variants(
+    marker: np.ndarray,
+    alternate_marker: Optional[np.ndarray],
+    bluetooth_headphone_mode: bool,
+) -> list[tuple[np.ndarray, Optional[np.ndarray], float]]:
+    """
+    Return marker templates used for detection.
+
+    Bluetooth devices can introduce small sample-rate or codec clock drift, so
+    the recorded timing markers may be slightly time-stretched relative to the
+    generated packet. Standard mode keeps the exact template only.
+    """
+    if not bool(bluetooth_headphone_mode):
+        return [(np.asarray(marker), alternate_marker, 1.0)]
+
+    stretch_factors = (1.0, 0.99, 1.01, 0.98, 1.02, 0.965, 1.035, 0.95, 1.05)
+    variants: list[tuple[np.ndarray, Optional[np.ndarray], float]] = []
+    seen_lengths: set[int] = set()
+    for stretch in stretch_factors:
+        stretched = _stretched_marker(marker, stretch)
+        if len(stretched) in seen_lengths:
+            continue
+        seen_lengths.add(len(stretched))
+        stretched_alt = (
+            _stretched_marker(alternate_marker, stretch)
+            if alternate_marker is not None
+            else None
+        )
+        variants.append((stretched, stretched_alt, float(stretch)))
+    return variants
+
+
 def _marker_peak_candidates(
     corr: np.ndarray,
     marker_region: np.ndarray,
@@ -424,7 +502,8 @@ def _marker_peak_candidates(
     expected_start: int,
     fs: int,
     max_peaks: int = 8,
-) -> list[tuple[int, float, float, float]]:
+    marker_stretch: float = 1.0,
+) -> list[tuple[int, float, float, float, int, float]]:
     """
     Return distinct marker candidates as absolute sample positions plus confidence.
 
@@ -470,7 +549,14 @@ def _marker_peak_candidates(
         )
         confidence = float(mag[idx] / max(rms, 1e-12))
         candidates.append(
-            (int(search_start + idx), confidence, agreement, identity_ratio)
+            (
+                int(search_start + idx),
+                confidence,
+                agreement,
+                identity_ratio,
+                len(marker),
+                float(marker_stretch),
+            )
         )
     return candidates
 
@@ -524,14 +610,32 @@ def find_start_alignment(
     sm_region = rec[sm_lo:sm_hi]
     start_marker_conf = 0.0
     marker_locked_candidate = None
-    sm_corr = normalized_corr_valid(sm_region, layout.start_marker)
-    if len(sm_corr) > 0:
+    start_marker_match = None
+    for marker_template, _alternate_template, marker_stretch in _marker_template_variants(
+        layout.start_marker,
+        None,
+        bool(settings.bluetooth_headphone_mode),
+    ):
+        sm_corr = normalized_corr_valid(sm_region, marker_template)
+        if len(sm_corr) == 0:
+            continue
         sm_offset = int(np.argmax(np.abs(sm_corr)))
-        sm_idx = sm_lo + sm_offset
-        start_marker_conf = peak_to_rms_confidence(sm_corr)
+        candidate_conf = peak_to_rms_confidence(sm_corr)
+        if start_marker_match is None or candidate_conf > start_marker_match[0]:
+            start_marker_match = (
+                float(candidate_conf),
+                sm_lo + sm_offset,
+                len(marker_template),
+                float(marker_stretch),
+            )
+
+    if start_marker_match is not None:
+        start_marker_conf, sm_idx, marker_len, marker_stretch = start_marker_match
         if start_marker_conf >= max(3.5, min_start_conf * 0.7):
             marker_locked_start = (
-                sm_idx + len(layout.start_marker) + layout.start_marker_gap_samples
+                sm_idx
+                + marker_len
+                + int(round(layout.start_marker_gap_samples * marker_stretch))
             )
             max_start_idx = len(rec) - sweep_n
             if marker_locked_start <= max_start_idx:
@@ -599,6 +703,16 @@ def find_end_markers(
     pair_results = []
     marker_1 = layout.end_marker
     marker_2 = getattr(layout, "end_marker_2", layout.end_marker)
+    marker_1_variants = _marker_template_variants(
+        marker_1,
+        marker_2,
+        bool(settings.bluetooth_headphone_mode),
+    )
+    marker_2_variants = _marker_template_variants(
+        marker_2,
+        marker_1,
+        bool(settings.bluetooth_headphone_mode),
+    )
     max_reasonable_spacing_error = int(round(960.0 * float(layout.fs) / 48000.0))
     for cand in candidates:
         expected_marker_1 = cand + sweep_n + layout.end_marker_gap_samples
@@ -609,37 +723,66 @@ def find_end_markers(
         search_start_1 = max(0, expected_marker_1 - marker_search)
         search_stop_1 = min(len(rec), expected_marker_1 + marker_search + len(marker_1))
         marker_region_1 = rec[search_start_1:search_stop_1]
-        marker_corr_1 = normalized_corr_valid(marker_region_1, marker_1)
-        if len(marker_corr_1) == 0:
+        peaks_1 = []
+        for marker_template, alternate_template, marker_stretch in marker_1_variants:
+            marker_corr_1 = normalized_corr_valid(marker_region_1, marker_template)
+            if len(marker_corr_1) == 0:
+                continue
+            peaks_1.extend(
+                _marker_peak_candidates(
+                    marker_corr_1,
+                    marker_region_1,
+                    marker_template,
+                    alternate_template,
+                    search_start_1,
+                    expected_marker_1,
+                    layout.fs,
+                    marker_stretch=marker_stretch,
+                )
+            )
+        if not peaks_1:
             continue
-        peaks_1 = _marker_peak_candidates(
-            marker_corr_1,
-            marker_region_1,
-            marker_1,
-            marker_2,
-            search_start_1,
-            expected_marker_1,
-            layout.fs,
-        )
 
         search_start_2 = max(0, expected_marker_2 - marker_search)
         search_stop_2 = min(len(rec), expected_marker_2 + marker_search + len(marker_2))
         marker_region_2 = rec[search_start_2:search_stop_2]
-        marker_corr_2 = normalized_corr_valid(marker_region_2, marker_2)
-        peaks_2 = _marker_peak_candidates(
-            marker_corr_2,
-            marker_region_2,
-            marker_2,
-            marker_1,
-            search_start_2,
-            expected_marker_2,
-            layout.fs,
-        )
+        peaks_2 = []
+        for marker_template, alternate_template, marker_stretch in marker_2_variants:
+            marker_corr_2 = normalized_corr_valid(marker_region_2, marker_template)
+            peaks_2.extend(
+                _marker_peak_candidates(
+                    marker_corr_2,
+                    marker_region_2,
+                    marker_template,
+                    alternate_template,
+                    search_start_2,
+                    expected_marker_2,
+                    layout.fs,
+                    marker_stretch=marker_stretch,
+                )
+            )
 
-        spacing_expected = len(marker_1) + layout.end_marker_pair_gap_samples
         penalty_unit = max(1.0, 0.01 * layout.fs)
-        for marker_start_1, marker_conf_1, agreement_1, identity_1 in peaks_1:
-            for marker_start_2, marker_conf_2, agreement_2, identity_2 in peaks_2:
+        for (
+            marker_start_1,
+            marker_conf_1,
+            agreement_1,
+            identity_1,
+            marker_len_1,
+            stretch_1,
+        ) in peaks_1:
+            for (
+                marker_start_2,
+                marker_conf_2,
+                agreement_2,
+                identity_2,
+                _marker_len_2,
+                stretch_2,
+            ) in peaks_2:
+                spacing_stretch = 0.5 * (stretch_1 + stretch_2)
+                spacing_expected = marker_len_1 + int(
+                    round(layout.end_marker_pair_gap_samples * spacing_stretch)
+                )
                 spacing_observed = marker_start_2 - marker_start_1
                 if spacing_observed <= 0:
                     continue
@@ -665,6 +808,8 @@ def find_end_markers(
                     spacing_err,
                     agreement,
                     identity_ratio,
+                    stretch_1,
+                    stretch_2,
                 )
                 pair_results.append(result)
 
@@ -714,10 +859,14 @@ def find_end_markers(
         spacing_err,
         agreement,
         identity_ratio,
+        stretch_1,
+        stretch_2,
     ) = chosen
+    raw_marker_conf = marker_conf
     if agreement < 0.18 or identity_ratio < 1.08:
         marker_conf = 0.0
     drift_ms = 1000.0 * timing_err / float(layout.fs)
+    marker_template_stretch = 0.5 * (float(stretch_1) + float(stretch_2))
     return EndMarkerResult(
         selected_sweep_start=int(start_idx),
         marker_1_start=int(marker_start_1),
@@ -726,6 +875,10 @@ def find_end_markers(
         timing_error_samples=int(timing_err),
         timing_error_ms=float(drift_ms),
         spacing_error_samples=int(spacing_err),
+        raw_marker_confidence=float(raw_marker_conf),
+        marker_agreement=float(agreement),
+        marker_identity_ratio=float(identity_ratio),
+        marker_template_stretch=float(marker_template_stretch),
     )
 
 
@@ -801,10 +954,17 @@ def align_recording_to_layout(
     )
     marginal_ceiling_samples = int(round(0.160 * layout.fs))
     bluetooth_marginal_floor = 2.0
+    bluetooth_start_evidence_ok = (
+        start_result.start_confidence >= 3.0
+        and (
+            start_result.marker_locked_candidate is not None
+            or start_result.start_marker_confidence >= 3.5
+        )
+    )
     can_accept_bluetooth_marginal = (
         bool(settings.bluetooth_headphone_mode)
         and end_result.timing_error_samples <= marginal_ceiling_samples
-        and start_result.start_marker_confidence >= 10.0
+        and bluetooth_start_evidence_ok
         and end_result.spacing_error_samples <= max_spacing_error_samples
         and marker_conf >= bluetooth_marginal_floor
         and (
@@ -882,6 +1042,10 @@ def align_recording_to_layout(
             timing_error_samples=end_result.timing_error_samples,
             timing_error_ms=end_result.timing_error_ms,
             spacing_error_samples=end_result.spacing_error_samples,
+            raw_marker_confidence=end_result.raw_marker_confidence,
+            marker_agreement=end_result.marker_agreement,
+            marker_identity_ratio=end_result.marker_identity_ratio,
+            marker_template_stretch=end_result.marker_template_stretch,
         )
 
     snr_db = estimate_snr_db(

@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 from scipy.interpolate import interp1d
-import re
+from dms.measurement_txt import load_two_column_txt_curve
 
 
 class HRTFCurve:
@@ -34,20 +34,4 @@ class HRTFCurve:
 
 
 def _load_hrtf_file(path: str) -> tuple[np.ndarray, np.ndarray]:
-    freqs, mags = [], []
-    with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("*"):
-                continue
-            parts = [p for p in re.split(r"[\s,]+", line) if p]
-            if len(parts) < 2:
-                continue
-            try:
-                freqs.append(float(parts[0]))
-                mags.append(float(parts[1]))
-            except ValueError:
-                continue  # skip header-like lines
-    if len(freqs) < 2:
-        raise ValueError(f"HRTF file '{path}' has fewer than 2 valid data rows.")
-    return np.array(freqs), np.array(mags)
+    return load_two_column_txt_curve(path, label="HRTF")

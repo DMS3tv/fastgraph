@@ -55,6 +55,7 @@ from dms.measurement_profiles import (
     restore_standard_profile_updates,
     snapshot_measurement_profile,
 )
+from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import (
     compute_frequency_response,
     compute_rms_average,
@@ -494,6 +495,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(8)
 
         self._plots = DualPlotWidget()
+        self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
         root.addWidget(self._plots, 1)
 
         controls_scroll = QScrollArea()
@@ -1771,6 +1773,54 @@ class MainWindow(QMainWindow):
         self._sync_hrtf_ui()
         self._update_plots()
         self._statusbar.showMessage("HRTF cleared.")
+
+    def _import_dropped_measurement_files(self, paths: list[str]) -> None:
+        if self._state != AppState.IDLE:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "Measurement import is only available while idle.",
+            )
+            self._statusbar.showMessage("Measurement import blocked: queue is active.")
+            return
+
+        loaded = 0
+        failed: list[str] = []
+        for path in paths:
+            try:
+                curve = load_two_column_txt_curve(path, label="Measurement")
+            except Exception as exc:
+                failed.append(f"{Path(path).name}: {exc}")
+                continue
+            self._kept_curves.append(curve)
+            loaded += 1
+
+        if loaded > 0:
+            self._recompute_average()
+            self._recompute_variation()
+            self._update_queue_progress()
+            self._update_plots()
+
+        if loaded == 0 and failed:
+            QMessageBox.warning(
+                self,
+                "Import Failed",
+                "No files were imported.\n\n" + "\n".join(failed[:8]),
+            )
+            self._statusbar.showMessage("Measurement import failed.")
+            return
+
+        if failed:
+            QMessageBox.warning(
+                self,
+                "Import Completed With Warnings",
+                f"Loaded {loaded} file(s), failed {len(failed)} file(s).\n\n"
+                + "\n".join(failed[:8]),
+            )
+
+        self._statusbar.showMessage(
+            f"Measurement import complete: loaded {loaded}, failed {len(failed)}."
+        )
 
     def _clear_all(self) -> None:
         if self._state != AppState.IDLE:

@@ -12,6 +12,7 @@ For the next few sessions, optimize for faster progress on measurement reliabili
 - [x] **[P0] Coded multi-tone marker packets** - Start/end timing references now use broadband coded audio packets with distinct end-marker identities to reduce false locks from resonant peaks.
 - [ ] **[NEXT] Real-headphone validation pass** - Test several Bluetooth headphones/IEMs against the coded markers and record which diagnostics still appear before more tuning.
 - [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
+- [x] **[P1] Top-viewport TXT drag-drop measurement import for fixture-free testing** - Local `.txt` measurement files can now be dropped onto the top plot and imported as kept curves for testing without live fixture hardware.
 - [ ] **[NEXT] Settings validation for measurement-critical fields** - Validate sweep duration, buffer, latency, silence, confidence, and drift settings before broader settings architecture work.
 - [ ] **[DEFER] Large architecture split** - Main-window/controller extraction is valuable, but not needed before the Bluetooth workflow is reliable.
 - [ ] **[DEFER] Persistence, release docs, upload polish, and broad CI** - Keep these visible but postpone until measurement reliability feels stable in real use.
@@ -39,6 +40,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [ ] **[P0] Bluetooth measurement reliability is the top product risk** - Wireless headphones can introduce wake-up delay, codec buffering, latency jitter, sample-rate drift, and false marker locks. The current app has some compensation, but the detection logic is still hard to reason about and hard to regression test.
 - [ ] **[P1][NEXT] Automated test suite is still narrow outside measurement timing** - Focus next test expansion on settings/profile behavior and queue retry only. Defer processing, export, HRTF, and broad UI-controller coverage.
 - [ ] **[P1][NEXT] Hardware-dependent logic still needs a focused simulator** - Add a minimal fake audio backend for queue/retry diagnostics. Defer a full play/record orchestration simulator.
+- [x] **[P1] Fixture-free measurement replay path exists** - Dropping one or more local `.txt` files on the top viewport now appends valid curves into `self._kept_curves`, recomputes average/variation, and updates export eligibility exactly like kept live sweeps.
 - [x] **[P0] False marker peak regression is covered** - End-marker scoring now evaluates ordered marker pairs, so louder false marker-like peaks no longer beat the valid pair in the focused synthetic Bluetooth test.
 - [x] **[P0] Single-band marker artifacts are covered** - Coded marker tests now reject loud single-tone false peaks, reversed end-marker order, and duplicated same-marker end pairs.
 - [ ] **[P2][DEFER] Measurement engine is improved but still concentrated** - `SweepWorker._run_inner()` still mixes I/O, progress polling, Qt signals, and error flow. Defer unless it blocks fake-audio retry tests.
@@ -70,6 +72,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [ ] **[DEFER] Split export/upload flow** - Defer; not measurement-critical.
 - [ ] **[DEFER] Keep view composition in `MainWindow`** - Defer as part of the larger main-window split.
 - [ ] **[NEXT] Add targeted `pytest` coverage across critical paths** - Cover Bluetooth profile restore, settings validation, and queue retry diagnostics first. Defer processing/export/HRTF breadth.
+- [x] **[P1] Added targeted tests for drag-drop measurement import and parser behavior** - `tests/test_measurement_txt.py` and `tests/test_main_window_measurement_import.py` cover permissive parsing, sorted/positive frequency normalization, mixed valid/invalid imports, and busy-state blocking.
 - [ ] **[NEXT] Add a minimal fake audio backend** - Create only the seam needed to simulate play/record success, timing failure, retry, and diagnostics emission.
 - [ ] **[NEXT] Add typed measurement-setting validation** - Start with defaults/ranges for Bluetooth-critical settings only. Defer a full settings schema/migration system.
 - [ ] **[DEFER] Reduce silent exception handling broadly** - Fix only measurement/settings failures for now. Defer calibration/export/upload cleanup.
@@ -97,6 +100,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 3: Bluetooth profile behavior** - Completed. Normal-mode settings are preserved/restored around Bluetooth mode, Bluetooth defaults live in a pure profile helper, and retry eligibility now prefers structured failure reasons.
 - [x] **Session 4: Bluetooth marginal drift handling** - Completed. Moderately high Bluetooth drift can now be reviewed with a warning when marker evidence is still usable.
 - [x] **Session 5: Coded multi-tone marker packets** - Completed. Timing markers are now coded broadband packets, end marker A/B identity is checked, and tests cover single-tone false peaks plus reversed/duplicated marker artifacts.
+- [x] **Session 5B: Top-viewport TXT drag-drop import for fixture-free testing** - Completed on 2026-05-06. Added top-plot drop handling in `dms/ui/dual_plot_widget.py`, a reusable permissive two-column loader in `dms/measurement_txt.py` (also used by `dms/hrtf.py`), import orchestration in `dms/ui/main_window.py`, and focused tests in `tests/test_measurement_txt.py` plus `tests/test_main_window_measurement_import.py`.
 - [ ] **Session 6: Real-headphone validation pass** - Next recommended session. Use multiple wireless headphones/IEMs and compare diagnostics before changing thresholds again.
 - [ ] **Session 7: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
 - [ ] **Session 8: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
@@ -110,6 +114,17 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] Bluetooth measurement reliability is explicitly identified as the top product risk.
 - [x] The plan avoids speculative rewrites and keeps PyQt6, `sounddevice`, `numpy`/`scipy`, and `pyqtgraph` as the default stack.
 - [x] After this file is added, run `python3 -m py_compile main.py dms/*.py dms/ui/*.py` and record the result in the working session notes. Verified on 2026-05-05.
+
+## Working Session Notes
+
+- 2026-05-06: Implemented fixture-free measurement import by drag-dropping local `.txt` files onto the top viewport.
+- Import rules: accept local `.txt` only; parse permissive two-column REW-style text (whitespace/comma delimiters, header/comment skipping); require at least 2 valid rows and at least 2 positive-frequency rows; sort ascending by frequency before use.
+- Runtime behavior: import is allowed only while app state is idle; valid files append to kept curves and trigger recompute/update; mixed drops show warnings and keep partial success.
+- Implementation files: `dms/ui/dual_plot_widget.py`, `dms/ui/main_window.py`, `dms/measurement_txt.py`, `dms/hrtf.py`, `tests/test_measurement_txt.py`, `tests/test_main_window_measurement_import.py`.
+- Verification on 2026-05-06:
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_txt.py tests/test_main_window_measurement_import.py` -> `5 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
+- Worker/model context for this change: `gpt-5.3-codex`, reasoning effort `medium`.
 
 ## Assumptions
 

@@ -13,9 +13,10 @@ Bottom viewport:
 from typing import Optional
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QRect, QTimer
+from PyQt6.QtCore import QRect, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
 
 
@@ -43,8 +44,48 @@ class _NoWheelPlotWidget(pg.PlotWidget):
         event.ignore()
 
 
-def _make_plot_widget(title: str) -> pg.PlotWidget:
-    pw = _NoWheelPlotWidget(title=title)
+class _DropPlotWidget(_NoWheelPlotWidget):
+    def __init__(self, title: str, on_paths_dropped) -> None:
+        super().__init__(title=title)
+        self._on_paths_dropped = on_paths_dropped
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _extract_txt_paths(event) -> list[str]:
+        mime = event.mimeData()
+        if mime is None or not mime.hasUrls():
+            return []
+        paths: list[str] = []
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            if path.lower().endswith(".txt"):
+                paths.append(path)
+        return paths
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._extract_txt_paths(event):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._extract_txt_paths(event):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        paths = self._extract_txt_paths(event)
+        if not paths:
+            event.ignore()
+            return
+        self._on_paths_dropped(paths)
+        event.acceptProposedAction()
+
+
+def _configure_plot_widget(pw: pg.PlotWidget) -> None:
     ax = pw.getAxis("bottom")
     ax.setLabel("Frequency", units="Hz")
     pw.getAxis("left").setLabel("Magnitude", units="dB")
@@ -67,10 +108,17 @@ def _make_plot_widget(title: str) -> pg.PlotWidget:
     ax.setTicks([ticks])
     # Lock to 25 dB per decade (1 decade on x equals 25 dB on y).
     pw.getPlotItem().getViewBox().setAspectLocked(lock=True, ratio=25.0)
+
+
+def _make_plot_widget(title: str) -> pg.PlotWidget:
+    pw = _NoWheelPlotWidget(title=title)
+    _configure_plot_widget(pw)
     return pw
 
 
 class DualPlotWidget(QWidget):
+    measurement_files_dropped = pyqtSignal(list)
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
@@ -79,7 +127,11 @@ class DualPlotWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._top_plot = _make_plot_widget("All Measurements (Top)")
+        self._top_plot = _DropPlotWidget(
+            title="All Measurements (Top)",
+            on_paths_dropped=self._emit_measurement_files_dropped,
+        )
+        _configure_plot_widget(self._top_plot)
         self._bot_plot = _make_plot_widget("Averaged Result (1/48 Oct RMS)")
         self._setup_plot_context_menu(self._top_plot, "top_plot")
         self._setup_plot_context_menu(self._bot_plot, "bottom_plot")
@@ -111,6 +163,9 @@ class DualPlotWidget(QWidget):
                 pen=pg.mkPen(color=(70, 70, 70), style=Qt.PenStyle.DashLine),
             )
             pw.addItem(zero)
+
+    def _emit_measurement_files_dropped(self, paths: list[str]) -> None:
+        self.measurement_files_dropped.emit(paths)
 
     # ------------------------------------------------------------------
     # Public API

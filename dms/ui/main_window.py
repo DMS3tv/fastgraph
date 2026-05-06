@@ -45,6 +45,7 @@ from dms.audio_engine import (
 from dms.calibration import CalibrationStore
 from dms.export import build_filename, export_curve
 from dms.hrtf import HRTFCurve
+from dms.measurement_alignment import format_diagnostics_summary
 from dms.processing import (
     compute_frequency_response,
     compute_rms_average,
@@ -190,6 +191,7 @@ class PassFailDialog(QDialog):
         index: int,
         total: int,
         timing_quality: Optional[tuple[float, float, float, float]] = None,
+        diagnostics: Optional[object] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -258,6 +260,30 @@ class PassFailDialog(QDialog):
                 "< 15 dB noisy."
             )
             layout.addWidget(timing_box)
+
+        if diagnostics is not None:
+            details_toggle = QToolButton()
+            details_toggle.setText("Measurement Diagnostics")
+            details_toggle.setCheckable(True)
+            details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            layout.addWidget(details_toggle)
+
+            details = QLabel(format_diagnostics_summary(diagnostics))
+            details.setWordWrap(True)
+            details.setVisible(False)
+            details.setStyleSheet(
+                "QLabel {"
+                " color: #9fb7d1;"
+                " background-color: rgba(40, 55, 75, 0.35);"
+                " border: 1px solid #33475f;"
+                " border-radius: 6px;"
+                " padding: 8px;"
+                " font-family: monospace;"
+                "}"
+            )
+            layout.addWidget(details)
+            details_toggle.toggled.connect(details.setVisible)
+            details_toggle.toggled.connect(lambda _checked: self.adjustSize())
 
         button_row = QHBoxLayout()
         button_row.setSpacing(10)
@@ -411,6 +437,7 @@ class MainWindow(QMainWindow):
         self._last_input_devices: list[str] = []
         self._last_output_devices: list[str] = []
         self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
+        self._last_measurement_diagnostics: Optional[object] = None
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -1282,6 +1309,7 @@ class MainWindow(QMainWindow):
 
         self._level_monitor.stop()
         self._last_timing_quality = None
+        self._last_measurement_diagnostics = None
 
         sweep = generate_log_sweep(
             duration=float(self._settings.get("sweep_duration")),
@@ -1298,6 +1326,7 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._on_sweep_error)
         worker.progress.connect(self._on_sweep_progress)
         worker.timing_quality.connect(self._on_timing_quality)
+        worker.measurement_diagnostics.connect(self._on_measurement_diagnostics)
 
         self._active_sweep_worker = worker
         self._sweep_thread = _SweepThread(
@@ -1337,6 +1366,9 @@ class MainWindow(QMainWindow):
         self, start_conf: float, end_conf: float, drift_ms: float, snr_db: float
     ) -> None:
         self._last_timing_quality = (start_conf, end_conf, drift_ms, snr_db)
+
+    def _on_measurement_diagnostics(self, diagnostics: object) -> None:
+        self._last_measurement_diagnostics = diagnostics
 
     def _on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
@@ -1389,6 +1421,19 @@ class MainWindow(QMainWindow):
             and is_timing_quality_error
             and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS
         ):
+            diagnostics_text = ""
+            if (
+                self._last_measurement_diagnostics is not None
+                and getattr(
+                    self._last_measurement_diagnostics, "failure_reason", None
+                ) is not None
+            ):
+                diagnostics_text = (
+                    "\n\n"
+                    + format_diagnostics_summary(
+                        self._last_measurement_diagnostics
+                    )
+                )
             self._state = AppState.QUEUE_RUNNING
             self._apply_state_ui()
             self._start_level_monitor()
@@ -1396,6 +1441,7 @@ class MainWindow(QMainWindow):
                 f"{message}\n\n"
                 f"Measurement {self._queue_index + 1} did not meet timing quality.\n"
                 f"Retry attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?"
+                f"{diagnostics_text}"
             )
             choice = QMessageBox.question(
                 self,
@@ -1420,7 +1466,18 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_level_monitor()
         self._statusbar.showMessage(message)
-        QMessageBox.warning(self, "Sweep Error", message)
+        dialog_message = message
+        if (
+            self._last_measurement_diagnostics is not None
+            and getattr(
+                self._last_measurement_diagnostics, "failure_reason", None
+            ) is not None
+        ):
+            dialog_message = (
+                f"{message}\n\n"
+                f"{format_diagnostics_summary(self._last_measurement_diagnostics)}"
+            )
+        QMessageBox.warning(self, "Sweep Error", dialog_message)
 
     def _on_sweep_thread_finished(self) -> None:
         self._cleanup_sweep_thread()
@@ -1510,6 +1567,7 @@ class MainWindow(QMainWindow):
             index=self._queue_index + 1,
             total=max(self._queue_target, self._queue_index + 1),
             timing_quality=self._last_timing_quality,
+            diagnostics=self._last_measurement_diagnostics,
             parent=self,
         )
         dlg.adjustSize()

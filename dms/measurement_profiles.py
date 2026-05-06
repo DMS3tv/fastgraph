@@ -37,7 +37,7 @@ BLUETOOTH_PROFILE_DEFAULTS: dict[str, Any] = {
     "latency": "high",
     "buffer_size": 512,
     "pre_sweep_silence": 0.6,
-    "post_sweep_silence": 0.8,
+    "post_sweep_silence": 2.0,
     "start_alignment_confidence_min": 3.0,
     "end_marker_confidence_min": 2.5,
     "timing_drift_max_ms": 120.0,

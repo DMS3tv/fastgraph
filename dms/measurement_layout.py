@@ -190,8 +190,12 @@ def build_measurement_layout(
     start_marker_gap_n = int(round(0.025 * fs))
     marker = build_end_marker(fs)
     marker_2 = build_end_marker_2(fs)
-    marker_gap_n = int(round(0.03 * fs))
-    marker_pair_gap_n = int(round(0.05 * fs))
+    if bool(bluetooth_headphone_mode):
+        marker_gap_n = int(round(0.12 * fs))
+        marker_pair_gap_n = int(round(0.12 * fs))
+    else:
+        marker_gap_n = int(round(0.03 * fs))
+        marker_pair_gap_n = int(round(0.05 * fs))
     excitation = np.concatenate(
         [
             start_marker,

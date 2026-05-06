@@ -45,7 +45,16 @@ from dms.audio_engine import (
 from dms.calibration import CalibrationStore
 from dms.export import build_filename, export_curve
 from dms.hrtf import HRTFCurve
-from dms.measurement_alignment import format_diagnostics_summary
+from dms.measurement_alignment import (
+    format_diagnostics_summary,
+    is_retryable_timing_failure,
+)
+from dms.measurement_profiles import (
+    PROFILE_SNAPSHOT_SETTING,
+    bluetooth_profile_updates,
+    restore_standard_profile_updates,
+    snapshot_measurement_profile,
+)
 from dms.processing import (
     compute_frequency_response,
     compute_rms_average,
@@ -448,7 +457,10 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         if bool(self._settings.get("bluetooth_headphone_mode")):
-            self._apply_bluetooth_headphone_mode_settings(notify=False)
+            self._apply_bluetooth_headphone_mode_settings(
+                notify=False,
+                preserve_standard=False,
+            )
         self._restore_hrtf_state()
         self._refresh_devices()
         self._start_level_monitor()
@@ -1412,9 +1424,14 @@ class MainWindow(QMainWindow):
         self._last_timing_quality = None
         self._sweep_progress.setValue(0)
 
-        is_timing_quality_error = any(
-            token in message.lower()
-            for token in ["start-alignment confidence", "end-marker confidence", "timing drift"]
+        failure_reason = None
+        if self._last_measurement_diagnostics is not None:
+            failure_reason = getattr(
+                self._last_measurement_diagnostics, "failure_reason", None
+            )
+        is_timing_quality_error = is_retryable_timing_failure(
+            message=message,
+            failure_reason=failure_reason,
         )
         if (
             self._queue_active()
@@ -1820,41 +1837,48 @@ class MainWindow(QMainWindow):
         enabled = self._bluetooth_mode_toggle.isChecked()
         self._settings.set("bluetooth_headphone_mode", enabled)
         if enabled:
-            self._apply_bluetooth_headphone_mode_settings(notify=True)
+            self._apply_bluetooth_headphone_mode_settings(
+                notify=True,
+                preserve_standard=True,
+            )
             return
-        self._apply_standard_measurement_mode_settings()
-        self._statusbar.showMessage("Bluetooth headphone mode disabled.")
+        used_fallback = self._apply_standard_measurement_mode_settings()
+        if used_fallback:
+            self._statusbar.showMessage(
+                "Bluetooth headphone mode disabled. Restored standard measurement defaults."
+            )
+        else:
+            self._statusbar.showMessage(
+                "Bluetooth headphone mode disabled. Restored standard measurement settings."
+            )
 
-    def _apply_bluetooth_headphone_mode_settings(self, notify: bool) -> None:
-        # Conservative defaults for Bluetooth transport jitter/latency.
-        updates = {
-            "sweep_duration": 3.5,
-            "latency": "high",
-            "buffer_size": 512,
-            "pre_sweep_silence": 0.6,
-            "post_sweep_silence": 0.8,
-            "start_alignment_confidence_min": 3.0,
-            "end_marker_confidence_min": 2.5,
-            "timing_drift_max_ms": 120.0,
-        }
+    def _apply_bluetooth_headphone_mode_settings(
+        self,
+        notify: bool,
+        preserve_standard: bool,
+    ) -> None:
+        updates = bluetooth_profile_updates()
+        if preserve_standard:
+            current_profile = {
+                key: self._settings.get(key)
+                for key in updates
+            }
+            updates[PROFILE_SNAPSHOT_SETTING] = snapshot_measurement_profile(
+                current_profile
+            )
         self._settings.update(updates)
         if notify:
             self._statusbar.showMessage(
                 "Bluetooth mode applied: high latency, 512 buffer, and Bluetooth-safe timing thresholds."
             )
 
-    def _apply_standard_measurement_mode_settings(self) -> None:
-        updates = {
-            "sweep_duration": 2.0,
-            "latency": "low",
-            "buffer_size": 1024,
-            "pre_sweep_silence": 0.2,
-            "post_sweep_silence": 0.5,
-            "start_alignment_confidence_min": 9.0,
-            "end_marker_confidence_min": 7.0,
-            "timing_drift_max_ms": 35.0,
-        }
+    def _apply_standard_measurement_mode_settings(self) -> bool:
+        updates, used_fallback = restore_standard_profile_updates(
+            self._settings.get(PROFILE_SNAPSHOT_SETTING)
+        )
+        updates[PROFILE_SNAPSHOT_SETTING] = None
         self._settings.update(updates)
+        return used_fallback
 
     def _choose_export_directory(self) -> None:
         current = self._export_dir_input.text().strip()

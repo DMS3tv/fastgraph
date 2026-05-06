@@ -9,6 +9,7 @@ from dms.measurement_alignment import (
     align_recording_to_layout,
     find_end_markers,
     format_diagnostics_summary,
+    is_retryable_timing_failure,
 )
 from dms.measurement_layout import build_measurement_layout
 
@@ -55,6 +56,35 @@ def test_aligns_clean_non_bluetooth_recording_with_fixed_latency() -> None:
     assert result.end.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.end.timing_error_samples == 0
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        MeasurementFailureReason.LOW_START_CONFIDENCE,
+        MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
+        MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+    ],
+)
+def test_retryable_timing_failure_uses_structured_reasons(reason: str) -> None:
+    assert is_retryable_timing_failure("Unrelated user-facing copy", reason) is True
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        MeasurementFailureReason.SHORT_RECORDING,
+        MeasurementFailureReason.SHORT_ALIGNED_RECORDING,
+        MeasurementFailureReason.END_MARKER_UNVERIFIED,
+    ],
+)
+def test_retryable_timing_failure_rejects_non_retryable_reasons(reason: str) -> None:
+    assert is_retryable_timing_failure("Timing drift string is ignored", reason) is False
+
+
+def test_retryable_timing_failure_keeps_string_fallback_without_reason() -> None:
+    assert is_retryable_timing_failure("Low end-marker confidence (2.0)", None) is True
+    assert is_retryable_timing_failure("Selected device is unavailable.", None) is False
 
 
 def test_bluetooth_high_latency_recording_can_lock_to_start_marker() -> None:

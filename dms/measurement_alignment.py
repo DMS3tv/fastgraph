@@ -212,6 +212,29 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
     return "\n".join(lines)
 
 
+def is_retryable_timing_failure(
+    message: str,
+    failure_reason: Optional[str],
+) -> bool:
+    """Return whether a measurement failure should trigger timing retry UI."""
+    if failure_reason is not None:
+        return failure_reason in {
+            MeasurementFailureReason.LOW_START_CONFIDENCE,
+            MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
+            MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+        }
+
+    msg = message.lower()
+    return any(
+        token in msg
+        for token in [
+            "start-alignment confidence",
+            "end-marker confidence",
+            "timing drift",
+        ]
+    )
+
+
 def normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
     """Return valid cross-correlation sequence between signal and pattern."""
     sig = np.asarray(signal).astype(np.float64, copy=False)

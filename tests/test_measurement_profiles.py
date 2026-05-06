@@ -33,6 +33,7 @@ def test_snapshot_measurement_profile_includes_only_profile_keys() -> None:
 def test_bluetooth_profile_updates_preserve_current_defaults_exactly() -> None:
     assert bluetooth_profile_updates() == BLUETOOTH_PROFILE_DEFAULTS
     assert bluetooth_profile_updates() is not BLUETOOTH_PROFILE_DEFAULTS
+    assert bluetooth_profile_updates()["post_sweep_silence"] >= 1.8
 
 
 def test_restore_standard_profile_uses_custom_snapshot() -> None:

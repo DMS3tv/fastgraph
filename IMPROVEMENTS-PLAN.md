@@ -13,6 +13,7 @@ For the next few sessions, optimize for faster progress on measurement reliabili
 - [ ] **[NEXT] Real-headphone validation pass** - Test several Bluetooth headphones/IEMs against the coded markers and record which diagnostics still appear before more tuning.
 - [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
 - [x] **[P1] Top-viewport TXT drag-drop measurement import for fixture-free testing** - Local `.txt` measurement files can now be dropped onto the top plot and imported as kept curves for testing without live fixture hardware.
+- [x] **[P1] Squiglink phone_book.json sync on upload** - Upload now supports metadata-based variant naming, merges uploaded measurements into account-specific `data/phone_book.json`, and writes updated phone book back over SFTP.
 - [ ] **[NEXT] Settings validation for measurement-critical fields** - Validate sweep duration, buffer, latency, silence, confidence, and drift settings before broader settings architecture work.
 - [ ] **[DEFER] Large architecture split** - Main-window/controller extraction is valuable, but not needed before the Bluetooth workflow is reliable.
 - [ ] **[DEFER] Persistence, release docs, upload polish, and broad CI** - Keep these visible but postpone until measurement reliability feels stable in real use.
@@ -41,6 +42,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [ ] **[P1][NEXT] Automated test suite is still narrow outside measurement timing** - Focus next test expansion on settings/profile behavior and queue retry only. Defer processing, export, HRTF, and broad UI-controller coverage.
 - [ ] **[P1][NEXT] Hardware-dependent logic still needs a focused simulator** - Add a minimal fake audio backend for queue/retry diagnostics. Defer a full play/record orchestration simulator.
 - [x] **[P1] Fixture-free measurement replay path exists** - Dropping one or more local `.txt` files on the top viewport now appends valid curves into `self._kept_curves`, recomputes average/variation, and updates export eligibility exactly like kept live sweeps.
+- [x] **[P1] Upload catalog sync path exists** - Squiglink upload now updates the remote account's `data/phone_book.json` with brand/model merges and unique variant filenames, including fallback handling when the remote phone book is missing or invalid.
 - [x] **[P0] False marker peak regression is covered** - End-marker scoring now evaluates ordered marker pairs, so louder false marker-like peaks no longer beat the valid pair in the focused synthetic Bluetooth test.
 - [x] **[P0] Single-band marker artifacts are covered** - Coded marker tests now reject loud single-tone false peaks, reversed end-marker order, and duplicated same-marker end pairs.
 - [ ] **[P2][DEFER] Measurement engine is improved but still concentrated** - `SweepWorker._run_inner()` still mixes I/O, progress polling, Qt signals, and error flow. Defer unless it blocks fake-audio retry tests.
@@ -73,6 +75,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [ ] **[DEFER] Keep view composition in `MainWindow`** - Defer as part of the larger main-window split.
 - [ ] **[NEXT] Add targeted `pytest` coverage across critical paths** - Cover Bluetooth profile restore, settings validation, and queue retry diagnostics first. Defer processing/export/HRTF breadth.
 - [x] **[P1] Added targeted tests for drag-drop measurement import and parser behavior** - `tests/test_measurement_txt.py` and `tests/test_main_window_measurement_import.py` cover permissive parsing, sorted/positive frequency normalization, mixed valid/invalid imports, and busy-state blocking.
+- [x] **[P1] Added targeted tests for Squiglink phone book merge and fallback behavior** - `tests/test_squiglink_phone_book.py` and `tests/test_main_window_squiglink_phone_book.py` cover upload name stems, string/list file normalization, unique variant appends, new brand/model entry creation, and missing/invalid remote phone-book fallback branches.
 - [ ] **[NEXT] Add a minimal fake audio backend** - Create only the seam needed to simulate play/record success, timing failure, retry, and diagnostics emission.
 - [ ] **[NEXT] Add typed measurement-setting validation** - Start with defaults/ranges for Bluetooth-critical settings only. Defer a full settings schema/migration system.
 - [ ] **[DEFER] Reduce silent exception handling broadly** - Fix only measurement/settings failures for now. Defer calibration/export/upload cleanup.
@@ -101,6 +104,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 4: Bluetooth marginal drift handling** - Completed. Moderately high Bluetooth drift can now be reviewed with a warning when marker evidence is still usable.
 - [x] **Session 5: Coded multi-tone marker packets** - Completed. Timing markers are now coded broadband packets, end marker A/B identity is checked, and tests cover single-tone false peaks plus reversed/duplicated marker artifacts.
 - [x] **Session 5B: Top-viewport TXT drag-drop import for fixture-free testing** - Completed on 2026-05-06. Added top-plot drop handling in `dms/ui/dual_plot_widget.py`, a reusable permissive two-column loader in `dms/measurement_txt.py` (also used by `dms/hrtf.py`), import orchestration in `dms/ui/main_window.py`, and focused tests in `tests/test_measurement_txt.py` plus `tests/test_main_window_measurement_import.py`.
+- [x] **Session 5C: Squiglink phone-book sync on upload** - Completed on 2026-05-06. Added upload name modifier UI, metadata-aware upload filename stems, SFTP read/merge/write flow for `data/phone_book.json`, and fallback choices for missing/invalid remote phone books.
 - [ ] **Session 6: Real-headphone validation pass** - Next recommended session. Use multiple wireless headphones/IEMs and compare diagnostics before changing thresholds again.
 - [ ] **Session 7: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
 - [ ] **Session 8: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
@@ -125,6 +129,17 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Implementation files: `dms/ui/dual_plot_widget.py`, `dms/ui/main_window.py`, `dms/measurement_txt.py`, `dms/hrtf.py`, `tests/test_measurement_txt.py`, `tests/test_main_window_measurement_import.py`.
 - Verification on 2026-05-06:
   - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_txt.py tests/test_main_window_measurement_import.py` -> `5 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
+- 2026-05-06: Implemented Squiglink phone-book sync during upload.
+- Upload naming behavior (final): local export naming is unchanged; Squiglink upload writes measurement TXT files into `data/` and uses `Brand Model ModifierOrSide.txt`, where side defaults from metadata (`L`/`R`) when modifier is blank, and unit variants can use `L1/L2...` or `R1/R2...`.
+- Metadata requirement for upload naming: Headphone Metadata now includes required `Channel Side` (`L` or `R`) and upload blocks with guidance to open metadata if side is missing.
+- Phone-book naming behavior (final): phone-book `file` entries intentionally omit terminal side/unit suffixes (`L`, `R`, `L1`, `R2`, etc.) so upload filenames and phone-book entries remain related but not identical; side-specific suffixes are kept only in the TXT filename.
+- Phone-book sync behavior: after TXT upload, app reads `data/phone_book.json` over SFTP, merges by normalized brand/model (`strip + casefold`), normalizes `file` values to list form, appends unique phone-book stems, preserves existing metadata/extra keys, and writes back to `data/phone_book.json` (overwrite on conflict).
+- Missing/invalid remote phone-book behavior: app now prompts user to choose one of three deterministic branches: create fresh phone book and continue, fail upload, or upload measurement only and skip phone-book sync.
+- Upload dialog copy polish: `Name Modifier` now shows helper text ("Optional. Type here if you're using different tips, pads, EQ modes, etc") and no placeholder example text.
+- Implementation files: `dms/ui/main_window.py`, `dms/squiglink.py`, `tests/test_squiglink_phone_book.py`, `tests/test_main_window_squiglink_phone_book.py`.
+- Verification on 2026-05-06:
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_squiglink_phone_book.py tests/test_main_window_squiglink_phone_book.py` -> `8 passed`
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 - Worker/model context for this change: `gpt-5.3-codex`, reasoning effort `medium`.
 

@@ -83,10 +83,14 @@ class SessionDialog(QDialog):
             "wireless dongle",
             "other",
         ])
+        self._channel_side = QComboBox()
+        self._channel_side.addItems(["", "L", "R"])
+        self._channel_side.setMinimumWidth(120)
 
         form.addRow("Rig *", self._rig)
         form.addRow("Brand *", self._brand)
         form.addRow("Model *", self._model)
+        form.addRow("Channel Side *", self._channel_side)
         form.addRow("Model Number", self._model_number)
         form.addRow("Asset Tag", self._asset_tag)
         form.addRow("Firmware", self._firmware)
@@ -125,6 +129,8 @@ class SessionDialog(QDialog):
             missing.append("Brand")
         if not self._model.text().strip():
             missing.append("Model")
+        if not self._channel_side.currentText().strip():
+            missing.append("Channel Side")
         if missing:
             self._status.setText(f"Required: {', '.join(missing)}")
             return
@@ -153,6 +159,7 @@ class SessionDialog(QDialog):
         self._open_back.setCurrentText("open back" if s.open_back else "closed back")
         self._pads.setText(s.pads_notes)
         self._connection.setCurrentText(s.connection)
+        self._channel_side.setCurrentText((getattr(s, "channel_side", "") or "").strip().upper())
 
     def session_data(self) -> SessionData:
         return SessionData(
@@ -174,6 +181,7 @@ class SessionDialog(QDialog):
             open_back=self._open_back.currentText() == "open back",
             pads_notes=self._pads.text().strip(),
             connection=self._connection.currentText(),
+            channel_side=self._channel_side.currentText().strip().upper(),
         )
 
     def _on_anc_toggled(self, checked: bool) -> None:

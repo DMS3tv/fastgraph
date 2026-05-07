@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
+import paramiko
 import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -67,7 +68,17 @@ from dms.processing import (
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
-from dms.squiglink import upload_export_sftp
+from dms.squiglink import (
+    PHONE_BOOK_REMOTE_PATH,
+    RemotePhoneBookInvalidError,
+    RemotePhoneBookMissingError,
+    build_phone_book_name_stem,
+    build_upload_name_stem,
+    merge_phone_book_entry,
+    read_remote_phone_book,
+    upload_export_sftp,
+    write_remote_phone_book,
+)
 from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
@@ -395,6 +406,12 @@ class SquiglinkAuthDialog(QDialog):
         self._remember.setChecked(remember)
         layout.addWidget(self._remember)
 
+        layout.addWidget(QLabel("Name Modifier"))
+        layout.addWidget(QLabel("Optional. Type here if you're using different tips, pads, EQ modes, etc"))
+        self._name_modifier = QLineEdit()
+        self._name_modifier.setPlaceholderText("")
+        layout.addWidget(self._name_modifier)
+
         self._status = QLabel("")
         self._status.setStyleSheet("color: #ff8888;")
         layout.addWidget(self._status)
@@ -425,6 +442,9 @@ class SquiglinkAuthDialog(QDialog):
 
     def remember_credentials(self) -> bool:
         return self._remember.isChecked()
+
+    def name_modifier(self) -> str:
+        return self._name_modifier.text().strip()
 
 
 class MainWindow(QMainWindow):
@@ -2141,7 +2161,21 @@ class MainWindow(QMainWindow):
             self._settings.set("squiglink_credentials_encrypted", None)
 
         compensated = self._is_hrtf_active()
-        filename = build_filename(self._session, compensated=compensated)
+        side = (getattr(self._session, "channel_side", "") or "").strip().upper()
+        if side not in {"L", "R"}:
+            choice = QMessageBox.question(
+                self,
+                "Channel Side Required",
+                "Select channel side (L or R) in Headphone Metadata before uploading.\n\nOpen metadata now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self._open_metadata_dialog()
+            return
+        upload_stem = build_upload_name_stem(self._session, auth.name_modifier())
+        phone_book_stem = build_phone_book_name_stem(self._session, auth.name_modifier())
+        filename = f"{upload_stem}.txt"
         freqs, mag_db = curve
 
         tmp_path: Optional[Path] = None
@@ -2171,9 +2205,21 @@ class MainWindow(QMainWindow):
                 port=port,
                 username=username,
                 password=password,
+                remote_filename=filename,
+            )
+            phone_book_status = self._sync_remote_phone_book(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                phone_book_stem=phone_book_stem,
             )
             self._statusbar.showMessage("Upload to Squiglink completed successfully.")
-            QMessageBox.information(self, "Upload Complete", "Upload to Squiglink completed successfully.")
+            QMessageBox.information(
+                self,
+                "Upload Complete",
+                f"Upload to Squiglink completed successfully.\n\n{phone_book_status}",
+            )
         except Exception as exc:
             self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
             QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
@@ -2183,6 +2229,68 @@ class MainWindow(QMainWindow):
                     tmp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+
+    def _ask_phone_book_fallback_mode(self, detail_message: str) -> str:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Phone Book Unavailable")
+        dialog.setText("Couldn't load remote phone_book.json.")
+        dialog.setInformativeText(
+            f"{detail_message}\n\nChoose how to proceed with this upload:"
+        )
+        create_btn = dialog.addButton(
+            "Create Fresh Phone Book",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        fail_btn = dialog.addButton(
+            "Fail Upload",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        skip_btn = dialog.addButton(
+            "Upload Measurement Only",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        dialog.setDefaultButton(create_btn)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is create_btn:
+            return "create"
+        if clicked is skip_btn:
+            return "skip"
+        return "fail"
+
+    def _sync_remote_phone_book(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        phone_book_stem: str,
+    ) -> str:
+        transport = paramiko.Transport((host, int(port)))
+        try:
+            transport.connect(username=username, password=password)
+            sftp = paramiko.SFTPClient.from_transport(transport)
+            try:
+                try:
+                    phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
+                except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
+                    mode = self._ask_phone_book_fallback_mode(str(exc))
+                    if mode == "fail":
+                        raise RuntimeError(
+                            f"Upload canceled because phone book could not be loaded: {exc}"
+                        ) from exc
+                    if mode == "skip":
+                        return "Measurement uploaded. Phone book update was skipped."
+                    phone_book = []
+
+                merge_phone_book_entry(phone_book, self._session, phone_book_stem)
+                write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
+                return "Phone book updated successfully."
+            finally:
+                sftp.close()
+        finally:
+            transport.close()
 
     def closeEvent(self, event) -> None:
         self._close_pass_fail_dialog()

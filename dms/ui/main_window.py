@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -445,6 +446,72 @@ class SquiglinkAuthDialog(QDialog):
 
     def name_modifier(self) -> str:
         return self._name_modifier.text().strip()
+
+
+class SquiglinkUploadMetadataDialog(QDialog):
+    def __init__(
+        self,
+        parent=None,
+        initial_brand: str = "",
+        initial_model: str = "",
+        initial_channel_side: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Upload Metadata Required")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Fill required metadata to continue upload."))
+
+        form = QFormLayout()
+        self._brand = QLineEdit()
+        self._brand.setText(initial_brand)
+        form.addRow("Brand *", self._brand)
+
+        self._model = QLineEdit()
+        self._model.setText(initial_model)
+        form.addRow("Model *", self._model)
+
+        self._channel_side = QComboBox()
+        self._channel_side.addItems(["", "L", "R"])
+        self._channel_side.setCurrentText(initial_channel_side.strip().upper())
+        form.addRow("Channel Side *", self._channel_side)
+        layout.addLayout(form)
+
+        self._status = QLabel("")
+        self._status.setStyleSheet("color: #ff8888;")
+        layout.addWidget(self._status)
+
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QPushButton("Save and Continue")
+        save_btn.clicked.connect(self._accept_if_valid)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def _accept_if_valid(self) -> None:
+        missing = []
+        if not self.brand():
+            missing.append("Brand")
+        if not self.model():
+            missing.append("Model")
+        if self.channel_side() not in {"L", "R"}:
+            missing.append("Channel Side")
+        if missing:
+            self._status.setText(f"Required: {', '.join(missing)}")
+            return
+        self.accept()
+
+    def brand(self) -> str:
+        return self._brand.text().strip()
+
+    def model(self) -> str:
+        return self._model.text().strip()
+
+    def channel_side(self) -> str:
+        return self._channel_side.currentText().strip().upper()
 
 
 class MainWindow(QMainWindow):
@@ -2161,17 +2228,7 @@ class MainWindow(QMainWindow):
             self._settings.set("squiglink_credentials_encrypted", None)
 
         compensated = self._is_hrtf_active()
-        side = (getattr(self._session, "channel_side", "") or "").strip().upper()
-        if side not in {"L", "R"}:
-            choice = QMessageBox.question(
-                self,
-                "Channel Side Required",
-                "Select channel side (L or R) in Headphone Metadata before uploading.\n\nOpen metadata now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if choice == QMessageBox.StandardButton.Yes:
-                self._open_metadata_dialog()
+        if not self._ensure_upload_metadata():
             return
         upload_stem = build_upload_name_stem(self._session, auth.name_modifier())
         phone_book_stem = build_phone_book_name_stem(self._session, auth.name_modifier())
@@ -2229,6 +2286,27 @@ class MainWindow(QMainWindow):
                     tmp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+
+    def _ensure_upload_metadata(self) -> bool:
+        side = (getattr(self._session, "channel_side", "") or "").strip().upper()
+        brand = (getattr(self._session, "brand", "") or "").strip()
+        model = (getattr(self._session, "model", "") or "").strip()
+        if brand and model and side in {"L", "R"}:
+            return True
+
+        dialog = SquiglinkUploadMetadataDialog(
+            self,
+            initial_brand=brand,
+            initial_model=model,
+            initial_channel_side=side,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        self._session.brand = dialog.brand()
+        self._session.model = dialog.model()
+        self._session.channel_side = dialog.channel_side()
+        return True
 
     def _ask_phone_book_fallback_mode(self, detail_message: str) -> str:
         dialog = QMessageBox(self)

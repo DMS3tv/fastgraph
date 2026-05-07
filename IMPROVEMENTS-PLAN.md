@@ -132,7 +132,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 - 2026-05-06: Implemented Squiglink phone-book sync during upload.
 - Upload naming behavior (final): local export naming is unchanged; Squiglink upload writes measurement TXT files into `data/` and uses `Brand Model ModifierOrSide.txt`, where side defaults from metadata (`L`/`R`) when modifier is blank, and unit variants can use `L1/L2...` or `R1/R2...`.
-- Metadata requirement for upload naming: Headphone Metadata now includes required `Channel Side` (`L` or `R`) and upload blocks with guidance to open metadata if side is missing.
+- Metadata requirement for upload naming: upload now blocks until required `Brand`, `Model`, and `Channel Side` (`L`/`R`) are set, and the upload gate popup lets users fill those three fields inline before continuing.
 - Phone-book naming behavior (final): phone-book `file` entries intentionally omit terminal side/unit suffixes (`L`, `R`, `L1`, `R2`, etc.) so upload filenames and phone-book entries remain related but not identical; side-specific suffixes are kept only in the TXT filename.
 - Phone-book sync behavior: after TXT upload, app reads `data/phone_book.json` over SFTP, merges by normalized brand/model (`strip + casefold`), normalizes `file` values to list form, appends unique phone-book stems, preserves existing metadata/extra keys, and writes back to `data/phone_book.json` (overwrite on conflict).
 - Missing/invalid remote phone-book behavior: app now prompts user to choose one of three deterministic branches: create fresh phone book and continue, fail upload, or upload measurement only and skip phone-book sync.
@@ -142,6 +142,11 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
   - `PYTHONPATH=. .venv/bin/pytest -q tests/test_squiglink_phone_book.py tests/test_main_window_squiglink_phone_book.py` -> `8 passed`
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 - Worker/model context for this change: `gpt-5.3-codex`, reasoning effort `medium`.
+- 2026-05-07: Updated Squiglink upload metadata guard.
+- Upload metadata gate behavior (current): `Upload to Squiglink` no longer proceeds when `Brand`, `Model`, or `Channel Side` are missing; instead of a side-only warning, it now opens a compact popup that collects those three required fields and then continues upload.
+- Implementation files: `dms/ui/main_window.py`, `tests/test_main_window_squiglink_phone_book.py`.
+- Verification on 2026-05-07:
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_squiglink_phone_book.py tests/test_main_window_squiglink_phone_book.py` -> `14 passed`
 
 ## Assumptions
 

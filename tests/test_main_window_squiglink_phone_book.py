@@ -136,3 +136,38 @@ def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
         assert False, "expected RuntimeError"
     except RuntimeError as exc:
         assert "canceled" in str(exc).lower()
+
+
+def test_ensure_upload_metadata_returns_true_when_already_complete() -> None:
+    fake = SimpleNamespace(
+        _session=SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L")
+    )
+    assert MainWindow._ensure_upload_metadata(fake) is True
+
+
+def test_ensure_upload_metadata_prompts_and_saves_fields(monkeypatch) -> None:
+    fake = SimpleNamespace(
+        _session=SessionData(rig="KB500X", brand="", model="", channel_side="")
+    )
+
+    class _DialogAccepted:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def brand(self) -> str:
+            return "Sennheiser"
+
+        def model(self) -> str:
+            return "HD 800 S"
+
+        def channel_side(self) -> str:
+            return "R"
+
+    monkeypatch.setattr("dms.ui.main_window.SquiglinkUploadMetadataDialog", _DialogAccepted)
+    assert MainWindow._ensure_upload_metadata(fake) is True
+    assert fake._session.brand == "Sennheiser"
+    assert fake._session.model == "HD 800 S"
+    assert fake._session.channel_side == "R"

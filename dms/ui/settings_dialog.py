@@ -148,6 +148,7 @@ class SettingsDialog(QDialog):
             "pre_sweep_silence": self._pre_silence.value(),
             "post_sweep_silence": self._post_silence.value(),
             "latency": self._latency.currentText(),
+            "latency_user_override": True,
             "start_alignment_confidence_min": self._start_conf_min.value(),
             "end_marker_confidence_min": self._end_conf_min.value(),
             "timing_drift_max_ms": self._timing_drift_max_ms.value(),

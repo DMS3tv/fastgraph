@@ -153,6 +153,12 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Verification on 2026-05-07:
   - `PYTHONPATH=. .venv/bin/pytest -q` -> `82 passed`
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
+- 2026-05-07: Bumped app version from `0.2.1` to `0.2.2` for the Windows audio pairing and timing stability hotfix.
+- Windows audio pairing behavior: normal Windows device lists now prefer a matched WASAPI backend, advanced driver entries are hidden behind an `Advanced Windows Drivers` toggle, mismatched input/output host APIs are blocked before queue start, and non-Bluetooth Windows sweeps default to high latency unless the user explicitly saves a latency choice.
+- Implementation files: `dms/audio_engine.py`, `dms/ui/main_window.py`, `dms/ui/settings_dialog.py`, `dms/settings_manager.py`, `tests/test_audio_devices.py`, `tests/test_main_window_audio_devices.py`.
+- Verification on 2026-05-07:
+  - `PYTHONPATH=. .venv/bin/pytest -q` -> `89 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 
 ## Assumptions
 

@@ -2,9 +2,11 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QComboBox, QLabel
+from PyQt6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel
 
 from dms.ui.main_window import MainWindow
+from dms.ui.main_window import AppState
+from dms import audio_engine
 
 
 _APP = None
@@ -39,14 +41,26 @@ class _Harness:
     _current_output_device_setting = MainWindow._current_output_device_setting
     _current_input_device_setting = MainWindow._current_input_device_setting
     _current_input_channel = MainWindow._current_input_channel
+    _use_advanced_windows_drivers = MainWindow._use_advanced_windows_drivers
+    _selected_audio_pair_is_compatible = MainWindow._selected_audio_pair_is_compatible
+    _windows_audio_pair_message = MainWindow._windows_audio_pair_message
+    _matching_output_for_input = MainWindow._matching_output_for_input
+    _sync_windows_output_to_input = MainWindow._sync_windows_output_to_input
+    _sweep_latency_mode = MainWindow._sweep_latency_mode
     _refresh_devices = MainWindow._refresh_devices
     _refresh_channels = MainWindow._refresh_channels
+    _start_queue = MainWindow._start_queue
 
     def __init__(self, settings: _Settings) -> None:
         self._settings = settings
+        self._state = AppState.IDLE
         self._out_dev_combo = QComboBox()
         self._in_dev_combo = QComboBox()
         self._ch_combo = QComboBox()
+        self._advanced_windows_drivers_toggle = QCheckBox()
+        self._advanced_windows_drivers_toggle.setChecked(
+            bool(settings.get("windows_advanced_audio_drivers"))
+        )
         self._active_ch_label = QLabel()
         self._statusbar = _Status()
         self._input_devices_by_index = {}
@@ -57,12 +71,17 @@ class _Harness:
         self._last_input_devices = []
         self.apply_count = 0
         self.monitor_count = 0
+        self.start_next_sweep_count = 0
+        self._last_level_dbfs = -120.0
 
     def _apply_state_ui(self) -> None:
         self.apply_count += 1
 
     def _start_level_monitor(self) -> None:
         self.monitor_count += 1
+
+    def _start_next_sweep(self) -> None:
+        self.start_next_sweep_count += 1
 
 
 def _app() -> QApplication:
@@ -81,6 +100,22 @@ def _devices():
             "name": "MOTU Out",
             "hostapi": 2,
             "hostapi_name": "Windows WASAPI",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        },
+        {
+            "index": 6,
+            "name": "MOTU Out",
+            "hostapi": 1,
+            "hostapi_name": "Windows DirectSound",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        },
+        {
+            "index": 7,
+            "name": "MOTU Out",
+            "hostapi": 3,
+            "hostapi_name": "Windows WDM-KS",
             "max_input_channels": 0,
             "max_output_channels": 2,
         }
@@ -110,11 +145,19 @@ def _devices():
             "max_input_channels": 2,
             "max_output_channels": 0,
         },
+        {
+            "index": 44,
+            "name": "in 1-2 (motu m series)",
+            "hostapi": 3,
+            "hostapi_name": "Windows WDM-KS",
+            "max_input_channels": 2,
+            "max_output_channels": 0,
+        },
     ]
     return outputs, inputs
 
 
-def test_refresh_devices_uses_numeric_indices_and_structured_settings(monkeypatch) -> None:
+def test_windows_normal_mode_shows_only_preferred_wasapi_devices(monkeypatch) -> None:
     _app()
     outputs, inputs = _devices()
     settings = _Settings(
@@ -128,24 +171,56 @@ def test_refresh_devices_uses_numeric_indices_and_structured_settings(monkeypatc
             },
             "output_device": None,
             "input_channel": 0,
+            "windows_advanced_audio_drivers": False,
         }
     )
     harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
     harness._refresh_devices()
 
+    assert harness._in_dev_combo.count() == 1
+    assert harness._out_dev_combo.count() == 1
     assert harness._in_dev_combo.currentData() == 43
     assert harness._out_dev_combo.currentData() == 5
-    assert "Windows WASAPI" in harness._in_dev_combo.currentText()
     assert settings.data["input_device"]["index"] == 43
     assert settings.data["input_device"]["kind"] == "input"
     assert settings.data["output_device"]["index"] == 5
 
 
-def test_refresh_devices_leaves_legacy_duplicate_unselected(monkeypatch) -> None:
+def test_windows_advanced_mode_shows_all_backends(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+
+    harness._refresh_devices()
+
+    assert harness._in_dev_combo.count() == 4
+    assert harness._out_dev_combo.count() == 3
+    assert any(
+        "Windows DirectSound" in harness._in_dev_combo.itemText(i)
+        for i in range(harness._in_dev_combo.count())
+    )
+
+
+def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(monkeypatch) -> None:
     _app()
     outputs, inputs = _devices()
     settings = _Settings(
@@ -153,15 +228,110 @@ def test_refresh_devices_leaves_legacy_duplicate_unselected(monkeypatch) -> None
             "input_device": "in 1-2 (motu m series)",
             "output_device": None,
             "input_channel": 0,
+            "windows_advanced_audio_drivers": False,
         }
     )
     harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
     harness._refresh_devices()
 
-    assert harness._in_dev_combo.currentData() is None
-    assert settings.data["input_device"] is None
-    assert "ambiguous" in harness._statusbar.messages[-1].lower()
+    assert harness._in_dev_combo.currentData() == 43
+    assert settings.data["input_device"]["hostapi_name"] == "Windows WASAPI"
+
+
+def test_windows_input_selection_auto_matches_output_backend(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+
+    harness._refresh_devices()
+    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
+    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(43))
+    harness._sync_windows_output_to_input(show_status=False)
+
+    assert harness._out_dev_combo.currentData() == 5
+
+
+def test_windows_mismatched_backends_block_queue_start(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+    monkeypatch.setattr(
+        "dms.ui.main_window.QMessageBox.warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    harness._refresh_devices()
+    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
+    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(43))
+
+    harness._start_queue()
+
+    assert warnings
+    assert "mismatch" in warnings[0][0].lower()
+    assert harness.start_next_sweep_count == 0
+
+
+def test_windows_default_non_bluetooth_latency_is_high_until_user_override(monkeypatch) -> None:
+    _app()
+    settings = _Settings(
+        {
+            "latency": "low",
+            "latency_user_override": False,
+            "bluetooth_headphone_mode": False,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
+
+    assert harness._sweep_latency_mode() == "high"
+
+    settings.set("latency_user_override", True)
+    assert harness._sweep_latency_mode() == "low"
+
+
+def test_non_windows_latency_behavior_is_unchanged(monkeypatch) -> None:
+    _app()
+    settings = _Settings(
+        {
+            "latency": "low",
+            "latency_user_override": False,
+            "bluetooth_headphone_mode": False,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+
+    assert harness._sweep_latency_mode() == "low"

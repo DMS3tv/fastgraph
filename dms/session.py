@@ -19,6 +19,7 @@ class SessionData:
     open_back: bool = True
     pads_notes: str = ""
     connection: str = "wired analog"
+    channel_side: str = ""
 
     def display_name(self) -> str:
         if self.asset_tag:
@@ -58,4 +59,6 @@ class SessionData:
         if self.pads_notes:
             lines.append(f"* Pads/Tips Notes: {self.pads_notes}")
         lines.append(f"* Connection: {self.connection}")
+        if self.channel_side.strip():
+            lines.append(f"* Channel Side: {self.channel_side.strip().upper()}")
         return "\n".join(lines)

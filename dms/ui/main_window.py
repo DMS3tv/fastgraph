@@ -44,8 +44,12 @@ from dms.audio_engine import (
     device_label,
     device_setting,
     duplicate_device_names,
+    filter_devices_by_hostapi,
     get_input_devices,
     get_output_devices,
+    is_compatible_device_pair,
+    is_windows_audio_host,
+    preferred_windows_hostapi,
     resolve_device_selection,
 )
 from dms.calibration import CalibrationStore
@@ -702,6 +706,16 @@ class MainWindow(QMainWindow):
         self._active_ch_label.setObjectName("label_channel_active")
         dev_layout.addWidget(self._active_ch_label)
 
+        self._advanced_windows_drivers_toggle = ToggleSwitch("Advanced Windows Drivers")
+        self._advanced_windows_drivers_toggle.setChecked(
+            bool(self._settings.get("windows_advanced_audio_drivers"))
+        )
+        self._advanced_windows_drivers_toggle.setVisible(is_windows_audio_host())
+        self._advanced_windows_drivers_toggle.stateChanged.connect(
+            self._on_advanced_windows_drivers_changed
+        )
+        dev_layout.addWidget(self._advanced_windows_drivers_toggle)
+
         refresh_btn = QPushButton("Refresh Devices")
         refresh_btn.clicked.connect(self._refresh_devices)
         dev_layout.addWidget(refresh_btn)
@@ -1077,6 +1091,70 @@ class MainWindow(QMainWindow):
         device = self._current_input_device_info()
         return device_setting(device, "input") if device is not None else None
 
+    def _use_advanced_windows_drivers(self) -> bool:
+        toggle = getattr(self, "_advanced_windows_drivers_toggle", None)
+        if toggle is not None:
+            return bool(toggle.isChecked())
+        return bool(self._settings.get("windows_advanced_audio_drivers"))
+
+    def _selected_audio_pair_is_compatible(self) -> bool:
+        return is_compatible_device_pair(
+            self._current_input_device_info(),
+            self._current_output_device_info(),
+        )
+
+    def _windows_audio_pair_message(self) -> str:
+        in_label = self._current_input_device_label() or "selected input"
+        out_label = self._current_output_device_label() or "selected output"
+        return (
+            "On Windows, input and output must use the same audio driver backend "
+            f"for stable timing.\n\nInput: {in_label}\nOutput: {out_label}"
+        )
+
+    def _matching_output_for_input(self, input_device: Optional[dict]) -> Optional[dict]:
+        if input_device is None:
+            return None
+        hostapi = int(input_device.get("hostapi", -1))
+        for device in self._output_devices_by_index.values():
+            if int(device.get("hostapi", -1)) == hostapi:
+                return device
+        return None
+
+    def _sync_windows_output_to_input(self, *, show_status: bool = True) -> None:
+        if not is_windows_audio_host():
+            return
+        input_device = self._current_input_device_info()
+        output_device = self._current_output_device_info()
+        if input_device is None:
+            return
+        if is_compatible_device_pair(input_device, output_device):
+            return
+        matched_output = self._matching_output_for_input(input_device)
+        if matched_output is not None:
+            idx = self._out_dev_combo.findData(int(matched_output["index"]))
+            if idx >= 0:
+                self._out_dev_combo.setCurrentIndex(idx)
+                self._settings.set("output_device", self._current_output_device_setting())
+                if show_status:
+                    self._statusbar.showMessage(
+                        "Matched Windows input/output to the same audio driver backend."
+                    )
+                return
+        self._out_dev_combo.setCurrentIndex(-1)
+        self._settings.set("output_device", None)
+        if show_status:
+            self._statusbar.showMessage(
+                "No matching Windows output backend found for the selected input."
+            )
+
+    def _sweep_latency_mode(self) -> str:
+        configured = str(self._settings.get("latency"))
+        if bool(self._settings.get("bluetooth_headphone_mode")):
+            return configured
+        if is_windows_audio_host() and not bool(self._settings.get("latency_user_override")):
+            return "high"
+        return configured
+
     def _current_input_channel(self) -> int:
         value = self._ch_combo.currentData()
         return int(value) if value is not None else 0
@@ -1126,16 +1204,23 @@ class MainWindow(QMainWindow):
         )
         selected_ch = self._current_input_channel()
 
-        out_devices = get_output_devices()
-        in_devices = get_input_devices()
+        all_out_devices = get_output_devices()
+        all_in_devices = get_input_devices()
+        preferred_hostapi = (
+            preferred_windows_hostapi(all_in_devices, all_out_devices)
+            if is_windows_audio_host() and not self._use_advanced_windows_drivers()
+            else None
+        )
+        out_devices = filter_devices_by_hostapi(all_out_devices, preferred_hostapi)
+        in_devices = filter_devices_by_hostapi(all_in_devices, preferred_hostapi)
 
         out_signature = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in out_devices
+            for d in all_out_devices
         ]
         in_signature = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in in_devices
+            for d in all_in_devices
         ]
         out_duplicates = duplicate_device_names(out_devices)
         in_duplicates = duplicate_device_names(in_devices)
@@ -1203,6 +1288,8 @@ class MainWindow(QMainWindow):
         self._out_dev_combo.blockSignals(False)
         self._in_dev_combo.blockSignals(False)
 
+        self._sync_windows_output_to_input(show_status=False)
+
         self._refresh_channels(selected_ch=selected_ch)
         self._ch_combo.blockSignals(False)
 
@@ -1218,6 +1305,10 @@ class MainWindow(QMainWindow):
         if out_ambiguous or in_ambiguous:
             self._statusbar.showMessage(
                 "Saved audio device name is ambiguous. Select the desired host API once."
+            )
+        elif is_windows_audio_host() and preferred_hostapi is not None:
+            self._statusbar.showMessage(
+                "Windows audio set to matched driver backend for stable timing."
             )
 
         self._apply_state_ui()
@@ -1326,12 +1417,36 @@ class MainWindow(QMainWindow):
 
     def _on_output_device_changed(self) -> None:
         self._settings.set("output_device", self._current_output_device_setting())
+        self._apply_state_ui()
+        if (
+            is_windows_audio_host()
+            and self._current_output_device() is not None
+            and self._current_input_device() is not None
+            and not self._selected_audio_pair_is_compatible()
+        ):
+            self._statusbar.showMessage(
+                "Windows input/output driver backends do not match."
+            )
 
     def _on_input_device_changed(self) -> None:
         self._settings.set("input_device", self._current_input_device_setting())
+        self._sync_windows_output_to_input()
         self._refresh_channels()
         self._start_level_monitor()
         self._apply_state_ui()
+
+    def _on_advanced_windows_drivers_changed(self) -> None:
+        enabled = self._use_advanced_windows_drivers()
+        self._settings.set("windows_advanced_audio_drivers", enabled)
+        self._refresh_devices()
+        if enabled:
+            self._statusbar.showMessage(
+                "Advanced Windows drivers visible. Keep input/output on the same backend."
+            )
+        else:
+            self._statusbar.showMessage(
+                "Advanced Windows drivers hidden. Using the preferred matched backend."
+            )
 
     def _on_channel_changed(self) -> None:
         self._settings.set("input_channel", self._current_input_channel())
@@ -1414,6 +1529,7 @@ class MainWindow(QMainWindow):
             self._current_output_device() is not None
             and self._current_input_device() is not None
             and self._ch_combo.count() > 0
+            and self._selected_audio_pair_is_compatible()
         )
 
         for widget in (
@@ -1436,6 +1552,7 @@ class MainWindow(QMainWindow):
             self._clear_btn,
             self._metadata_btn,
             self._clear_metadata_btn,
+            self._advanced_windows_drivers_toggle,
         ):
             widget.setEnabled(idle)
 
@@ -1454,6 +1571,17 @@ class MainWindow(QMainWindow):
 
         if self._current_input_device() is None:
             QMessageBox.warning(self, "No Input Device", "Select an input device.")
+            return
+
+        if not self._selected_audio_pair_is_compatible():
+            QMessageBox.warning(
+                self,
+                "Windows Audio Driver Mismatch",
+                self._windows_audio_pair_message(),
+            )
+            self._statusbar.showMessage(
+                "Queue start blocked: Windows input/output driver backends do not match."
+            )
             return
 
         if self._ch_combo.count() == 0:
@@ -1520,6 +1648,10 @@ class MainWindow(QMainWindow):
             self._on_sweep_error("Selected device is unavailable.")
             return
 
+        if not self._selected_audio_pair_is_compatible():
+            self._on_sweep_error(self._windows_audio_pair_message())
+            return
+
         self._level_monitor.stop()
         self._last_timing_quality = None
         self._last_measurement_diagnostics = None
@@ -1554,7 +1686,7 @@ class MainWindow(QMainWindow):
             buffer_size=int(self._settings.get("buffer_size")),
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
-            latency=str(self._settings.get("latency")),
+            latency=self._sweep_latency_mode(),
             bluetooth_headphone_mode=bool(
                 self._settings.get("bluetooth_headphone_mode")
             ),

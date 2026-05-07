@@ -5,6 +5,7 @@ Thread-safe; all callbacks communicate via Qt signals.
 
 import time
 import threading
+import os
 from dataclasses import replace
 from typing import Any, Optional, Callable
 
@@ -23,6 +24,18 @@ from dms.measurement_layout import build_measurement_layout, build_output_signal
 # ---------------------------------------------------------------------------
 # Device helpers
 # ---------------------------------------------------------------------------
+
+WINDOWS_HOST_API_PRIORITY = (
+    "windows wasapi",
+    "windows wdm-ks",
+    "windows directsound",
+    "mme",
+)
+
+
+def is_windows_audio_host() -> bool:
+    return os.name == "nt"
+
 
 def _hostapi_names() -> dict[int, str]:
     try:
@@ -73,6 +86,55 @@ def get_output_devices() -> list[dict]:
 
 def get_input_devices() -> list[dict]:
     return _devices_for_kind("input")
+
+
+def _windows_hostapi_rank(hostapi_name: str) -> tuple[int, str]:
+    normalized = " ".join(str(hostapi_name or "").casefold().split())
+    for idx, preferred in enumerate(WINDOWS_HOST_API_PRIORITY):
+        if normalized == preferred:
+            return idx, normalized
+    return len(WINDOWS_HOST_API_PRIORITY), normalized
+
+
+def preferred_windows_hostapi(
+    input_devices: list[dict],
+    output_devices: list[dict],
+) -> Optional[int]:
+    input_hostapis = {int(d.get("hostapi", -1)) for d in input_devices}
+    output_hostapis = {int(d.get("hostapi", -1)) for d in output_devices}
+    compatible_hostapis = input_hostapis & output_hostapis
+    if not compatible_hostapis:
+        return None
+    candidates = []
+    for device in input_devices + output_devices:
+        hostapi = int(device.get("hostapi", -1))
+        if hostapi in compatible_hostapis:
+            candidates.append(
+                (
+                    _windows_hostapi_rank(str(device.get("hostapi_name") or "")),
+                    hostapi,
+                )
+            )
+    if not candidates:
+        return None
+    return min(candidates)[1]
+
+
+def filter_devices_by_hostapi(devices: list[dict], hostapi: Optional[int]) -> list[dict]:
+    if hostapi is None:
+        return list(devices)
+    return [d for d in devices if int(d.get("hostapi", -1)) == int(hostapi)]
+
+
+def is_compatible_device_pair(
+    input_device: Optional[dict],
+    output_device: Optional[dict],
+) -> bool:
+    if input_device is None or output_device is None:
+        return False
+    if not is_windows_audio_host():
+        return True
+    return int(input_device.get("hostapi", -1)) == int(output_device.get("hostapi", -1))
 
 
 def device_label(device: dict, duplicates: Optional[set[str]] = None) -> str:

@@ -21,6 +21,12 @@ def _mock_windows_devices(monkeypatch):
             "max_output_channels": 2,
         },
         {
+            "name": "Main Out",
+            "hostapi": 1,
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        },
+        {
             "name": "Unique Mic",
             "hostapi": 2,
             "max_input_channels": 1,
@@ -57,10 +63,27 @@ def _mock_windows_devices(monkeypatch):
         "max_input_channels": 2,
         "max_output_channels": 0,
     }
+    devices.append(
+        {
+            "name": "in 1-2 (motu m series)",
+            "hostapi": 3,
+            "max_input_channels": 2,
+            "max_output_channels": 0,
+        }
+    )
+    devices.append(
+        {
+            "name": "Main Out",
+            "hostapi": 3,
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        }
+    )
     hostapis = [
         {"name": "MME"},
         {"name": "Windows DirectSound"},
         {"name": "Windows WASAPI"},
+        {"name": "Windows WDM-KS"},
     ]
     monkeypatch.setattr(audio_engine.sd, "query_devices", lambda: devices)
     monkeypatch.setattr(audio_engine.sd, "query_hostapis", lambda: hostapis)
@@ -77,7 +100,34 @@ def test_duplicate_windows_device_names_get_distinct_labels(monkeypatch) -> None
     assert "in 1-2 (motu m series) (MME)" in labels
     assert "in 1-2 (motu m series) (Windows DirectSound)" in labels
     assert "in 1-2 (motu m series) (Windows WASAPI)" in labels
+    assert "in 1-2 (motu m series) (Windows WDM-KS)" in labels
     assert "Unique Mic" in labels
+
+
+def test_windows_preferred_hostapi_uses_wasapi_when_available(monkeypatch) -> None:
+    _mock_windows_devices(monkeypatch)
+
+    preferred = audio_engine.preferred_windows_hostapi(
+        audio_engine.get_input_devices(),
+        audio_engine.get_output_devices(),
+    )
+    filtered = audio_engine.filter_devices_by_hostapi(
+        audio_engine.get_input_devices(),
+        preferred,
+    )
+
+    assert preferred == 2
+    assert {d["hostapi_name"] for d in filtered} == {"Windows WASAPI"}
+
+
+def test_windows_device_pair_requires_matching_hostapi(monkeypatch) -> None:
+    _mock_windows_devices(monkeypatch)
+    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    inputs = {d["index"]: d for d in audio_engine.get_input_devices()}
+    outputs = {d["index"]: d for d in audio_engine.get_output_devices()}
+
+    assert audio_engine.is_compatible_device_pair(inputs[43], outputs[1]) is True
+    assert audio_engine.is_compatible_device_pair(inputs[43], outputs[2]) is False
 
 
 def test_structured_device_setting_resolves_wasapi_duplicate(monkeypatch) -> None:

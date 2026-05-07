@@ -6,7 +6,7 @@ Thread-safe; all callbacks communicate via Qt signals.
 import time
 import threading
 from dataclasses import replace
-from typing import Optional, Callable
+from typing import Any, Optional, Callable
 
 import numpy as np
 import sounddevice as sd
@@ -24,47 +24,182 @@ from dms.measurement_layout import build_measurement_layout, build_output_signal
 # Device helpers
 # ---------------------------------------------------------------------------
 
-def get_output_devices() -> list[dict]:
+def _hostapi_names() -> dict[int, str]:
     try:
+        return {
+            idx: str(api.get("name") or f"Host API {idx}")
+            for idx, api in enumerate(sd.query_hostapis())
+        }
+    except Exception:
+        return {}
+
+
+def _device_descriptor(
+    index: int,
+    device: dict,
+    hostapi_names: dict[int, str],
+    kind: Optional[str] = None,
+) -> dict[str, Any]:
+    hostapi = int(device.get("hostapi", -1))
+    descriptor = {
+        "index": int(index),
+        "name": str(device.get("name") or f"Device {index}"),
+        "hostapi": hostapi,
+        "hostapi_name": hostapi_names.get(hostapi, f"Host API {hostapi}"),
+        "max_input_channels": int(device.get("max_input_channels", 0) or 0),
+        "max_output_channels": int(device.get("max_output_channels", 0) or 0),
+    }
+    if kind is not None:
+        descriptor["kind"] = kind
+    return descriptor
+
+
+def _devices_for_kind(kind: str) -> list[dict[str, Any]]:
+    try:
+        hostapi_names = _hostapi_names()
+        key = f"max_{kind}_channels"
         return [
-            d for d in sd.query_devices()
-            if d["max_output_channels"] > 0
+            _device_descriptor(idx, d, hostapi_names, kind=kind)
+            for idx, d in enumerate(sd.query_devices())
+            if int(d.get(key, 0) or 0) > 0
         ]
     except Exception:
         return []
+
+
+def get_output_devices() -> list[dict]:
+    return _devices_for_kind("output")
 
 
 def get_input_devices() -> list[dict]:
+    return _devices_for_kind("input")
+
+
+def device_label(device: dict, duplicates: Optional[set[str]] = None) -> str:
+    name = str(device.get("name") or "")
+    if duplicates is not None and name not in duplicates:
+        return name
+    hostapi_name = str(device.get("hostapi_name") or "").strip()
+    if hostapi_name:
+        return f"{name} ({hostapi_name})"
+    return name
+
+
+def duplicate_device_names(devices: list[dict]) -> set[str]:
+    counts: dict[str, int] = {}
+    for device in devices:
+        name = str(device.get("name") or "")
+        counts[name] = counts.get(name, 0) + 1
+    return {name for name, count in counts.items() if count > 1}
+
+
+def device_setting(device: dict, kind: str) -> dict[str, Any]:
+    return {
+        "index": int(device["index"]),
+        "name": str(device["name"]),
+        "hostapi": int(device.get("hostapi", -1)),
+        "hostapi_name": str(device.get("hostapi_name") or ""),
+        "kind": kind,
+    }
+
+
+def resolve_device_selection(
+    selection: Any,
+    kind: str,
+    devices: Optional[list[dict]] = None,
+) -> tuple[Optional[dict], bool]:
+    devices = list(devices if devices is not None else _devices_for_kind(kind))
+    if selection is None:
+        return None, False
+
+    if isinstance(selection, dict):
+        want_index = selection.get("index")
+        want_name = str(selection.get("name") or "")
+        want_kind = selection.get("kind")
+        want_hostapi = selection.get("hostapi")
+
+        if want_kind and want_kind != kind:
+            return None, False
+
+        if want_index is not None:
+            try:
+                index = int(want_index)
+            except (TypeError, ValueError):
+                index = None
+            if index is not None:
+                for device in devices:
+                    if int(device["index"]) != index:
+                        continue
+                    if want_name and str(device["name"]) != want_name:
+                        continue
+                    if want_hostapi is not None and int(device.get("hostapi", -1)) != int(want_hostapi):
+                        continue
+                    return device, False
+
+        if want_name and want_hostapi is not None:
+            matches = [
+                d for d in devices
+                if str(d["name"]) == want_name
+                and int(d.get("hostapi", -1)) == int(want_hostapi)
+            ]
+            if len(matches) == 1:
+                return matches[0], False
+            if len(matches) > 1:
+                return None, True
+
+        if want_name:
+            matches = [d for d in devices if str(d["name"]) == want_name]
+            if len(matches) == 1:
+                return matches[0], False
+            if len(matches) > 1:
+                return None, True
+        return None, False
+
+    if isinstance(selection, int):
+        for device in devices:
+            if int(device["index"]) == int(selection):
+                return device, False
+        return None, False
+
+    name = str(selection)
+    matches = [d for d in devices if str(d["name"]) == name]
+    if len(matches) == 1:
+        return matches[0], False
+    if len(matches) > 1:
+        return None, True
+    return None, False
+
+
+def device_by_index(index: int, kind: Optional[str] = None) -> Optional[dict]:
     try:
-        return [
-            d for d in sd.query_devices()
-            if d["max_input_channels"] > 0
+        devices = _devices_for_kind(kind) if kind else [
+            _device_descriptor(idx, d, _hostapi_names())
+            for idx, d in enumerate(sd.query_devices())
         ]
-    except Exception:
-        return []
-
-
-def device_by_name(name: str, kind: Optional[str] = None) -> Optional[dict]:
-    try:
-        matches = [d for d in sd.query_devices() if d["name"] == name]
-        if not matches:
-            return None
-        if kind == "input":
-            input_matches = [d for d in matches if d.get("max_input_channels", 0) > 0]
-            if input_matches:
-                return max(input_matches, key=lambda d: int(d.get("max_input_channels", 0)))
-        elif kind == "output":
-            output_matches = [d for d in matches if d.get("max_output_channels", 0) > 0]
-            if output_matches:
-                return max(output_matches, key=lambda d: int(d.get("max_output_channels", 0)))
-        return matches[0]
+        for device in devices:
+            if int(device["index"]) == int(index):
+                return device
     except Exception:
         pass
     return None
 
 
-def device_channel_count(device_name: str, kind: str = "input") -> int:
-    d = device_by_name(device_name, kind=kind)
+def device_by_name(name: str, kind: Optional[str] = None) -> Optional[dict]:
+    device, ambiguous = resolve_device_selection(name, kind or "input")
+    if ambiguous:
+        return None
+    return device
+
+
+def device_channel_count(device: Any, kind: str = "input") -> int:
+    if isinstance(device, dict):
+        d = device
+    elif isinstance(device, int):
+        d = device_by_index(device, kind=kind)
+    else:
+        d, ambiguous = resolve_device_selection(device, kind)
+        if ambiguous:
+            return 0
     if d is None:
         return 0
     return d[f"max_{kind}_channels"]
@@ -81,32 +216,38 @@ class LevelMonitor(QObject):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._stream: Optional[sd.InputStream] = None
-        self._device: Optional[str] = None
+        self._device: Optional[int] = None
         self._channel: int = 0
         self._running = False
         self._lock = threading.Lock()
 
-    def start(self, device_name: str, channel_index: int, fs: int,
-               buffer_size: int) -> None:
+    def start(
+        self,
+        device_index: int,
+        device_label: str,
+        channel_index: int,
+        fs: int,
+        buffer_size: int,
+    ) -> None:
         self.stop()
         with self._lock:
-            self._device = device_name
+            self._device = device_index
             self._channel = channel_index
             self._running = True
         try:
-            dev = device_by_name(device_name, kind="input")
+            dev = device_by_index(device_index, kind="input")
             if dev is None:
-                self.error_occurred.emit(f"Device not found: {device_name}")
+                self.error_occurred.emit(f"Device not found: {device_label}")
                 return
             n_ch = dev["max_input_channels"]
             if channel_index >= n_ch:
                 self.error_occurred.emit(
-                    f"Channel {channel_index} not available on {device_name}"
+                    f"Channel {channel_index} not available on {device_label}"
                 )
                 return
 
             self._stream = sd.InputStream(
-                device=device_name,
+                device=device_index,
                 channels=n_ch,
                 samplerate=fs,
                 blocksize=buffer_size,
@@ -171,11 +312,13 @@ class SweepWorker(QObject):
     def run(
         self,
         sweep: np.ndarray,
-        output_device: str,
-        input_device: str,
+        output_device: int,
+        input_device: int,
         input_channel: int,
         fs: int,
         buffer_size: int,
+        output_device_label: str = "",
+        input_device_label: str = "",
         pre_silence: float = 0.2,
         post_silence: float = 0.5,
         latency: str = "low",
@@ -190,6 +333,7 @@ class SweepWorker(QObject):
             self._run_inner(
                 sweep, output_device, input_device, input_channel,
                 fs, buffer_size, pre_silence, post_silence, latency,
+                output_device_label, input_device_label,
                 bluetooth_headphone_mode,
                 start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
             )
@@ -200,16 +344,19 @@ class SweepWorker(QObject):
 
     def _run_inner(
         self, sweep, output_device, input_device, input_channel,
-        fs, buffer_size, pre_silence, post_silence, latency, bluetooth_headphone_mode,
+        fs, buffer_size, pre_silence, post_silence, latency,
+        output_device_label, input_device_label, bluetooth_headphone_mode,
         start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
     ) -> None:
-        in_dev = device_by_name(input_device, kind="input")
-        out_dev = device_by_name(output_device, kind="output")
+        input_device_label = input_device_label or str(input_device)
+        output_device_label = output_device_label or str(output_device)
+        in_dev = device_by_index(input_device, kind="input")
+        out_dev = device_by_index(output_device, kind="output")
         if in_dev is None:
-            self.error.emit(f"Input device unavailable: {input_device}")
+            self.error.emit(f"Input device unavailable: {input_device_label}")
             return
         if out_dev is None:
-            self.error.emit(f"Output device unavailable: {output_device}")
+            self.error.emit(f"Output device unavailable: {output_device_label}")
             return
 
         n_in_ch = in_dev["max_input_channels"]

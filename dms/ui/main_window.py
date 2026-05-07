@@ -41,8 +41,12 @@ from dms.audio_engine import (
     LevelMonitor,
     SweepWorker,
     device_channel_count,
+    device_label,
+    device_setting,
+    duplicate_device_names,
     get_input_devices,
     get_output_devices,
+    resolve_device_selection,
 )
 from dms.calibration import CalibrationStore
 from dms.export import build_filename, export_curve
@@ -541,8 +545,12 @@ class MainWindow(QMainWindow):
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
-        self._last_input_devices: list[str] = []
-        self._last_output_devices: list[str] = []
+        self._last_input_devices: list[tuple[int, str, int]] = []
+        self._last_output_devices: list[tuple[int, str, int]] = []
+        self._input_devices_by_index: dict[int, dict] = {}
+        self._output_devices_by_index: dict[int, dict] = {}
+        self._input_device_labels_by_index: dict[int, str] = {}
+        self._output_device_labels_by_index: dict[int, str] = {}
         self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
         self._last_measurement_diagnostics: Optional[object] = None
 
@@ -1029,11 +1037,45 @@ class MainWindow(QMainWindow):
         self._pending_update_url: Optional[str] = None
         self._update_check_thread: Optional[QThread] = None
 
-    def _current_output_device(self) -> Optional[str]:
-        return self._out_dev_combo.currentData()
+    def _current_output_device(self) -> Optional[int]:
+        value = self._out_dev_combo.currentData()
+        return int(value) if value is not None else None
 
-    def _current_input_device(self) -> Optional[str]:
-        return self._in_dev_combo.currentData()
+    def _current_input_device(self) -> Optional[int]:
+        value = self._in_dev_combo.currentData()
+        return int(value) if value is not None else None
+
+    def _current_output_device_info(self) -> Optional[dict]:
+        index = self._current_output_device()
+        if index is None:
+            return None
+        return self._output_devices_by_index.get(index)
+
+    def _current_input_device_info(self) -> Optional[dict]:
+        index = self._current_input_device()
+        if index is None:
+            return None
+        return self._input_devices_by_index.get(index)
+
+    def _current_output_device_label(self) -> str:
+        index = self._current_output_device()
+        if index is None:
+            return ""
+        return self._output_device_labels_by_index.get(index, str(index))
+
+    def _current_input_device_label(self) -> str:
+        index = self._current_input_device()
+        if index is None:
+            return ""
+        return self._input_device_labels_by_index.get(index, str(index))
+
+    def _current_output_device_setting(self) -> Optional[dict]:
+        device = self._current_output_device_info()
+        return device_setting(device, "output") if device is not None else None
+
+    def _current_input_device_setting(self) -> Optional[dict]:
+        device = self._current_input_device_info()
+        return device_setting(device, "input") if device is not None else None
 
     def _current_input_channel(self) -> int:
         value = self._ch_combo.currentData()
@@ -1072,45 +1114,89 @@ class MainWindow(QMainWindow):
             self._hrtf_toggle.setChecked(False)
 
     def _refresh_devices(self) -> None:
-        selected_out = self._current_output_device() or self._settings.get(
-            "output_device"
+        selected_out = (
+            self._current_output_device_setting()
+            if self._current_output_device() is not None
+            else self._settings.get("output_device")
         )
-        selected_in = self._current_input_device() or self._settings.get(
-            "input_device"
+        selected_in = (
+            self._current_input_device_setting()
+            if self._current_input_device() is not None
+            else self._settings.get("input_device")
         )
         selected_ch = self._current_input_channel()
 
         out_devices = get_output_devices()
         in_devices = get_input_devices()
 
-        out_names = [d["name"] for d in out_devices]
-        in_names = [d["name"] for d in in_devices]
+        out_signature = [
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
+            for d in out_devices
+        ]
+        in_signature = [
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
+            for d in in_devices
+        ]
+        out_duplicates = duplicate_device_names(out_devices)
+        in_duplicates = duplicate_device_names(in_devices)
 
         self._out_dev_combo.blockSignals(True)
         self._in_dev_combo.blockSignals(True)
         self._ch_combo.blockSignals(True)
 
+        self._output_devices_by_index = {int(d["index"]): d for d in out_devices}
+        self._input_devices_by_index = {int(d["index"]): d for d in in_devices}
+        self._output_device_labels_by_index = {
+            int(d["index"]): device_label(d, out_duplicates)
+            for d in out_devices
+        }
+        self._input_device_labels_by_index = {
+            int(d["index"]): device_label(d, in_duplicates)
+            for d in in_devices
+        }
+
         self._out_dev_combo.clear()
         for d in out_devices:
-            self._out_dev_combo.addItem(d["name"], d["name"])
+            self._out_dev_combo.addItem(
+                self._output_device_labels_by_index[int(d["index"])],
+                int(d["index"]),
+            )
 
         self._in_dev_combo.clear()
         for d in in_devices:
-            self._in_dev_combo.addItem(d["name"], d["name"])
+            self._in_dev_combo.addItem(
+                self._input_device_labels_by_index[int(d["index"])],
+                int(d["index"]),
+            )
 
-        if out_names:
-            if selected_out in out_names:
+        selected_out_device, out_ambiguous = resolve_device_selection(
+            selected_out,
+            "output",
+            out_devices,
+        )
+        selected_in_device, in_ambiguous = resolve_device_selection(
+            selected_in,
+            "input",
+            in_devices,
+        )
+
+        if out_devices:
+            if selected_out_device is not None:
                 self._out_dev_combo.setCurrentIndex(
-                    self._out_dev_combo.findData(selected_out)
+                    self._out_dev_combo.findData(int(selected_out_device["index"]))
                 )
+            elif out_ambiguous:
+                self._out_dev_combo.setCurrentIndex(-1)
             else:
                 self._out_dev_combo.setCurrentIndex(0)
 
-        if in_names:
-            if selected_in in in_names:
+        if in_devices:
+            if selected_in_device is not None:
                 self._in_dev_combo.setCurrentIndex(
-                    self._in_dev_combo.findData(selected_in)
+                    self._in_dev_combo.findData(int(selected_in_device["index"]))
                 )
+            elif in_ambiguous:
+                self._in_dev_combo.setCurrentIndex(-1)
             else:
                 self._in_dev_combo.setCurrentIndex(0)
 
@@ -1123,18 +1209,27 @@ class MainWindow(QMainWindow):
         current_out = self._current_output_device()
         current_in = self._current_input_device()
 
-        self._settings.set("output_device", current_out)
-        self._settings.set("input_device", current_in)
+        self._settings.set("output_device", self._current_output_device_setting())
+        self._settings.set("input_device", self._current_input_device_setting())
 
-        self._last_output_devices = out_names
-        self._last_input_devices = in_names
+        self._last_output_devices = out_signature
+        self._last_input_devices = in_signature
+
+        if out_ambiguous or in_ambiguous:
+            self._statusbar.showMessage(
+                "Saved audio device name is ambiguous. Select the desired host API once."
+            )
 
         self._apply_state_ui()
         self._start_level_monitor()
 
     def _refresh_channels(self, selected_ch: Optional[int] = None) -> None:
         input_device = self._current_input_device()
-        count = device_channel_count(input_device, "input") if input_device else 0
+        count = (
+            device_channel_count(input_device, "input")
+            if input_device is not None
+            else 0
+        )
 
         self._ch_combo.clear()
         for idx in range(count):
@@ -1157,8 +1252,14 @@ class MainWindow(QMainWindow):
             self._active_ch_label.setText("Active input channel: —")
 
     def _check_devices(self) -> None:
-        current_out = [d["name"] for d in get_output_devices()]
-        current_in = [d["name"] for d in get_input_devices()]
+        current_out = [
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
+            for d in get_output_devices()
+        ]
+        current_in = [
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
+            for d in get_input_devices()
+        ]
 
         if current_out == self._last_output_devices and current_in == (
             self._last_input_devices
@@ -1171,8 +1272,8 @@ class MainWindow(QMainWindow):
         if (
             self._state == AppState.SWEEPING
             and (
-                selected_out not in current_out
-                or selected_in not in current_in
+                selected_out not in {idx for idx, _name, _hostapi in current_out}
+                or selected_in not in {idx for idx, _name, _hostapi in current_in}
             )
         ):
             self._abort_active_sweep()
@@ -1205,7 +1306,7 @@ class MainWindow(QMainWindow):
             return
 
         input_device = self._current_input_device()
-        if not input_device:
+        if input_device is None:
             self._displayed_level_dbfs = -60.0
             self._level_meter.set_level(-60.0)
             self._level_status_label.setText("No input device selected")
@@ -1213,7 +1314,8 @@ class MainWindow(QMainWindow):
 
         try:
             self._level_monitor.start(
-                device_name=input_device,
+                device_index=input_device,
+                device_label=self._current_input_device_label(),
                 channel_index=self._current_input_channel(),
                 fs=int(self._settings.get("sample_rate")),
                 buffer_size=int(self._settings.get("buffer_size")),
@@ -1223,10 +1325,10 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Level monitor start failed: {exc}")
 
     def _on_output_device_changed(self) -> None:
-        self._settings.set("output_device", self._current_output_device())
+        self._settings.set("output_device", self._current_output_device_setting())
 
     def _on_input_device_changed(self) -> None:
-        self._settings.set("input_device", self._current_input_device())
+        self._settings.set("input_device", self._current_input_device_setting())
         self._refresh_channels()
         self._start_level_monitor()
         self._apply_state_ui()
@@ -1346,11 +1448,11 @@ class MainWindow(QMainWindow):
         if self._state != AppState.IDLE:
             return
 
-        if not self._current_output_device():
+        if self._current_output_device() is None:
             QMessageBox.warning(self, "No Output Device", "Select an output device.")
             return
 
-        if not self._current_input_device():
+        if self._current_input_device() is None:
             QMessageBox.warning(self, "No Input Device", "Select an input device.")
             return
 
@@ -1414,7 +1516,7 @@ class MainWindow(QMainWindow):
         input_device = self._current_input_device()
         input_channel = self._current_input_channel()
 
-        if not output_device or not input_device:
+        if output_device is None or input_device is None:
             self._on_sweep_error("Selected device is unavailable.")
             return
 
@@ -1445,6 +1547,8 @@ class MainWindow(QMainWindow):
             sweep=sweep,
             output_device=output_device,
             input_device=input_device,
+            output_device_label=self._current_output_device_label(),
+            input_device_label=self._current_input_device_label(),
             input_channel=input_channel,
             fs=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
@@ -2052,7 +2156,8 @@ class MainWindow(QMainWindow):
 
     def _open_calibration(self) -> None:
         input_device = self._current_input_device()
-        if not input_device:
+        input_info = self._current_input_device_info()
+        if input_device is None or input_info is None:
             QMessageBox.warning(
                 self,
                 "No Input Device",
@@ -2061,7 +2166,9 @@ class MainWindow(QMainWindow):
             return
 
         dlg = CalibrationDialog(
-            device_name=input_device,
+            device_index=input_device,
+            device_name=str(input_info["name"]),
+            device_label=self._current_input_device_label(),
             channel=self._current_input_channel(),
             fs=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
@@ -2072,13 +2179,15 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_calibration_done(self, device_name: str, sensitivity: float) -> None:
+        label = self._current_input_device_label() or device_name
         self._statusbar.showMessage(
-            f"Calibration saved for {device_name}: {sensitivity:.6f} Pa/FS"
+            f"Calibration saved for {label}: {sensitivity:.6f} Pa/FS"
         )
 
     def _open_test_level(self) -> None:
         input_device = self._current_input_device()
-        if not input_device:
+        input_info = self._current_input_device_info()
+        if input_device is None or input_info is None:
             QMessageBox.information(
                 self,
                 "No Input Device",
@@ -2086,7 +2195,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        calibrated = self._cal_store.is_calibrated(input_device)
+        calibrated = self._cal_store.is_calibrated(str(input_info["name"]))
         dlg = TestLevelDialog(
             self._level_snapshot,
             play_noise_fn=self._play_test_noise,
@@ -2097,7 +2206,7 @@ class MainWindow(QMainWindow):
 
     def _play_test_noise(self) -> Optional[str]:
         output_device = self._current_output_device()
-        if not output_device:
+        if output_device is None:
             return "No output device selected."
         fs = int(self._settings.get("sample_rate"))
         dur_s = 1.8
@@ -2119,13 +2228,15 @@ class MainWindow(QMainWindow):
         return None
 
     def _level_snapshot(self) -> tuple[float, Optional[float], str]:
-        input_device = self._current_input_device() or ""
+        input_info = self._current_input_device_info()
+        input_device_name = str(input_info["name"]) if input_info is not None else ""
+        input_label = self._current_input_device_label()
         dbfs = self._last_level_dbfs
         spl = None
-        if input_device and self._cal_store.is_calibrated(input_device):
+        if input_device_name and self._cal_store.is_calibrated(input_device_name):
             rms_fs = 10.0 ** (dbfs / 20.0) if dbfs > -120.0 else 0.0
-            spl = self._cal_store.rms_to_dbspl(input_device, rms_fs)
-        return dbfs, spl, input_device
+            spl = self._cal_store.rms_to_dbspl(input_device_name, rms_fs)
+        return dbfs, spl, input_label
 
     def _export(self) -> None:
         curve = self._bottom_curve_for_display_and_export()

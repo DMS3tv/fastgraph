@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from dms.calibration import CalibrationStore
-from dms.audio_engine import device_by_name
+from dms.audio_engine import device_by_index
 
 _REF_SPL_DB = 94.0
 _REF_PASCAL = 20e-6 * (10 ** (_REF_SPL_DB / 20.0))  # ≈ 1.0 Pa
@@ -24,7 +24,9 @@ class CalibrationDialog(QDialog):
 
     def __init__(
         self,
+        device_index: int,
         device_name: str,
+        device_label: str,
         channel: int,
         fs: int,
         buffer_size: int,
@@ -34,7 +36,9 @@ class CalibrationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("SPL Calibration — 94 dB")
         self.setMinimumWidth(400)
+        self._device_index = device_index
         self._device = device_name
+        self._device_label = device_label
         self._channel = channel
         self._fs = fs
         self._buf = buffer_size
@@ -55,7 +59,7 @@ class CalibrationDialog(QDialog):
             "4. Click <b>Accept</b> to save, or <b>Cancel</b>."
         ))
 
-        self._status = QLabel("Ready. Device: " + self._device)
+        self._status = QLabel("Ready. Device: " + self._device_label)
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
@@ -92,7 +96,7 @@ class CalibrationDialog(QDialog):
         self._status.setText("Capturing… (3 seconds)")
         self._bar.setValue(0)
 
-        dev = device_by_name(self._device)
+        dev = device_by_index(self._device_index, kind="input")
         if dev is None:
             self._status.setText("Error: device not found.")
             self._start_btn.setEnabled(True)
@@ -101,7 +105,7 @@ class CalibrationDialog(QDialog):
         n_ch = dev["max_input_channels"]
         try:
             self._stream = sd.InputStream(
-                device=self._device,
+                device=self._device_index,
                 channels=n_ch,
                 samplerate=self._fs,
                 blocksize=self._buf,

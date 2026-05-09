@@ -166,8 +166,8 @@ def build_measurement_layout(
     """
     Build the playback excitation and expected timing positions.
 
-    `excitation_start_sample` is where the start marker begins in the output
-    buffer. `sweep_start_sample` is where the actual measurement sweep begins.
+    In standard wired mode the excitation is only the sweep. In Bluetooth mode
+    the excitation includes coded timing markers around the sweep.
     """
     _validate_fs(fs)
     if pre_silence_s < 0.0 or post_silence_s < 0.0:
@@ -182,31 +182,37 @@ def build_measurement_layout(
     sweep_f32 = sweep_array.astype(np.float32, copy=False)
     pre_n = int(pre_silence_s * fs)
     post_n = int(post_silence_s * fs)
-    primer_gap_n = int(round(0.24 * fs))
-    wake_primer = build_wake_primer(fs) if bool(bluetooth_headphone_mode) else None
+    bluetooth_mode = bool(bluetooth_headphone_mode)
+    primer_gap_n = int(round(0.24 * fs)) if bluetooth_mode else 0
+    wake_primer = build_wake_primer(fs) if bluetooth_mode else None
     primer_n = len(wake_primer) if wake_primer is not None else 0
     sweep_n = len(sweep_f32)
-    start_marker = build_start_marker(fs)
-    start_marker_gap_n = int(round(0.025 * fs))
-    marker = build_end_marker(fs)
-    marker_2 = build_end_marker_2(fs)
-    if bool(bluetooth_headphone_mode):
+    if bluetooth_mode:
+        start_marker = build_start_marker(fs)
+        start_marker_gap_n = int(round(0.025 * fs))
+        marker = build_end_marker(fs)
+        marker_2 = build_end_marker_2(fs)
         marker_gap_n = int(round(0.12 * fs))
         marker_pair_gap_n = int(round(0.12 * fs))
+        excitation = np.concatenate(
+            [
+                start_marker,
+                np.zeros(start_marker_gap_n, dtype=np.float32),
+                sweep_f32,
+                np.zeros(marker_gap_n, dtype=np.float32),
+                marker,
+                np.zeros(marker_pair_gap_n, dtype=np.float32),
+                marker_2,
+            ]
+        )
     else:
-        marker_gap_n = int(round(0.03 * fs))
-        marker_pair_gap_n = int(round(0.05 * fs))
-    excitation = np.concatenate(
-        [
-            start_marker,
-            np.zeros(start_marker_gap_n, dtype=np.float32),
-            sweep_f32,
-            np.zeros(marker_gap_n, dtype=np.float32),
-            marker,
-            np.zeros(marker_pair_gap_n, dtype=np.float32),
-            marker_2,
-        ]
-    )
+        start_marker = np.array([], dtype=np.float32)
+        start_marker_gap_n = 0
+        marker = np.array([], dtype=np.float32)
+        marker_2 = np.array([], dtype=np.float32)
+        marker_gap_n = 0
+        marker_pair_gap_n = 0
+        excitation = sweep_f32
 
     lead_n = primer_n + (primer_gap_n if wake_primer is not None else 0)
     excitation_start_n = lead_n + pre_n

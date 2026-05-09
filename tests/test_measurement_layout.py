@@ -47,25 +47,18 @@ def test_non_bluetooth_layout_positions_are_explicit() -> None:
     assert layout.pre_silence_samples == int(0.2 * fs)
     assert layout.post_silence_samples == int(0.5 * fs)
     assert layout.excitation_start_sample == layout.pre_silence_samples
-    assert (
-        layout.sweep_start_sample
-        == layout.excitation_start_sample
-        + len(layout.start_marker)
-        + layout.start_marker_gap_samples
-    )
+    assert layout.sweep_start_sample == layout.pre_silence_samples
     assert layout.sweep_end_sample == layout.sweep_start_sample + len(sweep)
-    assert (
-        layout.end_marker_1_start_sample
-        == layout.sweep_end_sample + layout.end_marker_gap_samples
-    )
-    assert (
-        layout.end_marker_2_start_sample
-        == layout.end_marker_1_start_sample
-        + len(layout.end_marker)
-        + layout.end_marker_pair_gap_samples
-    )
-    assert len(layout.end_marker_2) == len(layout.end_marker)
-    assert not np.array_equal(layout.end_marker, layout.end_marker_2)
+    assert layout.end_marker_1_start_sample == layout.sweep_end_sample
+    assert layout.end_marker_2_start_sample == layout.sweep_end_sample
+    assert layout.primer_gap_samples == 0
+    assert layout.start_marker_gap_samples == 0
+    assert layout.end_marker_gap_samples == 0
+    assert layout.end_marker_pair_gap_samples == 0
+    assert len(layout.start_marker) == 0
+    assert len(layout.end_marker) == 0
+    assert len(layout.end_marker_2) == 0
+    np.testing.assert_array_equal(layout.excitation, sweep)
     assert (
         layout.total_samples
         == layout.excitation_start_sample
@@ -130,6 +123,27 @@ def test_output_signal_matches_mono_and_stereo_playback_shapes() -> None:
         layout.excitation,
     )
     assert np.max(np.abs(stereo[:len(layout.wake_primer), 0])) > 0.0
+
+
+def test_standard_output_signal_contains_only_sweep_between_silence() -> None:
+    fs = 48_000
+    sweep = np.linspace(-0.5, 0.5, 1_000, dtype=np.float32)
+    layout = build_measurement_layout(
+        sweep=sweep,
+        fs=fs,
+        pre_silence_s=0.1,
+        post_silence_s=0.1,
+        bluetooth_headphone_mode=False,
+    )
+
+    out = build_output_signal(layout, output_channels=2)
+
+    assert np.max(np.abs(out[:layout.sweep_start_sample, 0])) == 0.0
+    np.testing.assert_allclose(
+        out[layout.sweep_start_sample:layout.sweep_end_sample, 0],
+        sweep,
+    )
+    assert np.max(np.abs(out[layout.sweep_end_sample:, 0])) == 0.0
 
 
 @pytest.mark.parametrize(

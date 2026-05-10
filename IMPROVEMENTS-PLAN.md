@@ -10,6 +10,7 @@ For the next few sessions, optimize for faster progress on measurement reliabili
 - [x] **[P0] Structured retry cleanup** - Retry decisions now use typed failure reasons when diagnostics are available, with string matching kept only as a compatibility fallback.
 - [x] **[P0] Bluetooth marginal drift handling** - Bluetooth measurements with usable marker evidence and moderately high drift can now reach review with a visible warning instead of hard-failing.
 - [x] **[P0] Coded multi-tone marker packets** - Start/end timing references now use broadband coded audio packets with distinct end-marker identities to reduce false locks from resonant peaks.
+- [x] **[P0] Wired-mode sweep-only playback** - Standard wired measurements no longer play Bluetooth primer or timing-reference markers; sweep correlation plus SNR now drive review diagnostics.
 - [ ] **[NEXT] Real-headphone validation pass** - Test several Bluetooth headphones/IEMs against the coded markers and record which diagnostics still appear before more tuning.
 - [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
 - [x] **[P1] Top-viewport TXT drag-drop measurement import for fixture-free testing** - Local `.txt` measurement files can now be dropped onto the top plot and imported as kept curves for testing without live fixture hardware.
@@ -30,7 +31,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [ ] **[P0] Clear user workflow** - Device selection, measurement queue, pass/fail review, average display, HRTF compensation, export, and upload are already connected end to end.
 - [ ] **[P0] Compile-clean baseline** - `python3 -m py_compile main.py dms/*.py dms/ui/*.py` passes today.
 - [ ] **[P0] Recent Bluetooth diagnostics** - The app already has Bluetooth mode, timing confidence checks, start/end markers, drift checks, retries, and SNR reporting.
-- [x] **[P0] Pure measurement layout foundation** - `dms/measurement_layout.py` now builds markers, Bluetooth wake primer, excitation layout, output buffers, and expected timing positions without device or UI dependencies.
+- [x] **[P0] Pure measurement layout foundation** - `dms/measurement_layout.py` now builds sweep-only wired playback, Bluetooth markers, Bluetooth wake primer, excitation layout, output buffers, and expected timing positions without device or UI dependencies.
 - [x] **[P0] Pure alignment foundation** - `dms/measurement_alignment.py` now handles sweep correlation, start-marker lock, paired end-marker detection, drift scoring, and SNR estimation without device or UI dependencies.
 - [x] **[P0] Expanded focused measurement tests** - `tests/test_measurement_layout.py` and `tests/test_measurement_alignment.py` cover layout timing, output shape, synthetic latency/jitter, Bluetooth marker lock, clipped starts, truncated tails, confidence failures, drift rejection, SNR, sample-rate drift, retry-after-failure, and candidate choice.
 - [x] **[P0] Coded marker timing references** - Marker construction now uses coded multi-tone audio packets instead of short chirps, with separate end marker A/B identities verified by pure alignment tests.
@@ -64,6 +65,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **[P0] Make Bluetooth mode a named profile** - `dms/measurement_profiles.py` now defines standard and Bluetooth profile defaults plus pure snapshot/restore helpers.
 - [x] **[P0] Accept marginal Bluetooth drift with warning** - Bluetooth runs with passing marker confidence, strong start-marker evidence, reasonable marker spacing, and drift up to 160 ms now continue to review with a `bluetooth_marginal_drift` warning.
 - [x] **[P0] Replace chirp timing markers with coded multi-tone packets** - `dms/measurement_layout.py` now builds deterministic coded audio markers, and `dms/measurement_alignment.py` verifies end marker A/B identity plus chip-level agreement before accepting marker pairs.
+- [x] **[P0] Remove wired-mode primer and timing references** - Standard wired playback now contains only pre-silence, the measurement sweep, and post-silence. Bluetooth mode keeps primer, coded markers, drift validation, retries, and warning diagnostics.
 - [x] **Add diagnostics UI for failed runs** - Retry prompts, final sweep errors, and successful review dialogs now include formatted diagnostics with confidence, marker positions, drift, SNR, Bluetooth mode, latency mode, thresholds, and buffer size where available.
 - [ ] **[DEFER] Add a measurement debug export** - Diagnostics are visible in-app now. Defer file export until real-world failures show we need shareable debug bundles.
 
@@ -105,6 +107,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 5: Coded multi-tone marker packets** - Completed. Timing markers are now coded broadband packets, end marker A/B identity is checked, and tests cover single-tone false peaks plus reversed/duplicated marker artifacts.
 - [x] **Session 5B: Top-viewport TXT drag-drop import for fixture-free testing** - Completed on 2026-05-06. Added top-plot drop handling in `dms/ui/dual_plot_widget.py`, a reusable permissive two-column loader in `dms/measurement_txt.py` (also used by `dms/hrtf.py`), import orchestration in `dms/ui/main_window.py`, and focused tests in `tests/test_measurement_txt.py` plus `tests/test_main_window_measurement_import.py`.
 - [x] **Session 5C: Squiglink phone-book sync on upload** - Completed on 2026-05-06. Added upload name modifier UI, metadata-aware upload filename stems, SFTP read/merge/write flow for `data/phone_book.json`, and fallback choices for missing/invalid remote phone books.
+- [x] **Session 5D: Remove wired-mode primer and timing references** - Completed on 2026-05-08. Standard wired sweeps now play only the sweep between configured silence windows and report sweep alignment/SNR without marker drift retries; Bluetooth mode keeps the coded timing-marker path.
 - [ ] **Session 6: Real-headphone validation pass** - Next recommended session. Use multiple wireless headphones/IEMs and compare diagnostics before changing thresholds again.
 - [ ] **Session 7: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
 - [ ] **Session 8: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
@@ -158,6 +161,14 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Implementation files: `dms/audio_engine.py`, `dms/ui/main_window.py`, `dms/ui/settings_dialog.py`, `dms/settings_manager.py`, `tests/test_audio_devices.py`, `tests/test_main_window_audio_devices.py`.
 - Verification on 2026-05-07:
   - `PYTHONPATH=. .venv/bin/pytest -q` -> `89 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
+- 2026-05-08: Bumped app version from `0.2.2` to `0.2.3` for the standard wired sweep-only playback change.
+- Standard wired measurement behavior: non-Bluetooth playback no longer includes wake primer, coded start marker, coded end-marker pair, or marker gaps. Standard alignment uses sweep correlation and SNR only, surfaces "Sweep Quality" in review/status UI, and does not trigger timing-quality retries from marker confidence or drift.
+- Bluetooth behavior remains marker-based: Bluetooth mode still uses primer, coded timing references, marker identity checks, drift validation, retry prompts, and marginal-drift warnings.
+- Implementation files: `dms/measurement_layout.py`, `dms/measurement_alignment.py`, `dms/ui/main_window.py`, `dms/ui/settings_dialog.py`, `tests/test_measurement_layout.py`, `tests/test_measurement_alignment.py`.
+- Verification on 2026-05-08:
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_layout.py tests/test_measurement_alignment.py` -> `53 passed`
+  - `PYTHONPATH=. .venv/bin/pytest -q` -> `92 passed`
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 
 ## Assumptions

@@ -224,19 +224,23 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
         [
             f"- Selected sweep start: {fmt_int(diagnostics.selected_sweep_start)}",
             f"- Sweep-correlation candidate: {fmt_int(diagnostics.sweep_correlation_candidate)}",
-            f"- Marker-locked candidate: {fmt_int(diagnostics.marker_locked_candidate)}",
-            f"- Start confidence: {fmt_float(diagnostics.start_confidence)} "
-            f"(min {diagnostics.start_alignment_confidence_min:.1f})",
-            f"- Start marker confidence: {fmt_float(diagnostics.start_marker_confidence)}",
-            f"- End markers: {fmt_int(diagnostics.marker_1_start)}, {fmt_int(diagnostics.marker_2_start)}",
-            f"- End confidence: {fmt_float(diagnostics.marker_confidence)} "
-            f"(min {diagnostics.end_marker_confidence_min:.1f})",
-            f"- Drift: {fmt_float(diagnostics.timing_error_ms, ' ms')} "
-            f"(max {diagnostics.timing_drift_max_ms:.1f} ms)",
-            f"- Marker spacing error: {fmt_int(diagnostics.spacing_error_samples)} samples",
-            f"- SNR: {fmt_float(diagnostics.snr_db, ' dB')}",
+            f"- Start confidence: {fmt_float(diagnostics.start_confidence)}",
         ]
     )
+    if diagnostics.bluetooth_headphone_mode:
+        lines.extend(
+            [
+                f"- Marker-locked candidate: {fmt_int(diagnostics.marker_locked_candidate)}",
+                f"- Start marker confidence: {fmt_float(diagnostics.start_marker_confidence)}",
+                f"- End markers: {fmt_int(diagnostics.marker_1_start)}, {fmt_int(diagnostics.marker_2_start)}",
+                f"- End confidence: {fmt_float(diagnostics.marker_confidence)} "
+                f"(min {diagnostics.end_marker_confidence_min:.1f})",
+                f"- Drift: {fmt_float(diagnostics.timing_error_ms, ' ms')} "
+                f"(max {diagnostics.timing_drift_max_ms:.1f} ms)",
+                f"- Marker spacing error: {fmt_int(diagnostics.spacing_error_samples)} samples",
+            ]
+        )
+    lines.append(f"- SNR: {fmt_float(diagnostics.snr_db, ' dB')}")
     if diagnostics.marker_agreement is not None:
         if diagnostics.raw_marker_confidence is not None:
             lines.append(
@@ -598,52 +602,54 @@ def find_start_alignment(
     conf_bg = peak_to_background_confidence(corr_valid, start_idx, exclusion)
     conf_next = peak_to_nextbest_confidence(corr_valid, start_idx, exclusion)
     start_conf = min(conf_bg, conf_next)
+    bluetooth_mode = bool(settings.bluetooth_headphone_mode)
     min_start_conf = float(settings.start_alignment_confidence_min)
-    if bool(settings.bluetooth_headphone_mode):
+    if bluetooth_mode:
         min_start_conf = min(min_start_conf, 3.0)
 
-    start_marker_search = int(round(0.35 * layout.fs))
-    sm_lo = max(0, start_idx - start_marker_search)
-    sm_hi = min(
-        len(rec), start_idx + start_marker_search + len(layout.start_marker)
-    )
-    sm_region = rec[sm_lo:sm_hi]
     start_marker_conf = 0.0
     marker_locked_candidate = None
-    start_marker_match = None
-    for marker_template, _alternate_template, marker_stretch in _marker_template_variants(
-        layout.start_marker,
-        None,
-        bool(settings.bluetooth_headphone_mode),
-    ):
-        sm_corr = normalized_corr_valid(sm_region, marker_template)
-        if len(sm_corr) == 0:
-            continue
-        sm_offset = int(np.argmax(np.abs(sm_corr)))
-        candidate_conf = peak_to_rms_confidence(sm_corr)
-        if start_marker_match is None or candidate_conf > start_marker_match[0]:
-            start_marker_match = (
-                float(candidate_conf),
-                sm_lo + sm_offset,
-                len(marker_template),
-                float(marker_stretch),
-            )
+    if bluetooth_mode and len(layout.start_marker) > 0:
+        start_marker_search = int(round(0.35 * layout.fs))
+        sm_lo = max(0, start_idx - start_marker_search)
+        sm_hi = min(
+            len(rec), start_idx + start_marker_search + len(layout.start_marker)
+        )
+        sm_region = rec[sm_lo:sm_hi]
+        start_marker_match = None
+        for marker_template, _alternate_template, marker_stretch in _marker_template_variants(
+            layout.start_marker,
+            None,
+            True,
+        ):
+            sm_corr = normalized_corr_valid(sm_region, marker_template)
+            if len(sm_corr) == 0:
+                continue
+            sm_offset = int(np.argmax(np.abs(sm_corr)))
+            candidate_conf = peak_to_rms_confidence(sm_corr)
+            if start_marker_match is None or candidate_conf > start_marker_match[0]:
+                start_marker_match = (
+                    float(candidate_conf),
+                    sm_lo + sm_offset,
+                    len(marker_template),
+                    float(marker_stretch),
+                )
 
-    if start_marker_match is not None:
-        start_marker_conf, sm_idx, marker_len, marker_stretch = start_marker_match
-        if start_marker_conf >= max(3.5, min_start_conf * 0.7):
-            marker_locked_start = (
-                sm_idx
-                + marker_len
-                + int(round(layout.start_marker_gap_samples * marker_stretch))
-            )
-            max_start_idx = len(rec) - sweep_n
-            if marker_locked_start <= max_start_idx:
-                start_idx = marker_locked_start
-                marker_locked_candidate = int(marker_locked_start)
-            start_conf = max(start_conf, min_start_conf)
+        if start_marker_match is not None:
+            start_marker_conf, sm_idx, marker_len, marker_stretch = start_marker_match
+            if start_marker_conf >= max(3.5, min_start_conf * 0.7):
+                marker_locked_start = (
+                    sm_idx
+                    + marker_len
+                    + int(round(layout.start_marker_gap_samples * marker_stretch))
+                )
+                max_start_idx = len(rec) - sweep_n
+                if marker_locked_start <= max_start_idx:
+                    start_idx = marker_locked_start
+                    marker_locked_candidate = int(marker_locked_start)
+                start_conf = max(start_conf, min_start_conf)
 
-    if start_conf < min_start_conf:
+    if bluetooth_mode and start_conf < min_start_conf:
         start_result = StartAlignmentResult(
             selected_sweep_start=int(start_idx),
             sweep_correlation_candidate=int(sweep_start_candidate),
@@ -667,6 +673,40 @@ def find_start_alignment(
         start_confidence=float(start_conf),
         start_marker_confidence=float(start_marker_conf),
     )
+
+
+def _standard_mode_end_result(start_result: StartAlignmentResult) -> EndMarkerResult:
+    return EndMarkerResult(
+        selected_sweep_start=int(start_result.selected_sweep_start),
+        marker_1_start=-1,
+        marker_2_start=-1,
+        marker_confidence=0.0,
+        timing_error_samples=0,
+        timing_error_ms=0.0,
+        spacing_error_samples=0,
+    )
+
+
+def _validate_aligned_sweep_window(
+    rec: np.ndarray,
+    layout: MeasurementSignalLayout,
+    settings: AlignmentSettings,
+    start_result: StartAlignmentResult,
+    end_result: EndMarkerResult,
+) -> tuple[int, int]:
+    start_idx = int(end_result.selected_sweep_start)
+    end_idx = start_idx + layout.sweep_samples
+    if start_idx < 0 or end_idx > len(rec):
+        _raise_alignment_error(
+            "Aligned recording shorter than expected. "
+            "Please increase post-sweep silence or use Bluetooth mode.",
+            MeasurementFailureReason.SHORT_ALIGNED_RECORDING,
+            layout,
+            settings,
+            start=start_result,
+            end=end_result if bool(settings.bluetooth_headphone_mode) else None,
+        )
+    return start_idx, end_idx
 
 
 def find_end_markers(
@@ -885,15 +925,13 @@ def find_end_markers(
 def estimate_snr_db(
     rec_mono: np.ndarray,
     aligned_recording: np.ndarray,
-    marker_2_start: int,
-    marker_len: int,
+    post_noise_start: int,
     start_idx: int,
     fs: int,
 ) -> float:
     noise_win_n = int(round(0.12 * fs))
     rec = np.asarray(rec_mono)
     pre_noise = rec[max(0, start_idx - noise_win_n):start_idx]
-    post_noise_start = marker_2_start + marker_len
     post_noise = rec[
         post_noise_start:min(len(rec), post_noise_start + noise_win_n)
     ]
@@ -927,22 +965,40 @@ def align_recording_to_layout(
         )
 
     start_result = find_start_alignment(rec, sweep, layout, settings)
-    end_result = find_end_markers(rec, layout, settings, start_result)
-
-    end_idx = end_result.selected_sweep_start + layout.sweep_samples
-    if end_idx > len(rec):
-        _raise_alignment_error(
-            "Aligned recording shorter than expected. "
-            "Please increase post-sweep silence or use Bluetooth mode.",
-            MeasurementFailureReason.SHORT_ALIGNED_RECORDING,
-            layout,
-            settings,
+    bluetooth_mode = bool(settings.bluetooth_headphone_mode)
+    if not bluetooth_mode:
+        end_result = _standard_mode_end_result(start_result)
+        start_idx, end_idx = _validate_aligned_sweep_window(
+            rec, layout, settings, start_result, end_result
+        )
+        sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
+        snr_db = estimate_snr_db(
+            rec,
+            sweep_rec,
+            end_idx,
+            start_idx,
+            layout.fs,
+        )
+        return MeasurementAlignmentResult(
+            aligned_recording=sweep_rec,
             start=start_result,
             end=end_result,
+            snr_db=float(snr_db),
+            diagnostics=_diagnostics_from_results(
+                layout=layout,
+                settings=settings,
+                start=start_result,
+                end=None,
+                snr_db=float(snr_db),
+            ),
         )
-    sweep_rec = rec[end_result.selected_sweep_start:end_idx].astype(
-        np.float32, copy=False
+
+    end_result = find_end_markers(rec, layout, settings, start_result)
+
+    start_idx, end_idx = _validate_aligned_sweep_window(
+        rec, layout, settings, start_result, end_result
     )
+    sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
 
     end_conf_min = float(settings.end_marker_confidence_min)
     if bool(settings.bluetooth_headphone_mode):
@@ -962,7 +1018,7 @@ def align_recording_to_layout(
         )
     )
     can_accept_bluetooth_marginal = (
-        bool(settings.bluetooth_headphone_mode)
+        bluetooth_mode
         and end_result.timing_error_samples <= marginal_ceiling_samples
         and bluetooth_start_evidence_ok
         and end_result.spacing_error_samples <= max_spacing_error_samples
@@ -984,7 +1040,7 @@ def align_recording_to_layout(
         )
 
     if (
-        bool(settings.bluetooth_headphone_mode)
+        bluetooth_mode
         and end_result.spacing_error_samples > max_spacing_error_samples
     ):
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
@@ -1010,7 +1066,7 @@ def align_recording_to_layout(
         )
     elif end_result.timing_error_samples > max_drift_samples:
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
-        if bool(settings.bluetooth_headphone_mode):
+        if bluetooth_mode:
             hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
             _raise_alignment_error(
                 f"Timing drift too large ({ms:.1f} ms). {hint}",
@@ -1031,7 +1087,7 @@ def align_recording_to_layout(
                 end=end_result,
             )
 
-    if bool(settings.bluetooth_headphone_mode):
+    if bluetooth_mode:
         if warning_reason is None:
             marker_conf = max(marker_conf, end_conf_min)
         end_result = EndMarkerResult(
@@ -1051,8 +1107,7 @@ def align_recording_to_layout(
     snr_db = estimate_snr_db(
         rec,
         sweep_rec,
-        end_result.marker_2_start,
-        len(getattr(layout, "end_marker_2", layout.end_marker)),
+        end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
         end_result.selected_sweep_start,
         layout.fs,
     )

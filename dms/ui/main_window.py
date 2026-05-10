@@ -252,6 +252,9 @@ class PassFailDialog(QDialog):
 
         if timing_quality is not None:
             start_conf, end_conf, drift_ms, snr_db = timing_quality
+            bluetooth_mode = bool(
+                getattr(diagnostics, "bluetooth_headphone_mode", False)
+            )
             warning_message = (
                 getattr(diagnostics, "warning_message", None)
                 if diagnostics is not None
@@ -268,10 +271,18 @@ class PassFailDialog(QDialog):
             timing_box_layout = QVBoxLayout(timing_box)
             timing_box_layout.setContentsMargins(10, 8, 10, 8)
             timing_box_layout.setSpacing(4)
-            timing = QLabel(
-                f"Timing Quality - start: {start_conf:.1f}, "
-                f"end: {end_conf:.1f}, drift: {drift_ms:.1f} ms, SNR: {snr_db:.1f} dB"
-            )
+            if bluetooth_mode:
+                quality_text = (
+                    f"Timing Quality - start: {start_conf:.1f}, "
+                    f"end: {end_conf:.1f}, drift: {drift_ms:.1f} ms, "
+                    f"SNR: {snr_db:.1f} dB"
+                )
+            else:
+                quality_text = (
+                    f"Sweep Quality - alignment: {start_conf:.1f}, "
+                    f"SNR: {snr_db:.1f} dB"
+                )
+            timing = QLabel(quality_text)
             timing.setWordWrap(True)
             timing.setStyleSheet("color: #9fb7d1;")
             timing_box_layout.addWidget(timing)
@@ -280,25 +291,37 @@ class PassFailDialog(QDialog):
                 warning.setWordWrap(True)
                 warning.setStyleSheet("color: #d9b35f;")
                 timing_box_layout.addWidget(warning)
-            timing_box.setToolTip(
-                "Timing quality guide:\n"
-                "Start confidence: higher is better.\n"
-                "End confidence: higher is better.\n"
-                "Drift (ms): lower is better.\n\n"
-                "SNR (dB): higher is better.\n\n"
-                "Confidence guide (rough):\n"
-                ">= 12 strong, 9-12 good, 7-9 borderline, < 7 weak.\n\n"
-                "Drift guide:\n"
-                "< 5 ms excellent\n"
-                "5-15 ms good\n"
-                "15-35 ms acceptable\n"
-                "> 35 ms may hurt repeatability.\n\n"
-                "SNR guide:\n"
-                ">= 35 dB excellent\n"
-                "25-35 dB good\n"
-                "15-25 dB usable\n"
-                "< 15 dB noisy."
-            )
+            if bluetooth_mode:
+                timing_box.setToolTip(
+                    "Timing quality guide:\n"
+                    "Start confidence: higher is better.\n"
+                    "End confidence: higher is better.\n"
+                    "Drift (ms): lower is better.\n\n"
+                    "SNR (dB): higher is better.\n\n"
+                    "Confidence guide (rough):\n"
+                    ">= 12 strong, 9-12 good, 7-9 borderline, < 7 weak.\n\n"
+                    "Drift guide:\n"
+                    "< 5 ms excellent\n"
+                    "5-15 ms good\n"
+                    "15-35 ms acceptable\n"
+                    "> 35 ms may hurt repeatability.\n\n"
+                    "SNR guide:\n"
+                    ">= 35 dB excellent\n"
+                    "25-35 dB good\n"
+                    "15-25 dB usable\n"
+                    "< 15 dB noisy."
+                )
+            else:
+                timing_box.setToolTip(
+                    "Sweep quality guide:\n"
+                    "Alignment confidence: higher is better.\n"
+                    "SNR (dB): higher is better.\n\n"
+                    "SNR guide:\n"
+                    ">= 35 dB excellent\n"
+                    "25-35 dB good\n"
+                    "15-25 dB usable\n"
+                    "< 15 dB noisy."
+                )
             layout.addWidget(timing_box)
 
         if diagnostics is not None:
@@ -1743,6 +1766,13 @@ class MainWindow(QMainWindow):
             timing_msg = ""
             if self._last_timing_quality is not None:
                 start_conf, end_conf, drift_ms, snr_db = self._last_timing_quality
+                bluetooth_mode = bool(
+                    getattr(
+                        self._last_measurement_diagnostics,
+                        "bluetooth_headphone_mode",
+                        False,
+                    )
+                )
                 warning_prefix = ""
                 warning_message = None
                 if self._last_measurement_diagnostics is not None:
@@ -1753,11 +1783,17 @@ class MainWindow(QMainWindow):
                     )
                 if warning_message:
                     warning_prefix = " Bluetooth timing marginal."
-                timing_msg = (
-                    f" Timing Quality: start {start_conf:.1f}, "
-                    f"end {end_conf:.1f}, drift {drift_ms:.1f} ms, SNR {snr_db:.1f} dB."
-                    f"{warning_prefix}"
-                )
+                if bluetooth_mode:
+                    timing_msg = (
+                        f" Timing Quality: start {start_conf:.1f}, "
+                        f"end {end_conf:.1f}, drift {drift_ms:.1f} ms, "
+                        f"SNR {snr_db:.1f} dB.{warning_prefix}"
+                    )
+                else:
+                    timing_msg = (
+                        f" Sweep Quality: alignment {start_conf:.1f}, "
+                        f"SNR {snr_db:.1f} dB."
+                    )
             self._statusbar.showMessage(f"Sweep complete. Waiting for review.{timing_msg}")
             QTimer.singleShot(0, self._show_pass_fail_dialog)
         except Exception as exc:

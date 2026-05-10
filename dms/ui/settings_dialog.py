@@ -84,8 +84,8 @@ class SettingsDialog(QDialog):
             float(self._settings.get("end_marker_confidence_min"))
         )
         self._end_conf_min.setToolTip(
-            "Minimum allowed confidence for detecting the end marker.\n"
-            "Higher is better quality and stricter.\n"
+            "Bluetooth mode only: minimum allowed confidence for detecting the end marker.\n"
+            "Higher is better quality and stricter for wireless timing checks.\n"
             "Rough guide: >=12 strong, 9-12 good, 7-9 borderline, <7 weak."
         )
 
@@ -98,8 +98,8 @@ class SettingsDialog(QDialog):
             float(self._settings.get("timing_drift_max_ms"))
         )
         self._timing_drift_max_ms.setToolTip(
-            "Maximum allowed timing drift (ms) between expected and detected end marker.\n"
-            "Lower values are stricter and improve consistency; higher values accept more jitter."
+            "Bluetooth mode only: maximum allowed timing drift (ms) between expected and detected end marker.\n"
+            "Lower values are stricter and improve consistency; higher values accept more wireless jitter."
         )
 
         sweep_form.addRow("Sweep Duration", self._duration)
@@ -123,10 +123,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel(
             '<span style="color:#888; font-size:11px;">'
             "<b>Timing Tuning:</b> These controls tune how strict measurement acceptance is.<br>"
-            "Start/End confidence are correlation-quality checks (higher is better and stricter).<br>"
+            "Start confidence applies to sweep alignment; end confidence and drift apply to Bluetooth timing markers.<br>"
             "Confidence guide: <b>&gt;=12 strong</b>, <b>9-12 good</b>, "
             "<b>7-9 borderline</b>, <b>&lt;7 weak</b>.<br>"
-            "Max Timing Drift controls allowed end-marker error (lower = stricter).<br>"
+            "Max Timing Drift controls Bluetooth end-marker error (lower = stricter).<br>"
             "Drift guide: <b>&lt;5 ms excellent</b>, <b>5-15 ms good</b>, "
             "<b>15-35 ms acceptable</b>, <b>&gt;35 ms may reduce repeatability</b>."
             "</span>"

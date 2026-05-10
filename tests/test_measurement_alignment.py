@@ -58,6 +58,32 @@ def test_aligns_clean_non_bluetooth_recording_with_fixed_latency() -> None:
     assert result.start.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.end.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.end.timing_error_samples == 0
+    assert result.diagnostics.marker_confidence is None
+    assert result.diagnostics.timing_error_ms is None
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_standard_mode_has_no_timing_marker_failure_when_markers_are_absent() -> None:
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+
+    result = align_recording_to_layout(
+        rec,
+        sweep,
+        layout,
+        AlignmentSettings(
+            start_alignment_confidence_min=30.0,
+            end_marker_confidence_min=30.0,
+            timing_drift_max_ms=5.0,
+        ),
+    )
+
+    assert result.diagnostics.failure_reason is None
+    assert result.diagnostics.bluetooth_headphone_mode is False
+    assert result.diagnostics.marker_1_start is None
+    assert result.diagnostics.marker_2_start is None
+    assert result.diagnostics.marker_confidence is None
+    assert result.diagnostics.timing_error_ms is None
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
 
@@ -115,7 +141,7 @@ def test_bluetooth_high_latency_recording_can_lock_to_start_marker() -> None:
 
 
 def test_low_start_confidence_raises_existing_message() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
 
     with pytest.raises(ValueError, match="Low start-alignment confidence"):
@@ -123,12 +149,15 @@ def test_low_start_confidence_raises_existing_message() -> None:
             rec,
             sweep,
             layout,
-            AlignmentSettings(start_alignment_confidence_min=3.0),
+            AlignmentSettings(
+                bluetooth_headphone_mode=True,
+                start_alignment_confidence_min=3.0,
+            ),
         )
 
 
 def test_low_start_confidence_includes_structured_diagnostics() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
 
     with pytest.raises(MeasurementAlignmentError, match="Low start-alignment confidence") as exc:
@@ -136,7 +165,10 @@ def test_low_start_confidence_includes_structured_diagnostics() -> None:
             rec,
             sweep,
             layout,
-            AlignmentSettings(start_alignment_confidence_min=3.0),
+            AlignmentSettings(
+                bluetooth_headphone_mode=True,
+                start_alignment_confidence_min=3.0,
+            ),
         )
 
     err = exc.value
@@ -149,7 +181,7 @@ def test_low_start_confidence_includes_structured_diagnostics() -> None:
 
 
 def test_missing_end_marker_raises_low_confidence_message() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
@@ -160,12 +192,16 @@ def test_missing_end_marker_raises_low_confidence_message() -> None:
             rec,
             sweep,
             layout,
-            AlignmentSettings(start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0),
+            AlignmentSettings(
+                bluetooth_headphone_mode=True,
+                start_alignment_confidence_min=3.0,
+                end_marker_confidence_min=2.0,
+            ),
         )
 
 
 def test_low_end_marker_confidence_includes_start_and_marker_diagnostics() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
@@ -176,7 +212,11 @@ def test_low_end_marker_confidence_includes_start_and_marker_diagnostics() -> No
             rec,
             sweep,
             layout,
-            AlignmentSettings(start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0),
+            AlignmentSettings(
+                bluetooth_headphone_mode=True,
+                start_alignment_confidence_min=3.0,
+                end_marker_confidence_min=2.0,
+            ),
         )
 
     diagnostics = exc.value.diagnostics
@@ -188,8 +228,8 @@ def test_low_end_marker_confidence_includes_start_and_marker_diagnostics() -> No
 
 
 def test_excessive_timing_drift_raises_existing_message() -> None:
-    sweep, layout = _layout()
-    drift = int(round(0.04 * layout.fs))
+    sweep, layout = _layout(bluetooth=True)
+    drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
@@ -209,6 +249,7 @@ def test_excessive_timing_drift_raises_existing_message() -> None:
             sweep,
             layout,
             AlignmentSettings(
+                bluetooth_headphone_mode=True,
                 start_alignment_confidence_min=3.0,
                 end_marker_confidence_min=2.0,
                 timing_drift_max_ms=5.0,
@@ -217,8 +258,8 @@ def test_excessive_timing_drift_raises_existing_message() -> None:
 
 
 def test_timing_drift_failure_includes_marker_diagnostics() -> None:
-    sweep, layout = _layout()
-    drift = int(round(0.04 * layout.fs))
+    sweep, layout = _layout(bluetooth=True)
+    drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
@@ -232,6 +273,7 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
             sweep,
             layout,
             AlignmentSettings(
+                bluetooth_headphone_mode=True,
                 start_alignment_confidence_min=3.0,
                 end_marker_confidence_min=2.0,
                 timing_drift_max_ms=5.0,
@@ -240,9 +282,15 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
 
     diagnostics = exc.value.diagnostics
     assert exc.value.reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
-    assert diagnostics.marker_1_start == layout.end_marker_1_start_sample + drift
-    assert diagnostics.marker_2_start == layout.end_marker_2_start_sample + drift
-    assert diagnostics.timing_error_ms == pytest.approx(40.0)
+    assert diagnostics.marker_1_start == pytest.approx(
+        layout.end_marker_1_start_sample + drift,
+        abs=4,
+    )
+    assert diagnostics.marker_2_start == pytest.approx(
+        layout.end_marker_2_start_sample + drift,
+        abs=4,
+    )
+    assert diagnostics.timing_error_ms == pytest.approx(180.0, abs=1.0)
 
 
 def test_bluetooth_marginal_drift_succeeds_with_warning() -> None:
@@ -417,7 +465,7 @@ def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
     rec[:layout.sweep_start_sample] = 0.01
-    noise_start = layout.end_marker_2_start_sample + len(layout.end_marker_2)
+    noise_start = layout.sweep_end_sample
     rec[noise_start:noise_start + int(round(0.12 * layout.fs))] = 0.01
 
     result = align_recording_to_layout(
@@ -470,6 +518,24 @@ def test_format_diagnostics_summary_is_plain_actionable_text() -> None:
     assert "SNR:" in summary
 
 
+def test_standard_diagnostics_summary_omits_marker_timing_fields() -> None:
+    sweep, layout = _layout()
+    result = align_recording_to_layout(
+        _recording_from_layout(layout),
+        sweep,
+        layout,
+        AlignmentSettings(),
+    )
+
+    summary = format_diagnostics_summary(result.diagnostics)
+
+    assert "Mode: Standard" in summary
+    assert "Start confidence:" in summary
+    assert "SNR:" in summary
+    assert "End markers:" not in summary
+    assert "Drift:" not in summary
+
+
 def test_format_diagnostics_summary_includes_warning_text() -> None:
     sweep, layout = _layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1388 * layout.fs))
@@ -487,7 +553,7 @@ def test_format_diagnostics_summary_includes_warning_text() -> None:
 
 
 def test_end_marker_choice_prefers_acceptable_lower_drift_candidate() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _layout(bluetooth=True)
     rec = _recording_from_layout(layout)
     actual = layout.sweep_start_sample
     misleading_candidate = actual - int(round(0.04 * layout.fs))
@@ -502,7 +568,10 @@ def test_end_marker_choice_prefers_acceptable_lower_drift_candidate() -> None:
     result = find_end_markers(
         rec,
         layout,
-        AlignmentSettings(end_marker_confidence_min=2.0),
+        AlignmentSettings(
+            bluetooth_headphone_mode=True,
+            end_marker_confidence_min=2.0,
+        ),
         start_result,
     )
 

@@ -31,7 +31,7 @@ def test_coded_timing_markers_are_deterministic_and_distinct() -> None:
     assert abs(corr) < 0.65
 
 
-def test_non_bluetooth_layout_positions_are_explicit() -> None:
+def test_non_bluetooth_layout_includes_primer_with_sweep_only_excitation() -> None:
     fs = 48_000
     sweep = np.linspace(-1.0, 1.0, 4_800, dtype=np.float32)
 
@@ -43,15 +43,20 @@ def test_non_bluetooth_layout_positions_are_explicit() -> None:
         bluetooth_headphone_mode=False,
     )
 
-    assert layout.wake_primer is None
+    assert layout.wake_primer is not None
     assert layout.pre_silence_samples == int(0.2 * fs)
     assert layout.post_silence_samples == int(0.5 * fs)
-    assert layout.excitation_start_sample == layout.pre_silence_samples
-    assert layout.sweep_start_sample == layout.pre_silence_samples
+    assert layout.primer_gap_samples == int(round(0.24 * fs))
+    assert (
+        layout.excitation_start_sample
+        == len(layout.wake_primer)
+        + layout.primer_gap_samples
+        + layout.pre_silence_samples
+    )
+    assert layout.sweep_start_sample == layout.excitation_start_sample
     assert layout.sweep_end_sample == layout.sweep_start_sample + len(sweep)
     assert layout.end_marker_1_start_sample == layout.sweep_end_sample
     assert layout.end_marker_2_start_sample == layout.sweep_end_sample
-    assert layout.primer_gap_samples == 0
     assert layout.start_marker_gap_samples == 0
     assert layout.end_marker_gap_samples == 0
     assert layout.end_marker_pair_gap_samples == 0
@@ -125,7 +130,7 @@ def test_output_signal_matches_mono_and_stereo_playback_shapes() -> None:
     assert np.max(np.abs(stereo[:len(layout.wake_primer), 0])) > 0.0
 
 
-def test_standard_output_signal_contains_only_sweep_between_silence() -> None:
+def test_standard_output_signal_contains_primer_then_sweep_between_silence() -> None:
     fs = 48_000
     sweep = np.linspace(-0.5, 0.5, 1_000, dtype=np.float32)
     layout = build_measurement_layout(
@@ -138,7 +143,10 @@ def test_standard_output_signal_contains_only_sweep_between_silence() -> None:
 
     out = build_output_signal(layout, output_channels=2)
 
-    assert np.max(np.abs(out[:layout.sweep_start_sample, 0])) == 0.0
+    primer_n = len(layout.wake_primer)
+    assert np.max(np.abs(out[:primer_n, 0])) > 0.0
+    np.testing.assert_allclose(out[:primer_n, 0], layout.wake_primer)
+    assert np.max(np.abs(out[primer_n:layout.sweep_start_sample, 0])) == 0.0
     np.testing.assert_allclose(
         out[layout.sweep_start_sample:layout.sweep_end_sample, 0],
         sweep,

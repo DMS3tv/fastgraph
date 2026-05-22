@@ -3,7 +3,7 @@ Pure measurement signal construction helpers.
 
 These functions build the playback buffer and timing metadata used by the
 audio engine. They intentionally do not touch devices or Qt state, which makes
-Bluetooth timing assumptions testable without hardware.
+measurement timing assumptions testable without hardware.
 """
 
 from dataclasses import dataclass
@@ -141,7 +141,7 @@ def build_start_marker(fs: int) -> np.ndarray:
 
 def build_wake_primer(fs: int) -> np.ndarray:
     """
-    Build a short non-measurement primer to wake Bluetooth headphones before sweep start.
+    Build a short non-measurement primer to wake DACs/headphones before sweep start.
     """
     _validate_fs(fs)
     dur_s = 0.20
@@ -166,8 +166,9 @@ def build_measurement_layout(
     """
     Build the playback excitation and expected timing positions.
 
-    In standard wired mode the excitation is only the sweep. In Bluetooth mode
-    the excitation includes coded timing markers around the sweep.
+    All modes play a wake primer before the configured pre-sweep silence. In
+    standard wired mode the excitation is only the sweep. In Bluetooth mode the
+    excitation includes coded timing markers around the sweep.
     """
     _validate_fs(fs)
     if pre_silence_s < 0.0 or post_silence_s < 0.0:
@@ -183,8 +184,8 @@ def build_measurement_layout(
     pre_n = int(pre_silence_s * fs)
     post_n = int(post_silence_s * fs)
     bluetooth_mode = bool(bluetooth_headphone_mode)
-    primer_gap_n = int(round(0.24 * fs)) if bluetooth_mode else 0
-    wake_primer = build_wake_primer(fs) if bluetooth_mode else None
+    primer_gap_n = int(round(0.24 * fs))
+    wake_primer = build_wake_primer(fs)
     primer_n = len(wake_primer) if wake_primer is not None else 0
     sweep_n = len(sweep_f32)
     if bluetooth_mode:

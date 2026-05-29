@@ -34,6 +34,7 @@ class MeasurementFailureReason:
 
 class MeasurementWarningReason:
     BLUETOOTH_MARGINAL_DRIFT = "bluetooth_marginal_drift"
+    BLUETOOTH_SWEEP_FALLBACK = "bluetooth_sweep_fallback"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ class MeasurementDiagnostics:
     warning_reason: Optional[str] = None
     warning_message: Optional[str] = None
     buffer_size: Optional[int] = None
+    alignment_mode: Optional[str] = None
+    marker_failure_reason: Optional[str] = None
 
 
 class MeasurementAlignmentError(ValueError):
@@ -113,6 +116,14 @@ class MeasurementAlignmentResult:
     diagnostics: MeasurementDiagnostics
 
 
+_BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE = 3.0
+_BLUETOOTH_FALLBACK_STRONG_SWEEP_CONFIDENCE = 5.0
+_BLUETOOTH_FALLBACK_MIN_START_MARKER_CONFIDENCE = 3.5
+_BLUETOOTH_FALLBACK_MIN_SNR_DB = 18.0
+_BLUETOOTH_FALLBACK_MIN_SWEEP_RMS = 1e-7
+_BLUETOOTH_FALLBACK_MIN_SWEEP_MATCH = 0.20
+
+
 def _diagnostics_from_results(
     layout: MeasurementSignalLayout,
     settings: AlignmentSettings,
@@ -123,12 +134,17 @@ def _diagnostics_from_results(
     failure_message: Optional[str] = None,
     warning_reason: Optional[str] = None,
     warning_message: Optional[str] = None,
+    alignment_mode: Optional[str] = None,
+    marker_failure_reason: Optional[str] = None,
 ) -> MeasurementDiagnostics:
     selected_sweep_start = None
     if end is not None:
         selected_sweep_start = end.selected_sweep_start
     elif start is not None:
         selected_sweep_start = start.selected_sweep_start
+
+    if alignment_mode is None:
+        alignment_mode = "marker" if settings.bluetooth_headphone_mode else "sweep"
 
     return MeasurementDiagnostics(
         fs=int(layout.fs),
@@ -175,6 +191,8 @@ def _diagnostics_from_results(
         failure_message=failure_message,
         warning_reason=warning_reason,
         warning_message=warning_message,
+        alignment_mode=alignment_mode,
+        marker_failure_reason=marker_failure_reason,
     )
 
 
@@ -220,6 +238,10 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
         lines.append(f"- Failure reason: {diagnostics.failure_reason}")
     if diagnostics.warning_reason:
         lines.append(f"- Warning reason: {diagnostics.warning_reason}")
+    if diagnostics.alignment_mode:
+        lines.append(f"- Alignment mode: {diagnostics.alignment_mode}")
+    if diagnostics.marker_failure_reason:
+        lines.append(f"- Marker failure reason: {diagnostics.marker_failure_reason}")
     lines.extend(
         [
             f"- Selected sweep start: {fmt_int(diagnostics.selected_sweep_start)}",
@@ -709,6 +731,144 @@ def _validate_aligned_sweep_window(
     return start_idx, end_idx
 
 
+def _bluetooth_sweep_fallback_result(
+    rec: np.ndarray,
+    sweep: np.ndarray,
+    layout: MeasurementSignalLayout,
+    settings: AlignmentSettings,
+    start_result: StartAlignmentResult,
+    marker_failure_reason: str,
+    end_result: Optional[EndMarkerResult] = None,
+) -> Optional[MeasurementAlignmentResult]:
+    if not bool(settings.bluetooth_headphone_mode):
+        return None
+
+    fallback_start = int(start_result.sweep_correlation_candidate)
+    fallback_start_result = StartAlignmentResult(
+        selected_sweep_start=fallback_start,
+        sweep_correlation_candidate=int(start_result.sweep_correlation_candidate),
+        marker_locked_candidate=start_result.marker_locked_candidate,
+        start_confidence=float(start_result.start_confidence),
+        start_marker_confidence=float(start_result.start_marker_confidence),
+    )
+    fallback_end_result = end_result
+    if fallback_end_result is None:
+        fallback_end_result = EndMarkerResult(
+            selected_sweep_start=fallback_start,
+            marker_1_start=-1,
+            marker_2_start=-1,
+            marker_confidence=0.0,
+            timing_error_samples=0,
+            timing_error_ms=0.0,
+            spacing_error_samples=0,
+        )
+    else:
+        raw_marker_conf = (
+            end_result.raw_marker_confidence
+            if end_result.raw_marker_confidence is not None
+            else end_result.marker_confidence
+        )
+        strong_marker_conf_min = min(float(settings.end_marker_confidence_min), 2.5)
+        strong_invalid_identity = (
+            raw_marker_conf >= 1.0
+            and (
+                (
+                    end_result.marker_identity_ratio is not None
+                    and end_result.marker_identity_ratio < 1.08
+                )
+                or (
+                    end_result.marker_agreement is not None
+                    and end_result.marker_agreement < 0.10
+                )
+            )
+        )
+        strong_invalid_drift = (
+            marker_failure_reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
+            and raw_marker_conf >= strong_marker_conf_min
+        )
+        if strong_invalid_identity or strong_invalid_drift:
+            return None
+
+        fallback_end_result = EndMarkerResult(
+            selected_sweep_start=fallback_start,
+            marker_1_start=end_result.marker_1_start,
+            marker_2_start=end_result.marker_2_start,
+            marker_confidence=end_result.marker_confidence,
+            timing_error_samples=end_result.timing_error_samples,
+            timing_error_ms=end_result.timing_error_ms,
+            spacing_error_samples=end_result.spacing_error_samples,
+            raw_marker_confidence=end_result.raw_marker_confidence,
+            marker_agreement=end_result.marker_agreement,
+            marker_identity_ratio=end_result.marker_identity_ratio,
+            marker_template_stretch=end_result.marker_template_stretch,
+        )
+
+    start_idx, end_idx = _validate_aligned_sweep_window(
+        rec,
+        layout,
+        settings,
+        fallback_start_result,
+        fallback_end_result,
+    )
+    sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
+    sweep_rms = float(np.sqrt(np.mean(np.square(sweep_rec))))
+    sweep_match = 0.0
+    sweep_ref = np.asarray(sweep).astype(np.float32, copy=False)
+    snr_db = _estimate_bluetooth_fallback_snr_db(
+        rec,
+        sweep_rec,
+        start_idx,
+        layout,
+    )
+    if len(sweep_ref) == len(sweep_rec):
+        rec_norm = float(np.sqrt(np.sum(np.square(sweep_rec))))
+        ref_norm = float(np.sqrt(np.sum(np.square(sweep_ref))))
+        if rec_norm > 1e-12 and ref_norm > 1e-12:
+            sweep_match = abs(float(np.dot(sweep_rec, sweep_ref) / (rec_norm * ref_norm)))
+
+    sweep_conf_ok = (
+        fallback_start_result.start_confidence
+        >= _BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE
+    )
+    start_evidence_ok = (
+        fallback_start_result.start_confidence
+        >= _BLUETOOTH_FALLBACK_STRONG_SWEEP_CONFIDENCE
+        or fallback_start_result.marker_locked_candidate is not None
+        or fallback_start_result.start_marker_confidence
+        >= _BLUETOOTH_FALLBACK_MIN_START_MARKER_CONFIDENCE
+    )
+    if (
+        not sweep_conf_ok
+        or not start_evidence_ok
+        or snr_db < _BLUETOOTH_FALLBACK_MIN_SNR_DB
+        or sweep_rms < _BLUETOOTH_FALLBACK_MIN_SWEEP_RMS
+        or sweep_match < _BLUETOOTH_FALLBACK_MIN_SWEEP_MATCH
+    ):
+        return None
+
+    warning_message = (
+        "Bluetooth markers were unreliable; sweep correlation was used. "
+        "Review repeatability before keeping."
+    )
+    return MeasurementAlignmentResult(
+        aligned_recording=sweep_rec,
+        start=fallback_start_result,
+        end=fallback_end_result,
+        snr_db=float(snr_db),
+        diagnostics=_diagnostics_from_results(
+            layout=layout,
+            settings=settings,
+            start=fallback_start_result,
+            end=fallback_end_result,
+            snr_db=float(snr_db),
+            warning_reason=MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK,
+            warning_message=warning_message,
+            alignment_mode="sweep_fallback",
+            marker_failure_reason=marker_failure_reason,
+        ),
+    )
+
+
 def find_end_markers(
     rec_mono: np.ndarray,
     layout: MeasurementSignalLayout,
@@ -949,6 +1109,46 @@ def estimate_snr_db(
     return 0.0
 
 
+def _estimate_bluetooth_fallback_snr_db(
+    rec_mono: np.ndarray,
+    aligned_recording: np.ndarray,
+    start_idx: int,
+    layout: MeasurementSignalLayout,
+) -> float:
+    noise_win_n = int(round(0.12 * layout.fs))
+    rec = np.asarray(rec_mono)
+    pre_noise_stop = max(
+        0,
+        int(start_idx)
+        - int(layout.start_marker_gap_samples)
+        - len(layout.start_marker),
+    )
+    pre_noise = rec[max(0, pre_noise_stop - noise_win_n):pre_noise_stop]
+    post_noise_start = (
+        int(start_idx)
+        + layout.sweep_samples
+        + layout.end_marker_gap_samples
+        + len(layout.end_marker)
+        + layout.end_marker_pair_gap_samples
+        + len(getattr(layout, "end_marker_2", layout.end_marker))
+    )
+    post_noise = rec[
+        post_noise_start:min(len(rec), post_noise_start + noise_win_n)
+    ]
+    noise_parts = [seg for seg in (pre_noise, post_noise) if len(seg) > 8]
+    if noise_parts:
+        noise_concat = np.concatenate(noise_parts)
+        noise_rms = float(np.sqrt(np.mean(np.square(noise_concat))))
+    else:
+        noise_rms = 0.0
+    signal_rms = float(np.sqrt(np.mean(np.square(aligned_recording))))
+    if noise_rms > 1e-12 and signal_rms > 0.0:
+        return float(20.0 * np.log10(signal_rms / noise_rms))
+    if signal_rms > 0.0:
+        return 120.0
+    return 0.0
+
+
 def align_recording_to_layout(
     rec_mono: np.ndarray,
     sweep: np.ndarray,
@@ -993,7 +1193,20 @@ def align_recording_to_layout(
             ),
         )
 
-    end_result = find_end_markers(rec, layout, settings, start_result)
+    try:
+        end_result = find_end_markers(rec, layout, settings, start_result)
+    except MeasurementAlignmentError as exc:
+        fallback = _bluetooth_sweep_fallback_result(
+            rec=rec,
+            sweep=sweep,
+            layout=layout,
+            settings=settings,
+            start_result=start_result,
+            marker_failure_reason=exc.reason,
+        )
+        if fallback is not None:
+            return fallback
+        raise
 
     start_idx, end_idx = _validate_aligned_sweep_window(
         rec, layout, settings, start_result, end_result
@@ -1029,6 +1242,17 @@ def align_recording_to_layout(
         )
     )
     if marker_conf < end_conf_min and not can_accept_bluetooth_marginal:
+        fallback = _bluetooth_sweep_fallback_result(
+            rec=rec,
+            sweep=sweep,
+            layout=layout,
+            settings=settings,
+            start_result=start_result,
+            marker_failure_reason=MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
+            end_result=end_result,
+        )
+        if fallback is not None:
+            return fallback
         _raise_alignment_error(
             f"Low end-marker confidence ({marker_conf:.1f}). "
             "Timing reliability is low; retrying is recommended.",
@@ -1044,6 +1268,17 @@ def align_recording_to_layout(
         and end_result.spacing_error_samples > max_spacing_error_samples
     ):
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
+        fallback = _bluetooth_sweep_fallback_result(
+            rec=rec,
+            sweep=sweep,
+            layout=layout,
+            settings=settings,
+            start_result=start_result,
+            marker_failure_reason=MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+            end_result=end_result,
+        )
+        if fallback is not None:
+            return fallback
         _raise_alignment_error(
             f"Timing drift too large ({ms:.1f} ms). "
             "Please retry; Bluetooth marker spacing was unstable.",
@@ -1067,6 +1302,17 @@ def align_recording_to_layout(
     elif end_result.timing_error_samples > max_drift_samples:
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
         if bluetooth_mode:
+            fallback = _bluetooth_sweep_fallback_result(
+                rec=rec,
+                sweep=sweep,
+                layout=layout,
+                settings=settings,
+                start_result=start_result,
+                marker_failure_reason=MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+                end_result=end_result,
+            )
+            if fallback is not None:
+                return fallback
             hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
             _raise_alignment_error(
                 f"Timing drift too large ({ms:.1f} ms). {hint}",

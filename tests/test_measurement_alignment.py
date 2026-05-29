@@ -180,29 +180,40 @@ def test_low_start_confidence_includes_structured_diagnostics() -> None:
     assert str(err) == err.message
 
 
-def test_missing_end_marker_raises_low_confidence_message() -> None:
+def test_missing_end_marker_uses_bluetooth_sweep_fallback() -> None:
     sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
     ]
 
-    with pytest.raises(ValueError, match="Low end-marker confidence"):
-        align_recording_to_layout(
-            rec,
-            sweep,
-            layout,
-            AlignmentSettings(
-                bluetooth_headphone_mode=True,
-                start_alignment_confidence_min=3.0,
-                end_marker_confidence_min=2.0,
-            ),
-        )
+    result = align_recording_to_layout(
+        rec,
+        sweep,
+        layout,
+        AlignmentSettings(
+            bluetooth_headphone_mode=True,
+            start_alignment_confidence_min=3.0,
+            end_marker_confidence_min=2.0,
+        ),
+    )
+
+    assert result.diagnostics.failure_reason is None
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
+    )
+    assert result.diagnostics.alignment_mode == "sweep_fallback"
+    assert (
+        result.diagnostics.marker_failure_reason
+        == MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE
+    )
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
 
-def test_low_end_marker_confidence_includes_start_and_marker_diagnostics() -> None:
+def test_low_snr_missing_markers_still_fails_with_marker_diagnostics() -> None:
     sweep, layout = _layout(bluetooth=True)
-    rec = np.zeros(layout.total_samples, dtype=np.float32)
+    rng = np.random.default_rng(20260524)
+    rec = rng.normal(0.0, 0.05, layout.total_samples).astype(np.float32)
     rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
         :layout.sweep_end_sample - layout.excitation_start_sample
     ]
@@ -358,7 +369,7 @@ def test_bluetooth_marginal_drift_accepts_weak_but_consistent_end_markers(monkey
     assert "end confidence 2.1" in result.diagnostics.warning_message
 
 
-def test_bluetooth_marginal_drift_rejects_too_weak_end_markers(monkeypatch) -> None:
+def test_bluetooth_weak_end_markers_use_sweep_fallback(monkeypatch) -> None:
     sweep, layout = _layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1391 * layout.fs))
     start_result = StartAlignmentResult(
@@ -389,15 +400,22 @@ def test_bluetooth_marginal_drift_rejects_too_weak_end_markers(monkeypatch) -> N
         lambda *_args, **_kwargs: end_result,
     )
 
-    with pytest.raises(MeasurementAlignmentError, match="Low end-marker confidence") as exc:
-        align_recording_to_layout(
-            _recording_from_layout(layout),
-            sweep,
-            layout,
-            _bluetooth_settings(),
-        )
+    result = align_recording_to_layout(
+        _recording_from_layout(layout),
+        sweep,
+        layout,
+        _bluetooth_settings(),
+    )
 
-    assert exc.value.reason == MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE
+    assert result.diagnostics.failure_reason is None
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
+    )
+    assert result.diagnostics.alignment_mode == "sweep_fallback"
+    assert (
+        result.diagnostics.marker_failure_reason
+        == MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE
+    )
 
 
 def test_bluetooth_extreme_drift_still_fails() -> None:
@@ -493,6 +511,7 @@ def test_successful_alignment_returns_matching_diagnostics() -> None:
     assert diagnostics.failure_reason is None
     assert diagnostics.bluetooth_headphone_mode is True
     assert diagnostics.latency == "high"
+    assert diagnostics.alignment_mode == "marker"
     assert diagnostics.selected_sweep_start == result.end.selected_sweep_start
     assert diagnostics.start_confidence == result.start.start_confidence
     assert diagnostics.marker_confidence == result.end.marker_confidence
@@ -513,6 +532,7 @@ def test_format_diagnostics_summary_is_plain_actionable_text() -> None:
 
     assert "Measurement diagnostics:" in summary
     assert "Mode: Bluetooth" in summary
+    assert "Alignment mode: marker" in summary
     assert "Selected sweep start:" in summary
     assert "Drift:" in summary
     assert "SNR:" in summary
@@ -550,6 +570,31 @@ def test_format_diagnostics_summary_includes_warning_text() -> None:
 
     assert "Warning reason: bluetooth_marginal_drift" in summary
     assert "Warning: Bluetooth timing drift is marginal" in summary
+
+
+def test_format_diagnostics_summary_includes_sweep_fallback_reason() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    rec = np.zeros(layout.total_samples, dtype=np.float32)
+    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
+        :layout.sweep_end_sample - layout.excitation_start_sample
+    ]
+
+    result = align_recording_to_layout(
+        rec,
+        sweep,
+        layout,
+        AlignmentSettings(
+            bluetooth_headphone_mode=True,
+            start_alignment_confidence_min=3.0,
+            end_marker_confidence_min=2.0,
+        ),
+    )
+
+    summary = format_diagnostics_summary(result.diagnostics)
+
+    assert "Warning reason: bluetooth_sweep_fallback" in summary
+    assert "Alignment mode: sweep_fallback" in summary
+    assert "Marker failure reason: low_end_marker_confidence" in summary
 
 
 def test_end_marker_choice_prefers_acceptable_lower_drift_candidate() -> None:
@@ -690,11 +735,26 @@ def test_missing_start_audio_fails_or_locks_to_remaining_valid_marker_evidence()
     assert np.max(np.abs(result.aligned_recording[:int(round(0.08 * layout.fs))])) == 0.0
 
 
-def test_truncated_tail_audio_reports_end_or_aligned_length_failure() -> None:
+def test_truncated_tail_audio_can_use_bluetooth_sweep_fallback() -> None:
     sweep, layout = _layout(bluetooth=True)
     delay = int(round(0.2 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     trunc_at = delay + layout.sweep_end_sample + int(round(0.01 * layout.fs))
+    rec = rec[:trunc_at]
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
+    )
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_truncated_sweep_window_still_fails() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    delay = int(round(0.2 * layout.fs))
+    rec = _recording_from_layout(layout, delay_samples=delay)
+    trunc_at = delay + layout.sweep_end_sample - int(round(0.05 * layout.fs))
     rec = rec[:trunc_at]
 
     with pytest.raises(

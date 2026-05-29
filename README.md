@@ -5,7 +5,7 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.2.4`
+Current beta version: `0.2.5`
 
 ## Quick Start
 
@@ -29,7 +29,10 @@ python main.py
 - Bluetooth Headphone Mode applies Bluetooth-safe timing defaults, keeps coded
   start/end timing markers around the sweep, reports timing diagnostics, and can
   allow marginal drift to reach review with a visible warning when marker
-  evidence is still usable.
+  evidence is still usable. If end markers are missing or weak, it can use a
+  guarded sweep-correlation fallback when sweep confidence, SNR, and sweep-window
+  match checks are strong enough; fallback runs are clearly marked with a warning
+  before review.
 - Bluetooth mode is reversible: custom standard-mode measurement settings are
   restored when Bluetooth mode is turned off.
 
@@ -116,8 +119,8 @@ python -m venv .venv
 The finished app folder and shareable zip will be created at:
 
 ```powershell
-dist\DMS Fastgraph Beta
-dist\DMS Fastgraph Beta-windows-x64.zip
+dist\FastGraph Beta
+dist\FastGraph Beta-windows-x64.zip
 ```
 
 ## Packaging For macOS
@@ -134,7 +137,7 @@ source .venv/bin/activate
 The finished app bundle will be created at:
 
 ```bash
-dist/DMS Fastgraph.app
+dist/FastGraph Beta.app
 ```
 
 Notes:

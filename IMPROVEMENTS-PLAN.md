@@ -11,7 +11,8 @@ For the next few sessions, optimize for faster progress on measurement reliabili
 - [x] **[P0] Bluetooth marginal drift handling** - Bluetooth measurements with usable marker evidence and moderately high drift can now reach review with a visible warning instead of hard-failing.
 - [x] **[P0] Coded multi-tone marker packets** - Start/end timing references now use broadband coded audio packets with distinct end-marker identities to reduce false locks from resonant peaks.
 - [x] **[P0] Standard-mode DAC wake primer with sweep-only alignment** - Standard wired measurements play the shared wake primer before the sweep, but still omit coded timing-reference markers; sweep correlation plus SNR drive review diagnostics.
-- [ ] **[NEXT] Real-headphone validation pass** - Test several Bluetooth headphones/IEMs against the coded markers and record which diagnostics still appear before more tuning.
+- [x] **[P0] Bluetooth sweep-correlation fallback** - Bluetooth mode now keeps marker validation when it works, but can use a guarded sweep-correlation fallback with a visible warning when end markers are missing or weak.
+- [ ] **[NEXT] Real-headphone validation pass** - Test several Bluetooth headphones/IEMs against the hybrid marker/fallback alignment and record pass rate plus warning frequency before more tuning.
 - [ ] **[NEXT] Focused fake audio backend** - Add only enough fake audio plumbing to test queue retry behavior and diagnostics flow without real headphones.
 - [x] **[P1] Top-viewport TXT drag-drop measurement import for fixture-free testing** - Local `.txt` measurement files can now be dropped onto the top plot and imported as kept curves for testing without live fixture hardware.
 - [x] **[P1] Squiglink phone_book.json sync on upload** - Upload now supports metadata-based variant naming, merges uploaded measurements into account-specific `data/phone_book.json`, and writes updated phone book back over SFTP.
@@ -66,6 +67,7 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **[P0] Accept marginal Bluetooth drift with warning** - Bluetooth runs with passing marker confidence, strong start-marker evidence, reasonable marker spacing, and drift up to 160 ms now continue to review with a `bluetooth_marginal_drift` warning.
 - [x] **[P0] Replace chirp timing markers with coded multi-tone packets** - `dms/measurement_layout.py` now builds deterministic coded audio markers, and `dms/measurement_alignment.py` verifies end marker A/B identity plus chip-level agreement before accepting marker pairs.
 - [x] **[P0] Remove wired-mode timing references** - Standard wired playback now uses the shared DAC/headphone wake primer before pre-silence and sweep-only excitation. Bluetooth mode keeps coded markers, drift validation, retries, and warning diagnostics.
+- [x] **[P0] Add guarded Bluetooth sweep fallback** - Bluetooth mode now accepts a sweep-correlation fallback when marker evidence is missing or weak but sweep confidence, SNR, non-silent level, and sweep-window match are usable. Strong invalid marker identity or strong excessive drift still fail.
 - [x] **Add diagnostics UI for failed runs** - Retry prompts, final sweep errors, and successful review dialogs now include formatted diagnostics with confidence, marker positions, drift, SNR, Bluetooth mode, latency mode, thresholds, and buffer size where available.
 - [ ] **[DEFER] Add a measurement debug export** - Diagnostics are visible in-app now. Defer file export until real-world failures show we need shareable debug bundles.
 
@@ -108,7 +110,8 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - [x] **Session 5B: Top-viewport TXT drag-drop import for fixture-free testing** - Completed on 2026-05-06. Added top-plot drop handling in `dms/ui/dual_plot_widget.py`, a reusable permissive two-column loader in `dms/measurement_txt.py` (also used by `dms/hrtf.py`), import orchestration in `dms/ui/main_window.py`, and focused tests in `tests/test_measurement_txt.py` plus `tests/test_main_window_measurement_import.py`.
 - [x] **Session 5C: Squiglink phone-book sync on upload** - Completed on 2026-05-06. Added upload name modifier UI, metadata-aware upload filename stems, SFTP read/merge/write flow for `data/phone_book.json`, and fallback choices for missing/invalid remote phone books.
 - [x] **Session 5D: Remove wired-mode timing references** - Completed on 2026-05-08 and updated on 2026-05-22. Standard wired sweeps use a wake primer before configured silence, then sweep-only excitation and sweep alignment/SNR without marker drift retries; Bluetooth mode keeps the coded timing-marker path.
-- [ ] **Session 6: Real-headphone validation pass** - Next recommended session. Use multiple wireless headphones/IEMs and compare diagnostics before changing thresholds again.
+- [x] **Session 6: Bluetooth hybrid sweep fallback** - Completed on 2026-05-24. Bluetooth mode now uses marker validation when reliable and falls back to guarded sweep correlation when end markers are missing/weak, surfacing `bluetooth_sweep_fallback` diagnostics for review.
+- [ ] **Session 6B: Real-headphone validation pass** - Next recommended session. Use multiple wireless headphones/IEMs and compare pass rate, warning frequency, and curve repeatability before changing marker gaps or profile timing again.
 - [ ] **Session 7: Focused fake-audio retry tests** - Add minimal fake audio support only if we need confidence around queue retry behavior without real hardware.
 - [ ] **Session 8: Measurement-critical settings validation** - Validate Bluetooth-critical settings and report recoverable warnings.
 - [ ] **Deferred Session: Main window split** - Extract queue, device, and export/upload controllers later, after reliability stabilizes.
@@ -174,6 +177,15 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
 - Standard wired measurement behavior: non-Bluetooth playback now starts with the same wake primer and 0.24 s primer gap used by Bluetooth mode, then the configured pre-sweep silence and sweep-only excitation. Standard alignment remains sweep-correlation/SNR based with no coded marker drift checks or Bluetooth retry logic.
 - Bluetooth behavior remains marker-based: Bluetooth mode still uses the shared primer, coded start/end timing references, marker identity checks, drift validation, retry prompts, and marginal-drift warnings.
 - Implementation files: `dms/measurement_layout.py`, `tests/test_measurement_layout.py`, `dms/version.py`, `IMPROVEMENTS-PLAN.md`.
+- 2026-05-24: Bumped app version from `0.2.4` to `0.2.5` for the Bluetooth hybrid sweep fallback reliability pass.
+- Bluetooth measurement behavior: marker-validated Bluetooth sweeps still use the existing coded start/end marker path. When end markers are missing or weak, Bluetooth mode can now accept a guarded sweep-correlation fallback if sweep confidence is at least `3.0`, start evidence is usable, SNR is at least `18 dB`, the aligned sweep is non-silent, and the sweep window still correlates with the source sweep. Strong invalid marker identity or strong excessive marker drift still fail instead of falling back.
+- Diagnostics behavior: accepted fallback runs now show warning reason `bluetooth_sweep_fallback`, alignment mode `sweep_fallback`, and the marker failure reason that caused fallback. Marker-validated Bluetooth runs report alignment mode `marker`; standard sweeps report alignment mode `sweep`.
+- Implementation files: `dms/measurement_alignment.py`, `tests/test_measurement_alignment.py`, `dms/version.py`, `IMPROVEMENTS-PLAN.md`.
+- Verification on 2026-05-24:
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_alignment.py` -> `44 passed`
+  - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_layout.py tests/test_measurement_alignment.py` -> `55 passed`
+  - `PYTHONPATH=. .venv/bin/pytest -q` -> `94 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 
 ## Assumptions
 

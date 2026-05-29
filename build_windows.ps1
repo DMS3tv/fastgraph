@@ -24,8 +24,8 @@ foreach ($Path in @($BuildDir, $DistDir)) {
 
 & $Python -m PyInstaller --noconfirm dms_fastgraph.spec
 
-$AppDir = Join-Path $DistDir "DMS Fastgraph Beta"
-$ZipPath = Join-Path $DistDir "DMS Fastgraph Beta-windows-x64.zip"
+$AppDir = Join-Path $DistDir "FastGraph Beta"
+$ZipPath = Join-Path $DistDir "FastGraph Beta-windows-x64.zip"
 if (Test-Path $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }

@@ -21,7 +21,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="DMS Fastgraph Beta",
+    name="FastGraph Beta",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -41,17 +41,17 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    name="DMS Fastgraph Beta",
+    name="FastGraph Beta",
 )
 
 app = BUNDLE(
     coll,
-    name="DMS Fastgraph Beta.app",
+    name="FastGraph Beta.app",
     icon="fastgraph icon.png",
     bundle_identifier="com.dms.fastgraph",
     info_plist={
-        "CFBundleName": "DMS Fastgraph Beta",
-        "CFBundleDisplayName": "DMS Fastgraph Beta",
+        "CFBundleName": "FastGraph Beta",
+        "CFBundleDisplayName": "FastGraph Beta",
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": __version__,
         "NSMicrophoneUsageDescription": (

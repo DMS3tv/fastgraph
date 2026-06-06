@@ -5,7 +5,7 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.2.5`
+Current beta version: `0.2.6`
 
 ## Quick Start
 

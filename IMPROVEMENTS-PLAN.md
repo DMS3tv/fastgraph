@@ -186,6 +186,12 @@ DMS Fastgraph is a PyQt6 desktop app for taking headphone measurements. It uses 
   - `PYTHONPATH=. .venv/bin/pytest -q tests/test_measurement_layout.py tests/test_measurement_alignment.py` -> `55 passed`
   - `PYTHONPATH=. .venv/bin/pytest -q` -> `94 passed`
   - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
+- 2026-06-06: Bumped app version from `0.2.5` to `0.2.6` for variation-band export.
+- Variation export behavior: when the bottom viewport is in `Variation Band` mode, the export button changes to `Export Variation...` and writes a tab-delimited TXT file with frequency, p10, p25, median, p75, and p90 columns matching the displayed HRTF/smoothed variation band. Squiglink upload remains average-only.
+- Implementation files: `dms/export.py`, `dms/ui/main_window.py`, `tests/test_export.py`, `tests/test_main_window_variation_export.py`, `dms/version.py`, `README.md`, `IMPROVEMENTS-PLAN.md`.
+- Verification on 2026-06-06:
+  - `PYTHONPATH=. .venv/bin/pytest -q` -> `101 passed`
+  - `PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py` -> pass
 
 ## Assumptions
 

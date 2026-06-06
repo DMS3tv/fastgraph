@@ -53,7 +53,12 @@ from dms.audio_engine import (
     resolve_device_selection,
 )
 from dms.calibration import CalibrationStore
-from dms.export import build_filename, export_curve
+from dms.export import (
+    build_filename,
+    build_variation_filename,
+    export_curve,
+    export_variation,
+)
 from dms.hrtf import HRTFCurve
 from dms.measurement_alignment import (
     format_diagnostics_summary,
@@ -2200,6 +2205,7 @@ class MainWindow(QMainWindow):
         self._plots.clear_all()
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
+        self._sync_export_button()
         self._statusbar.showMessage("All measurements cleared.")
 
     def _undo_last_measurement(self) -> None:
@@ -2407,6 +2413,10 @@ class MainWindow(QMainWindow):
         return dbfs, spl, input_label
 
     def _export(self) -> None:
+        if self._bottom_view_mode() == "variation":
+            self._export_variation()
+            return
+
         curve = self._bottom_curve_for_display_and_export()
         if curve is None:
             QMessageBox.information(
@@ -2446,18 +2456,75 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=len(self._kept_curves),
             )
-            self._statusbar.showMessage(f"Exported: {path_str}")
+            self._statusbar.showMessage(f"Exported average: {path_str}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export Error", str(exc))
+
+    def _export_variation(self) -> None:
+        if self._variation is None:
+            QMessageBox.information(
+                self,
+                "Nothing to Export",
+                "No variation band available yet.",
+            )
+            return
+
+        compensated = self._is_hrtf_active()
+        filename = build_variation_filename(self._session, compensated=compensated)
+
+        default_dir = self._export_dir_input.text().strip() or str(
+            self._settings.get("export_directory") or ""
+        )
+        default_path = str(Path(default_dir) / filename) if default_dir else filename
+        path_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Variation",
+            default_path,
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not path_str:
+            return
+        export_dir = str(Path(path_str).parent)
+        self._export_dir_input.setText(export_dir)
+        self._settings.set("export_directory", export_dir)
+
+        freqs, p10, p25, p75, p90, median = self._variation
+        try:
+            export_variation(
+                freqs=freqs,
+                p10_db=p10,
+                p25_db=p25,
+                median_db=median,
+                p75_db=p75,
+                p90_db=p90,
+                session=self._session,
+                output_path=Path(path_str),
+                compensated=compensated,
+                hrtf=self._hrtf if compensated else None,
+                n_sweeps=len(self._kept_curves),
+                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+            )
+            self._statusbar.showMessage(f"Exported variation: {path_str}")
         except Exception as exc:
             QMessageBox.warning(self, "Export Error", str(exc))
 
     def _sync_export_button(self) -> None:
-        self._export_btn.setText("Export Average…")
-        self._export_btn.setToolTip(
-            "Export averaged FR as a REW-style TXT file (available in all bottom-view modes)."
-        )
-        enabled = self._state == AppState.IDLE and self._average is not None
-        self._export_btn.setEnabled(enabled)
-        self._upload_btn.setEnabled(enabled)
+        idle = self._state == AppState.IDLE
+        if self._bottom_view_mode() == "variation":
+            self._export_btn.setText("Export Variation…")
+            self._export_btn.setToolTip(
+                "Export the displayed variation band as percentile columns in a tab-delimited TXT file."
+            )
+            export_enabled = idle and self._variation is not None
+        else:
+            self._export_btn.setText("Export Average…")
+            self._export_btn.setToolTip(
+                "Export averaged FR as a REW-style TXT file."
+            )
+            export_enabled = idle and self._average is not None
+        upload_enabled = idle and self._average is not None
+        self._export_btn.setEnabled(export_enabled)
+        self._upload_btn.setEnabled(upload_enabled)
 
     def _squiglink_endpoint(self) -> tuple[str, int]:
         host = str(self._settings.get("squiglink_host") or "").strip()

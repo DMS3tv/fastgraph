@@ -4,6 +4,7 @@ Orchestrates: device selectors, level meter, dual plot, queue control,
 pass/fail UI, HRTF selector, settings/calibration, and export.
 """
 
+import sys
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional
@@ -50,6 +51,7 @@ from dms.audio_engine import (
     is_compatible_device_pair,
     is_windows_audio_host,
     preferred_windows_hostapi,
+    refresh_audio_backend,
     resolve_device_selection,
 )
 from dms.calibration import CalibrationStore
@@ -117,6 +119,8 @@ _DISPLAY_AVG_SMOOTHING = 48
 _METER_UPDATE_MS = 140
 _MAX_SWEEP_ATTEMPTS = 3
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
+ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+HRTF_DIR = ROOT_DIR / "HRTFs"
 
 
 class _SweepThread(QThread):
@@ -585,6 +589,7 @@ class MainWindow(QMainWindow):
         self._output_device_labels_by_index: dict[int, str] = {}
         self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
         self._last_measurement_diagnostics: Optional[object] = None
+        self._hrtf_options: list[tuple[str, str]] = []
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -744,9 +749,9 @@ class MainWindow(QMainWindow):
         )
         dev_layout.addWidget(self._advanced_windows_drivers_toggle)
 
-        refresh_btn = QPushButton("Refresh Devices")
-        refresh_btn.clicked.connect(self._refresh_devices)
-        dev_layout.addWidget(refresh_btn)
+        self._refresh_devices_btn = QPushButton("Refresh Devices")
+        self._refresh_devices_btn.clicked.connect(self._manual_refresh_devices)
+        dev_layout.addWidget(self._refresh_devices_btn)
 
         layout.addWidget(self._make_collapsible_section("Devices", dev_box))
 
@@ -802,17 +807,20 @@ class MainWindow(QMainWindow):
         self._queue_level_persist_toggle.stateChanged.connect(
             self._on_queue_level_persist_changed
         )
-        persist_layout = QVBoxLayout()
+        persist_layout = QHBoxLayout()
         persist_layout.setContentsMargins(0, 0, 0, 0)
-        persist_layout.setSpacing(2)
+        persist_layout.setSpacing(8)
         persist_layout.addWidget(
             self._queue_level_persist_toggle,
             0,
-            Qt.AlignmentFlag.AlignHCenter,
+            Qt.AlignmentFlag.AlignVCenter,
         )
         self._queue_level_persist_label = QLabel("Remember this level")
         self._queue_level_persist_label.setStyleSheet("color: #d8e0ec;")
-        self._queue_level_persist_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._queue_level_persist_label.setMinimumWidth(145)
+        self._queue_level_persist_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         persist_layout.addWidget(self._queue_level_persist_label)
         level_layout.addLayout(persist_layout)
         level_layout.addStretch(1)
@@ -868,19 +876,14 @@ class MainWindow(QMainWindow):
         bottom_hint.setStyleSheet("color: #91a2ba;")
         bottom_layout.addWidget(bottom_hint)
 
-        hrtf_btn_row = QHBoxLayout()
-        self._hrtf_load_btn = QPushButton("Load HRTF…")
-        self._hrtf_load_btn.clicked.connect(self._load_hrtf)
-        hrtf_btn_row.addWidget(self._hrtf_load_btn)
+        self._hrtf_combo = QComboBox()
+        self._hrtf_combo.currentIndexChanged.connect(self._on_hrtf_selected)
+        bottom_layout.addWidget(self._hrtf_combo)
 
-        self._hrtf_clear_btn = QPushButton("Clear")
-        self._hrtf_clear_btn.clicked.connect(self._clear_hrtf)
-        hrtf_btn_row.addWidget(self._hrtf_clear_btn)
-        bottom_layout.addLayout(hrtf_btn_row)
-
-        self._hrtf_label = QLabel("No HRTF loaded")
+        self._hrtf_label = QLabel("No HRTF selected")
         self._hrtf_label.setWordWrap(True)
         bottom_layout.addWidget(self._hrtf_label)
+        self._refresh_hrtf_options()
 
         layout.addWidget(
             self._make_collapsible_section("Bottom View", bottom_box, collapsed=True),
@@ -1197,27 +1200,70 @@ class MainWindow(QMainWindow):
         )
 
     def _restore_hrtf_state(self) -> None:
+        self._refresh_hrtf_options()
         path = self._settings.get("hrtf_path")
 
         if path:
+            built_in_paths = self._built_in_hrtf_paths()
             try:
-                self._hrtf = HRTFCurve(path)
+                resolved_path = str(Path(path).resolve())
             except Exception:
+                resolved_path = ""
+            if resolved_path not in built_in_paths:
                 self._hrtf = None
                 self._settings.set("hrtf_path", None)
+            else:
+                try:
+                    self._hrtf = HRTFCurve(path)
+                except Exception:
+                    self._hrtf = None
+                    self._settings.set("hrtf_path", None)
 
         self._sync_hrtf_ui()
+
+    def _refresh_hrtf_options(self) -> None:
+        self._hrtf_options = [("None", "")]
+        for path in sorted(HRTF_DIR.glob("*.txt")):
+            self._hrtf_options.append((path.stem, str(path)))
+
+        if not hasattr(self, "_hrtf_combo"):
+            return
+
+        current_path = self._hrtf.path if self._hrtf is not None else ""
+        self._hrtf_combo.blockSignals(True)
+        self._hrtf_combo.clear()
+        for label, value in self._hrtf_options:
+            self._hrtf_combo.addItem(label, value)
+        index = self._hrtf_combo.findData(current_path)
+        self._hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._hrtf_combo.blockSignals(False)
+
+    def _built_in_hrtf_paths(self) -> set[str]:
+        paths: set[str] = set()
+        for _label, value in self._hrtf_options:
+            if not value:
+                continue
+            try:
+                paths.add(str(Path(value).resolve()))
+            except Exception:
+                continue
+        return paths
 
     def _sync_hrtf_ui(self) -> None:
         has_hrtf = self._hrtf is not None
         self._hrtf_toggle.setEnabled(has_hrtf)
-        self._hrtf_clear_btn.setEnabled(has_hrtf)
 
         if has_hrtf:
             self._hrtf_label.setText(self._hrtf.path)
+            index = self._hrtf_combo.findData(self._hrtf.path)
         else:
-            self._hrtf_label.setText("No HRTF loaded")
+            self._hrtf_label.setText("No HRTF selected")
             self._hrtf_toggle.setChecked(False)
+            index = 0
+
+        self._hrtf_combo.blockSignals(True)
+        self._hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._hrtf_combo.blockSignals(False)
 
     def _refresh_devices(self) -> None:
         selected_out = (
@@ -1341,6 +1387,27 @@ class MainWindow(QMainWindow):
 
         self._apply_state_ui()
         self._start_level_monitor()
+
+    def _manual_refresh_devices(self) -> None:
+        previous_out = self._current_output_device()
+        previous_in = self._current_input_device()
+        previous_ch = self._current_input_channel()
+
+        self._level_monitor.stop()
+        refresh_audio_backend()
+        self._refresh_devices()
+
+        current_out = self._current_output_device()
+        current_in = self._current_input_device()
+        current_ch = self._current_input_channel()
+        if (
+            previous_out == current_out
+            and previous_in == current_in
+            and previous_ch == current_ch
+        ):
+            self._statusbar.showMessage("Audio devices refreshed.")
+        else:
+            self._statusbar.showMessage("Audio devices refreshed; selection changed.")
 
     def _refresh_channels(self, selected_ch: Optional[int] = None) -> None:
         input_device = self._current_input_device()
@@ -1570,9 +1637,7 @@ class MainWindow(QMainWindow):
             self._queue_level_persist_label,
             self._bluetooth_mode_toggle,
             self._variation_toggle,
-            self._hrtf_toggle,
-            self._hrtf_load_btn,
-            self._hrtf_clear_btn,
+            self._hrtf_combo,
             self._settings_btn,
             self._cal_btn,
             self._test_level_btn,
@@ -1581,9 +1646,11 @@ class MainWindow(QMainWindow):
             self._metadata_btn,
             self._clear_metadata_btn,
             self._advanced_windows_drivers_toggle,
+            self._refresh_devices_btn,
         ):
             widget.setEnabled(idle)
 
+        self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
         self._start_queue_btn.setEnabled(idle and device_ok)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
         self._undo_btn.setEnabled(idle and len(self._kept_curves) > 0)
@@ -2111,14 +2178,14 @@ class MainWindow(QMainWindow):
     def _on_bottom_view_changed(self, *_args) -> None:
         self._update_plots()
 
-    def _load_hrtf(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load HRTF TXT",
-            "",
-            "Text Files (*.txt);;All Files (*)",
-        )
+    def _on_hrtf_selected(self) -> None:
+        path = self._hrtf_combo.currentData()
         if not path:
+            self._hrtf = None
+            self._settings.set("hrtf_path", None)
+            self._sync_hrtf_ui()
+            self._update_plots()
+            self._statusbar.showMessage("HRTF cleared.")
             return
 
         try:
@@ -2130,13 +2197,10 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Loaded HRTF: {Path(path).name}")
         except Exception as exc:
             QMessageBox.warning(self, "HRTF Load Error", str(exc))
-
-    def _clear_hrtf(self) -> None:
-        self._hrtf = None
-        self._settings.set("hrtf_path", None)
-        self._sync_hrtf_ui()
-        self._update_plots()
-        self._statusbar.showMessage("HRTF cleared.")
+            self._hrtf = None
+            self._settings.set("hrtf_path", None)
+            self._sync_hrtf_ui()
+            self._update_plots()
 
     def _import_dropped_measurement_files(self, paths: list[str]) -> None:
         if self._state != AppState.IDLE:

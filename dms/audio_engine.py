@@ -37,6 +37,20 @@ def is_windows_audio_host() -> bool:
     return os.name == "nt"
 
 
+def refresh_audio_backend() -> bool:
+    """Force PortAudio to rebuild device/session state when supported."""
+    try:
+        terminate = getattr(sd, "_terminate", None)
+        initialize = getattr(sd, "_initialize", None)
+        if not callable(terminate) or not callable(initialize):
+            return False
+        terminate()
+        initialize()
+        return True
+    except Exception:
+        return False
+
+
 def _hostapi_names() -> dict[int, str]:
     try:
         return {

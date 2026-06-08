@@ -31,6 +31,14 @@ class _Status:
         self.messages.append(message)
 
 
+class _LevelMonitor:
+    def __init__(self) -> None:
+        self.stop_count = 0
+
+    def stop(self) -> None:
+        self.stop_count += 1
+
+
 class _Harness:
     _current_output_device = MainWindow._current_output_device
     _current_input_device = MainWindow._current_input_device
@@ -48,6 +56,7 @@ class _Harness:
     _sync_windows_output_to_input = MainWindow._sync_windows_output_to_input
     _sweep_latency_mode = MainWindow._sweep_latency_mode
     _refresh_devices = MainWindow._refresh_devices
+    _manual_refresh_devices = MainWindow._manual_refresh_devices
     _refresh_channels = MainWindow._refresh_channels
     _start_queue = MainWindow._start_queue
 
@@ -69,6 +78,7 @@ class _Harness:
         self._output_device_labels_by_index = {}
         self._last_output_devices = []
         self._last_input_devices = []
+        self._level_monitor = _LevelMonitor()
         self.apply_count = 0
         self.monitor_count = 0
         self.start_next_sweep_count = 0
@@ -335,3 +345,142 @@ def test_non_windows_latency_behavior_is_unchanged(monkeypatch) -> None:
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
 
     assert harness._sweep_latency_mode() == "low"
+
+
+def test_manual_refresh_reinitializes_backend_before_enumerating(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    refreshed_outputs = [
+        {
+            "index": 9,
+            "name": "Fresh Out",
+            "hostapi": 2,
+            "hostapi_name": "Windows WASAPI",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        }
+    ]
+    refreshed_inputs = [
+        {
+            "index": 10,
+            "name": "Fresh In",
+            "hostapi": 2,
+            "hostapi_name": "Windows WASAPI",
+            "max_input_channels": 2,
+            "max_output_channels": 0,
+        }
+    ]
+    current = {"outputs": outputs, "inputs": inputs}
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": False,
+        }
+    )
+    harness = _Harness(settings)
+    calls: list[str] = []
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+    monkeypatch.setattr(
+        "dms.ui.main_window.get_output_devices",
+        lambda: calls.append("outputs") or current["outputs"],
+    )
+    monkeypatch.setattr(
+        "dms.ui.main_window.get_input_devices",
+        lambda: calls.append("inputs") or current["inputs"],
+    )
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+
+    def refresh_backend() -> bool:
+        calls.append("backend")
+        current["outputs"] = refreshed_outputs
+        current["inputs"] = refreshed_inputs
+        return True
+
+    monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", refresh_backend)
+
+    harness._refresh_devices()
+    calls.clear()
+    harness._manual_refresh_devices()
+
+    assert calls[:3] == ["backend", "outputs", "inputs"]
+    assert harness._out_dev_combo.currentData() == 9
+    assert harness._in_dev_combo.currentData() == 10
+    assert harness._level_monitor.stop_count == 1
+    assert harness.monitor_count == 2
+    assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."
+
+
+def test_manual_refresh_preserves_valid_device_selection(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 1,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+    monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", lambda: True)
+
+    harness._refresh_devices()
+    harness._ch_combo.setCurrentIndex(1)
+    settings.set("input_channel", 1)
+    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
+    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(17))
+    settings.set("output_device", harness._current_output_device_setting())
+    settings.set("input_device", harness._current_input_device_setting())
+
+    harness._manual_refresh_devices()
+
+    assert harness._out_dev_combo.currentData() == 6
+    assert harness._in_dev_combo.currentData() == 17
+    assert harness._current_input_channel() == 1
+    assert harness._statusbar.messages[-1] == "Audio devices refreshed."
+
+
+def test_manual_refresh_falls_back_when_selected_device_disappears(monkeypatch) -> None:
+    _app()
+    outputs, inputs = _devices()
+    current = {"outputs": outputs, "inputs": inputs}
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: current["outputs"])
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: current["inputs"])
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+
+    def refresh_backend() -> bool:
+        current["outputs"] = [outputs[0]]
+        current["inputs"] = [inputs[2]]
+        return True
+
+    monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", refresh_backend)
+
+    harness._refresh_devices()
+    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
+    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(17))
+    settings.set("output_device", harness._current_output_device_setting())
+    settings.set("input_device", harness._current_input_device_setting())
+
+    harness._manual_refresh_devices()
+
+    assert harness._out_dev_combo.currentData() == 5
+    assert harness._in_dev_combo.currentData() == 43
+    assert settings.data["output_device"]["index"] == 5
+    assert settings.data["input_device"]["index"] == 43
+    assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."

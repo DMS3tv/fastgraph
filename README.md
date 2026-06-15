@@ -1,5 +1,10 @@
 # DMS Fastgraph
 
+> **ASIO notice:** ASIO support is currently experimental and may have device
+> enumeration, channel pairing, or recording issues with some drivers. For
+> reliable measurements, use WASAPI on Windows unless you have verified your
+> ASIO setup locally.
+
 DMS Fastgraph is a PyQt6 desktop app for headphone frequency-response
 measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
@@ -91,6 +96,7 @@ CoreAudio is used automatically. No extra steps.
 WASAPI is preferred for normal measurements. The app hides advanced Windows
 driver entries by default, can reveal them with the `Advanced Windows Drivers`
 toggle, and blocks mismatched input/output host APIs before queue start.
+ASIO support is experimental and may not behave reliably across all drivers.
 
 If timing is unstable, use matched input/output devices on the same backend and
 try high latency mode.

@@ -5,3 +5,5 @@ scipy>=1.10.0
 sounddevice==0.4.6
 paramiko>=3.4.0
 cryptography>=42.0.0
+pyopengl>=3.1.10
+pyopengl_accelerate>=3.1.10

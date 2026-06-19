@@ -110,7 +110,7 @@ class SessionDialog(QDialog):
         outer.addWidget(scroll, 1)
 
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #ff6666;")
+        self._status.setProperty("tone", "error")
         outer.addWidget(self._status)
 
         btns = QDialogButtonBox(

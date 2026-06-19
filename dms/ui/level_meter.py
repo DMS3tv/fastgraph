@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QPainter, QColor, QLinearGradient
+from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QPalette
 from PyQt6.QtCore import Qt, QRect, pyqtSlot
 
 
@@ -57,7 +57,8 @@ class LevelMeterWidget(QWidget):
         padding = 3
 
         # Background
-        painter.fillRect(0, 0, w, h, QColor("#111"))
+        palette = self.palette()
+        painter.fillRect(0, 0, w, h, palette.color(QPalette.ColorRole.AlternateBase))
 
         bar_w = w - 2 * padding
         bar_h = h - 2 * padding
@@ -90,13 +91,13 @@ class LevelMeterWidget(QWidget):
             painter.fillRect(fill_rect, grad)
 
             peak_x = db_to_x(self._peak_db)
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(palette.color(QPalette.ColorRole.WindowText))
             painter.drawLine(peak_x, bar_y, peak_x, bar_y + bar_h - 1)
 
             if self._level_db >= -0.5:
                 painter.fillRect(bar_x + bar_w - 4, bar_y, 4, bar_h, QColor("#ff0000"))
 
-            painter.setPen(QColor("#555"))
+            painter.setPen(palette.color(QPalette.ColorRole.Mid))
             for mark_db in [-48, -36, -24, -12, -3]:
                 mx = db_to_x(float(mark_db))
                 painter.drawLine(mx, bar_y, mx, bar_y + bar_h)
@@ -106,13 +107,13 @@ class LevelMeterWidget(QWidget):
             painter.fillRect(fill_rect, grad)
 
             peak_y = db_to_y(self._peak_db)
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(palette.color(QPalette.ColorRole.WindowText))
             painter.drawLine(bar_x, peak_y, bar_x + bar_w - 1, peak_y)
 
             if self._level_db >= -0.5:
                 painter.fillRect(bar_x, bar_y, bar_w, 4, QColor("#ff0000"))
 
-            painter.setPen(QColor("#555"))
+            painter.setPen(palette.color(QPalette.ColorRole.Mid))
             for mark_db in [-48, -36, -24, -12, -3]:
                 my = db_to_y(float(mark_db))
                 painter.drawLine(bar_x, my, bar_x + bar_w, my)

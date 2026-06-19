@@ -5,6 +5,7 @@ pass/fail UI, HRTF selector, settings/calibration, and export.
 """
 
 import sys
+import shlex
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional
@@ -33,9 +34,11 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStatusBar,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QApplication,
 )
 
 from dms.audio_engine import (
@@ -55,6 +58,7 @@ from dms.audio_engine import (
     resolve_device_selection,
 )
 from dms.calibration import CalibrationStore
+from dms.console import ConsoleEventStore
 from dms.export import (
     build_filename,
     build_variation_filename,
@@ -95,14 +99,16 @@ from dms.squiglink import (
     upload_export_sftp,
     write_remote_phone_book,
 )
+from dms.theme import DARK, LIGHT, ThemeController
 from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
+from dms.ui.console_widget import ConsoleWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.session_dialog import SessionDialog
 from dms.ui.settings_dialog import SettingsDialog
-from dms.ui.toggle_switch import ToggleSwitch
+from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
 
 class AppState:
@@ -121,6 +127,39 @@ _MAX_SWEEP_ATTEMPTS = 3
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 HRTF_DIR = ROOT_DIR / "HRTFs"
+
+_CONSOLE_SETTING_SPECS = {
+    "sweep_duration": ("float", 0.5, 30.0),
+    "sample_rate": ("choice", {44100, 48000, 88200, 96000, 192000}),
+    "buffer_size": ("choice", {64, 128, 256, 512, 1024, 2048, 4096}),
+    "pre_sweep_silence": ("float", 0.05, 2.0),
+    "post_sweep_silence": ("float", 0.1, 3.0),
+    "latency": ("choice", {"low", "high"}),
+    "start_alignment_confidence_min": ("float", 2.0, 30.0),
+    "end_marker_confidence_min": ("float", 2.0, 30.0),
+    "timing_drift_max_ms": ("float", 5.0, 250.0),
+    "bluetooth_mode": ("bool",),
+    "queue_count": ("int", 1, 100),
+    "output_level": ("float", -120.0, 0.0),
+}
+
+_CONSOLE_SETTING_KEYS = {
+    "bluetooth_mode": "bluetooth_headphone_mode",
+    "output_level": "queue_output_level_db",
+}
+
+
+class _EventStatusBar(QStatusBar):
+    def __init__(self, events: ConsoleEventStore, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._events = events
+
+    def showMessage(self, message: str, timeout: int = 0) -> None:
+        super().showMessage(message, timeout)
+        severity = "WARNING" if any(
+            word in message.lower() for word in ("failed", "error", "warning", "aborted", "canceled", "unavailable")
+        ) else "INFO"
+        self._events.publish(severity, "status", message)
 
 
 class _SweepThread(QThread):
@@ -175,7 +214,7 @@ class TestLevelDialog(QDialog):
 
         self._hint_label = QLabel("")
         self._hint_label.setWordWrap(True)
-        self._hint_label.setStyleSheet("color: #8ea1b7;")
+        self._hint_label.setProperty("tone", "muted")
         if self._calibrated:
             self._hint_label.setText("SPL is calibrated for this input device.")
         else:
@@ -256,7 +295,7 @@ class PassFailDialog(QDialog):
             "The latest sweep is shown in teal in the top plot while you decide."
         )
         detail.setWordWrap(True)
-        detail.setStyleSheet("color: #888;")
+        detail.setProperty("tone", "muted")
         layout.addWidget(detail)
 
         if timing_quality is not None:
@@ -270,13 +309,7 @@ class PassFailDialog(QDialog):
                 else None
             )
             timing_box = QFrame()
-            timing_box.setStyleSheet(
-                "QFrame {"
-                " border: 1px solid #3a4a5c;"
-                " border-radius: 6px;"
-                " background-color: rgba(90, 120, 160, 0.12);"
-                "}"
-            )
+            timing_box.setObjectName("diagnostic_box")
             timing_box_layout = QVBoxLayout(timing_box)
             timing_box_layout.setContentsMargins(10, 8, 10, 8)
             timing_box_layout.setSpacing(4)
@@ -293,12 +326,12 @@ class PassFailDialog(QDialog):
                 )
             timing = QLabel(quality_text)
             timing.setWordWrap(True)
-            timing.setStyleSheet("color: #9fb7d1;")
+            timing.setProperty("tone", "muted")
             timing_box_layout.addWidget(timing)
             if warning_message:
                 warning = QLabel(f"Bluetooth timing marginal - {warning_message}")
                 warning.setWordWrap(True)
-                warning.setStyleSheet("color: #d9b35f;")
+                warning.setProperty("tone", "warning")
                 timing_box_layout.addWidget(warning)
             if bluetooth_mode:
                 timing_box.setToolTip(
@@ -341,18 +374,9 @@ class PassFailDialog(QDialog):
             layout.addWidget(details_toggle)
 
             details = QLabel(format_diagnostics_summary(diagnostics))
+            details.setObjectName("diagnostic_details")
             details.setWordWrap(True)
             details.setVisible(False)
-            details.setStyleSheet(
-                "QLabel {"
-                " color: #9fb7d1;"
-                " background-color: rgba(40, 55, 75, 0.35);"
-                " border: 1px solid #33475f;"
-                " border-radius: 6px;"
-                " padding: 8px;"
-                " font-family: monospace;"
-                "}"
-            )
             layout.addWidget(details)
             details_toggle.toggled.connect(details.setVisible)
             details_toggle.toggled.connect(lambda _checked: self.adjustSize())
@@ -362,32 +386,12 @@ class PassFailDialog(QDialog):
 
         keep_btn = QPushButton("Keep")
         keep_btn.setDefault(True)
-        keep_btn.setStyleSheet(
-            "QPushButton {"
-            " background-color: #1f7a3f;"
-            " color: white;"
-            " border: 1px solid #2ca85a;"
-            " border-radius: 6px;"
-            " padding: 8px 16px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #24914a; }"
-        )
+        keep_btn.setObjectName("btn_keep")
         keep_btn.clicked.connect(self._accept_keep)
         button_row.addWidget(keep_btn)
 
         fail_btn = QPushButton("Fail / Redo")
-        fail_btn.setStyleSheet(
-            "QPushButton {"
-            " background-color: #8d2b2b;"
-            " color: white;"
-            " border: 1px solid #b63b3b;"
-            " border-radius: 6px;"
-            " padding: 8px 16px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #a73333; }"
-        )
+        fail_btn.setObjectName("btn_fail")
         fail_btn.clicked.connect(self._accept_fail)
         button_row.addWidget(fail_btn)
 
@@ -454,7 +458,7 @@ class SquiglinkAuthDialog(QDialog):
         layout.addWidget(self._name_modifier)
 
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #ff8888;")
+        self._status.setProperty("tone", "error")
         layout.addWidget(self._status)
 
         btn_row = QHBoxLayout()
@@ -519,7 +523,7 @@ class SquiglinkUploadMetadataDialog(QDialog):
         layout.addLayout(form)
 
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #ff8888;")
+        self._status.setProperty("tone", "error")
         layout.addWidget(self._status)
 
         btn_row = QHBoxLayout()
@@ -555,10 +559,22 @@ class SquiglinkUploadMetadataDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, session: SessionData, settings: SettingsManager) -> None:
+    def __init__(
+        self,
+        session: SessionData,
+        settings: SettingsManager,
+        theme_controller: Optional[ThemeController] = None,
+    ) -> None:
         super().__init__()
         self._session = session
         self._settings = settings
+        if theme_controller is None:
+            app = QApplication.instance()
+            if app is None:
+                raise RuntimeError("QApplication must exist before MainWindow")
+            theme_controller = ThemeController(app, settings)
+        self._theme_controller = theme_controller
+        self._theme_controller.theme_changed.connect(self._on_theme_changed)
         self._cal_store = CalibrationStore()
 
         self._state = AppState.IDLE
@@ -590,6 +606,7 @@ class MainWindow(QMainWindow):
         self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
         self._last_measurement_diagnostics: Optional[object] = None
         self._hrtf_options: list[tuple[str, str]] = []
+        self._console_events = ConsoleEventStore(parent=self)
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -599,6 +616,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1100, 700)
 
         self._build_ui()
+        self._on_theme_changed(self._theme_controller.theme, log=False)
         if bool(self._settings.get("bluetooth_headphone_mode")):
             self._apply_bluetooth_headphone_mode_settings(
                 notify=False,
@@ -609,6 +627,7 @@ class MainWindow(QMainWindow):
         self._start_level_monitor()
         self._apply_state_ui()
         self._start_update_check()
+        self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -619,8 +638,11 @@ class MainWindow(QMainWindow):
         self._device_check_timer.start(1500)
 
     def _build_ui(self) -> None:
+        self._tabs = QTabWidget()
+        self.setCentralWidget(self._tabs)
+
         central = QWidget()
-        self.setCentralWidget(central)
+        self._tabs.addTab(central, "Measure")
 
         root = QHBoxLayout(central)
         root.setContentsMargins(8, 8, 8, 8)
@@ -641,28 +663,21 @@ class MainWindow(QMainWindow):
         controls_scroll.setWidget(self._build_control_panel())
         root.addWidget(controls_scroll, 0)
 
-        self._statusbar = QStatusBar()
+        self._console_widget = ConsoleWidget(self._console_events)
+        self._console_widget.command_submitted.connect(self._run_console_command)
+        self._tabs.addTab(self._console_widget, "Console")
+
+        self._statusbar = _EventStatusBar(self._console_events, self)
         self.setStatusBar(self._statusbar)
         self._statusbar.showMessage("Ready.")
         self._version_label = QLabel(f"v{__version__}")
-        self._version_label.setStyleSheet("color: #8b95a6; font-size: 11px;")
+        self._version_label.setProperty("tone", "muted")
         self._version_label.setToolTip("DMS Fastgraph version")
         self._statusbar.addPermanentWidget(self._version_label)
         self._feedback_btn = QPushButton("Report Bugs / Feedback")
+        self._feedback_btn.setObjectName("btn_feedback")
         self._feedback_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._feedback_btn.setToolTip("Open feedback form")
-        self._feedback_btn.setStyleSheet(
-            "QPushButton {"
-            " background-color: #6f1f1f;"
-            " color: #ffd7d7;"
-            " border: 1px solid #a63b3b;"
-            " border-radius: 10px;"
-            " padding: 2px 10px;"
-            " font-size: 11px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #822727; }"
-        )
         self._feedback_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(
                 QUrl(
@@ -671,7 +686,298 @@ class MainWindow(QMainWindow):
             )
         )
         self._statusbar.addPermanentWidget(self._feedback_btn)
+        self._theme_toggle = ThemeToggleWidget(
+            dark=self._theme_controller.theme == DARK,
+            parent=self,
+        )
+        self._theme_toggle.toggled.connect(self._on_theme_toggled)
+        self._statusbar.addPermanentWidget(self._theme_toggle)
         self._build_update_indicator()
+
+    def _on_theme_toggled(self, dark: bool) -> None:
+        self._theme_controller.set_theme(DARK if dark else LIGHT)
+
+    def _on_theme_changed(self, theme: str, log: bool = True) -> None:
+        toggle = getattr(self, "_theme_toggle", None)
+        if toggle is not None:
+            toggle.set_dark(theme == DARK)
+        plots = getattr(self, "_plots", None)
+        if plots is not None:
+            plots.apply_theme(theme)
+        meter = getattr(self, "_level_meter", None)
+        if meter is not None:
+            meter.update()
+        if log and hasattr(self, "_console_events"):
+            self._log_event("INFO", "theme", "Application theme changed", theme=theme)
+
+    def _log_event(self, severity: str, source: str, message: str, **details) -> None:
+        self._console_events.publish(severity, source, message, details)
+
+    def _command_reply(self, message: str, error: bool = False) -> None:
+        self._log_event("ERROR" if error else "INFO", "console", message)
+
+    def _run_console_command(self, command: str) -> None:
+        echo = command
+        if any(word in command.lower() for word in ("password", "credential", "secret", "token")):
+            echo = "<redacted command>"
+        self._log_event("COMMAND", "console", f"> {echo}")
+        try:
+            args = shlex.split(command)
+        except ValueError as exc:
+            self._command_reply(f"Parse error: {exc}", error=True)
+            return
+        if not args:
+            return
+        args[0] = args[0].lower()
+        try:
+            if args == ["help"]:
+                self._command_reply(self._console_help())
+            elif args == ["clear"]:
+                self._console_events.clear()
+                self._command_reply("Console cleared.")
+            elif args == ["status"]:
+                self._command_reply(self._console_status())
+            elif args == ["devices"]:
+                self._command_reply(self._console_devices())
+            elif args[0] == "settings":
+                self._run_settings_command(args[1:])
+            elif args == ["diagnostics", "last"]:
+                if self._last_measurement_diagnostics is None:
+                    self._command_reply("No measurement diagnostics are available yet.")
+                else:
+                    self._command_reply(format_diagnostics_summary(self._last_measurement_diagnostics))
+            elif args[0] == "measure":
+                self._run_measure_command(args[1:])
+            elif args[0] == "export":
+                self._run_export_command(args[1:])
+            else:
+                self._command_reply("Unknown command. Type 'help' for available commands.", error=True)
+        except Exception as exc:
+            self._command_reply(f"Command failed: {exc}", error=True)
+
+    @staticmethod
+    def _console_help() -> str:
+        return "\n".join((
+            "Commands:",
+            "  help | clear | status | devices | diagnostics last",
+            "  settings list | settings get <name> | settings set <name> <value>",
+            "  settings save [<name>|all]",
+            "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
+            "  export average [path] | export variation [path] | export squiglink | export log [path]",
+        ))
+
+    def _console_status(self) -> str:
+        return "\n".join((
+            f"State: {self._state}",
+            f"Queue: {self._queue_index}/{self._queue_target or 0}",
+            f"Kept curves: {len(self._kept_curves)}",
+            f"Output: {self._current_output_device_label() or 'none'}",
+            f"Input: {self._current_input_device_label() or 'none'} / channel {self._current_input_channel() + 1}",
+            f"Bluetooth mode: {bool(self._settings.get('bluetooth_headphone_mode'))}",
+            f"Sweep: {self._settings.get('sweep_duration')} s @ {self._settings.get('sample_rate')} Hz, buffer {self._settings.get('buffer_size')}",
+        ))
+
+    def _console_devices(self) -> str:
+        output_lines = ["Output devices:"]
+        for index, label in self._output_device_labels_by_index.items():
+            marker = "*" if index == self._current_output_device() else " "
+            output_lines.append(f" {marker} [{index}] {label}")
+        input_lines = ["Input devices:"]
+        for index, label in self._input_device_labels_by_index.items():
+            marker = "*" if index == self._current_input_device() else " "
+            input_lines.append(f" {marker} [{index}] {label}")
+        if len(output_lines) == 1:
+            output_lines.append("   none")
+        if len(input_lines) == 1:
+            input_lines.append("   none")
+        return "\n".join(output_lines + input_lines)
+
+    def _run_settings_command(self, args: list[str]) -> None:
+        if args == ["list"]:
+            overrides = self._settings.session_overrides()
+            lines = []
+            for name in _CONSOLE_SETTING_SPECS:
+                key = _CONSOLE_SETTING_KEYS.get(name, name)
+                suffix = " (session)" if key in overrides else ""
+                value = self._queue_level_spin.value() if name == "output_level" else self._settings.get(key)
+                lines.append(f"{name} = {value}{suffix}")
+            self._command_reply("\n".join(lines))
+            return
+        if len(args) == 2 and args[0] == "get":
+            name = args[1].lower()
+            if name not in _CONSOLE_SETTING_SPECS:
+                raise ValueError(f"Unknown editable setting: {name}")
+            key = _CONSOLE_SETTING_KEYS.get(name, name)
+            value = self._queue_level_spin.value() if name == "output_level" else self._settings.get(key)
+            session = " (session)" if key in self._settings.session_overrides() else ""
+            self._command_reply(f"{name} = {value}{session}")
+            return
+        if len(args) == 3 and args[0] == "set":
+            if self._state != AppState.IDLE:
+                raise ValueError("Settings can only be changed while idle.")
+            name = args[1].lower()
+            value = self._parse_console_setting(name, args[2])
+            self._set_console_setting(name, value)
+            self._command_reply(f"Session setting applied: {name} = {value}")
+            self._log_event("INFO", "settings", "Session setting changed", name=name, value=value)
+            return
+        if args and args[0] == "save" and len(args) <= 2:
+            requested = args[1].lower() if len(args) == 2 else "all"
+            if requested == "all":
+                saved = self._settings.save_session()
+            else:
+                if requested not in _CONSOLE_SETTING_SPECS:
+                    raise ValueError(f"Unknown editable setting: {requested}")
+                if requested == "bluetooth_mode":
+                    bluetooth_keys = [
+                        "bluetooth_headphone_mode",
+                        PROFILE_SNAPSHOT_SETTING,
+                        *bluetooth_profile_updates().keys(),
+                    ]
+                    saved = []
+                    for key in bluetooth_keys:
+                        saved.extend(self._settings.save_session(key))
+                else:
+                    saved = self._settings.save_session(_CONSOLE_SETTING_KEYS.get(requested, requested))
+            if not saved:
+                self._command_reply("No matching session overrides to save.")
+            else:
+                if "queue_output_level_db" in saved:
+                    self._settings.set("queue_output_level_persist", True)
+                    self._queue_level_persist_toggle.blockSignals(True)
+                    self._queue_level_persist_toggle.setChecked(True)
+                    self._queue_level_persist_toggle.blockSignals(False)
+                self._command_reply("Saved settings: " + ", ".join(saved))
+                self._log_event("INFO", "settings", "Session settings persisted", keys=saved)
+            return
+        raise ValueError("Usage: settings list|get <name>|set <name> <value>|save [<name>|all]")
+
+    @staticmethod
+    def _parse_console_setting(name: str, raw: str):
+        if name not in _CONSOLE_SETTING_SPECS:
+            raise ValueError(f"Unknown editable setting: {name}")
+        spec = _CONSOLE_SETTING_SPECS[name]
+        kind = spec[0]
+        if kind == "bool":
+            lowered = raw.lower()
+            if lowered not in {"true", "false", "on", "off", "1", "0"}:
+                raise ValueError(f"{name} expects true or false")
+            return lowered in {"true", "on", "1"}
+        if kind == "choice":
+            choices = spec[1]
+            value = int(raw) if all(isinstance(item, int) for item in choices) else raw.lower()
+            if value not in choices:
+                raise ValueError(f"{name} must be one of: {', '.join(map(str, sorted(choices)))}")
+            return value
+        value = int(raw) if kind == "int" else float(raw)
+        if value < spec[1] or value > spec[2]:
+            raise ValueError(f"{name} must be between {spec[1]} and {spec[2]}")
+        return value
+
+    def _set_console_setting(self, name: str, value) -> None:
+        key = _CONSOLE_SETTING_KEYS.get(name, name)
+        if name == "bluetooth_mode":
+            self._set_console_bluetooth_mode(bool(value))
+            return
+        self._settings.set_session(key, value)
+        if name == "queue_count":
+            self._queue_n_spin.blockSignals(True)
+            self._queue_n_spin.setValue(int(value))
+            self._queue_n_spin.blockSignals(False)
+        elif name == "output_level":
+            self._queue_level_spin.blockSignals(True)
+            self._queue_level_spin.setValue(float(value))
+            self._queue_level_spin.blockSignals(False)
+        if name in {"sample_rate", "buffer_size"}:
+            self._start_level_monitor()
+
+    def _set_console_bluetooth_mode(self, enabled: bool) -> None:
+        current = bool(self._settings.get("bluetooth_headphone_mode"))
+        if enabled == current:
+            self._settings.set_session("bluetooth_headphone_mode", enabled)
+        elif enabled:
+            updates = bluetooth_profile_updates()
+            self._console_bt_snapshot = {key: self._settings.get(key) for key in updates}
+            self._settings.set_session("bluetooth_headphone_mode", True)
+            self._settings.set_session(
+                PROFILE_SNAPSHOT_SETTING,
+                snapshot_measurement_profile(self._console_bt_snapshot),
+            )
+            for key, value in updates.items():
+                self._settings.set_session(key, value)
+        else:
+            self._settings.set_session("bluetooth_headphone_mode", False)
+            for key, value in getattr(self, "_console_bt_snapshot", {}).items():
+                self._settings.set_session(key, value)
+            self._settings.set_session(PROFILE_SNAPSHOT_SETTING, None)
+        self._bluetooth_mode_toggle.blockSignals(True)
+        self._bluetooth_mode_toggle.setChecked(enabled)
+        self._bluetooth_mode_toggle.blockSignals(False)
+
+    def _run_measure_command(self, args: list[str]) -> None:
+        if args and args[0] == "start" and len(args) <= 3:
+            if self._state != AppState.IDLE:
+                raise ValueError("A measurement can only be started while idle.")
+            if len(args) >= 2:
+                count = self._parse_console_setting("queue_count", args[1])
+                self._settings.set_session("queue_count", count)
+                self._queue_n_spin.blockSignals(True)
+                self._queue_n_spin.setValue(int(count))
+                self._queue_n_spin.blockSignals(False)
+            if len(args) == 3:
+                level = self._parse_console_setting("output_level", args[2])
+                self._settings.set_session("queue_output_level_db", level)
+                self._queue_level_spin.blockSignals(True)
+                self._queue_level_spin.setValue(float(level))
+                self._queue_level_spin.blockSignals(False)
+            self._start_queue()
+            return
+        if args == ["pass"]:
+            if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+                raise ValueError("There is no measurement awaiting review.")
+            self._log_event("INFO", "review", "Measurement passed from console")
+            self._on_keep()
+            return
+        if args == ["fail"]:
+            if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+                raise ValueError("There is no measurement awaiting review.")
+            self._log_event("WARNING", "review", "Measurement failed from console")
+            self._on_fail()
+            return
+        if args == ["cancel"]:
+            if self._state == AppState.IDLE and not self._queue_active():
+                raise ValueError("There is no active measurement queue to cancel.")
+            self._cancel_queue()
+            return
+        raise ValueError("Usage: measure start [count] [level_db]|pass|fail|cancel")
+
+    def _run_export_command(self, args: list[str]) -> None:
+        if not args:
+            raise ValueError("Usage: export average|variation|squiglink|log [path]")
+        kind = args[0].lower()
+        path = args[1] if len(args) == 2 else None
+        if len(args) > 2:
+            raise ValueError("Export paths containing spaces must be quoted.")
+        if kind == "average":
+            if self._state != AppState.IDLE:
+                raise ValueError("Average export is only available while idle.")
+            if self._bottom_curve_for_display_and_export() is None:
+                raise ValueError("No averaged curve is available yet.")
+            self._export_average(path)
+        elif kind == "variation":
+            if self._state != AppState.IDLE:
+                raise ValueError("Variation export is only available while idle.")
+            if self._variation is None:
+                raise ValueError("No variation band is available yet.")
+            self._export_variation(path)
+        elif kind == "squiglink" and path is None:
+            if self._state != AppState.IDLE:
+                raise ValueError("Squiglink upload is only available while idle.")
+            self._upload_to_squiglink()
+        elif kind == "log":
+            self._export_console_log(path)
+        else:
+            raise ValueError("Usage: export average|variation|squiglink|log [path]")
 
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
@@ -693,7 +999,7 @@ class MainWindow(QMainWindow):
             "Applies safer timing settings for Bluetooth latency/jitter paths."
         )
         bt_hint.setWordWrap(True)
-        bt_hint.setStyleSheet("color: #91a2ba;")
+        bt_hint.setProperty("tone", "muted")
         bt_mode_layout.addWidget(bt_hint)
         layout.addWidget(bt_mode_box)
 
@@ -775,19 +1081,20 @@ class MainWindow(QMainWindow):
 
         n_layout = QHBoxLayout()
         n_label = QLabel("Number of measurements:")
-        n_label.setStyleSheet("font-weight: 600; color: #9ad3f6;")
+        n_label.setProperty("tone", "accent")
         n_layout.addWidget(n_label)
         self._queue_n_spin = QSpinBox()
         self._queue_n_spin.setObjectName("queue_count_spin")
         self._queue_n_spin.setRange(1, 100)
         self._queue_n_spin.setValue(int(self._settings.get("queue_count") or 5))
         self._queue_n_spin.setFixedWidth(110)
+        self._queue_n_spin.valueChanged.connect(self._on_queue_count_changed)
         n_layout.addWidget(self._queue_n_spin)
         queue_layout.addLayout(n_layout)
 
         level_layout = QHBoxLayout()
         level_label = QLabel("Output level:")
-        level_label.setStyleSheet("font-weight: 600; color: #9ad3f6;")
+        level_label.setProperty("tone", "accent")
         level_layout.addWidget(level_label)
         self._queue_level_spin = QDoubleSpinBox()
         self._queue_level_spin.setRange(-120.0, 0.0)
@@ -816,7 +1123,6 @@ class MainWindow(QMainWindow):
             Qt.AlignmentFlag.AlignVCenter,
         )
         self._queue_level_persist_label = QLabel("Remember this level")
-        self._queue_level_persist_label.setStyleSheet("color: #d8e0ec;")
         self._queue_level_persist_label.setMinimumWidth(145)
         self._queue_level_persist_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -855,7 +1161,7 @@ class MainWindow(QMainWindow):
             "After each sweep, pass/fail opens in a review popup."
         )
         self._queue_hint_label.setWordWrap(True)
-        self._queue_hint_label.setStyleSheet("color: #888;")
+        self._queue_hint_label.setProperty("tone", "muted")
         queue_layout.addWidget(self._queue_hint_label)
 
         layout.addWidget(self._make_collapsible_section("Queue", queue_box))
@@ -873,7 +1179,7 @@ class MainWindow(QMainWindow):
 
         bottom_hint = QLabel("Variation shows confidence-style spread of kept measurements.")
         bottom_hint.setWordWrap(True)
-        bottom_hint.setStyleSheet("color: #91a2ba;")
+        bottom_hint.setProperty("tone", "muted")
         bottom_layout.addWidget(bottom_hint)
 
         self._hrtf_combo = QComboBox()
@@ -935,44 +1241,14 @@ class MainWindow(QMainWindow):
         export_layout.addLayout(export_dir_row)
 
         export_btn = QPushButton("Export Average…")
+        export_btn.setObjectName("btn_export")
         export_btn.clicked.connect(self._export)
-        export_btn.setStyleSheet(
-            "QPushButton {"
-            " background-color: #b98616;"
-            " color: white;"
-            " border: 1px solid #d7a52d;"
-            " border-radius: 6px;"
-            " padding: 8px 14px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #cf981e; }"
-            "QPushButton:disabled {"
-            " background-color: #5b4a22;"
-            " color: #b9b0a0;"
-            " border: 1px solid #6b5a31;"
-            "}"
-        )
         export_layout.addWidget(export_btn)
         self._export_btn = export_btn
 
         self._upload_btn = QPushButton("Upload to Squiglink")
+        self._upload_btn.setObjectName("btn_upload")
         self._upload_btn.clicked.connect(self._upload_to_squiglink)
-        self._upload_btn.setStyleSheet(
-            "QPushButton {"
-            " background-color: #1d5e33;"
-            " color: #d7ffe3;"
-            " border: 1px solid #2f7f49;"
-            " border-radius: 6px;"
-            " padding: 8px 14px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #257743; }"
-            "QPushButton:disabled {"
-            " background-color: #244031;"
-            " color: #88a091;"
-            " border: 1px solid #345345;"
-            "}"
-        )
         export_layout.addWidget(self._upload_btn)
         layout.addWidget(export_box)
 
@@ -993,6 +1269,7 @@ class MainWindow(QMainWindow):
         section_layout.setSpacing(6)
 
         toggle = QToolButton()
+        toggle.setObjectName("section_toggle")
         toggle.setText(title)
         toggle.setCheckable(True)
         toggle.setChecked(not collapsed)
@@ -1001,24 +1278,6 @@ class MainWindow(QMainWindow):
             Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow
         )
         toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle.setStyleSheet(
-            "QToolButton {"
-            " background-color: #3a2612;"
-            " border: 1px solid #a8741d;"
-            " color: #ffdca1;"
-            " border-radius: 10px;"
-            " padding: 6px 10px;"
-            " font-weight: 700;"
-            " text-align: left;"
-            "}"
-            "QToolButton:hover {"
-            " background-color: #4a3117;"
-            " border-color: #d49c2a;"
-            "}"
-            "QToolButton:pressed {"
-            " background-color: #2d1d0e;"
-            "}"
-        )
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1062,21 +1321,10 @@ class MainWindow(QMainWindow):
 
     def _build_update_indicator(self) -> None:
         self._update_button = QPushButton("Update")
+        self._update_button.setObjectName("btn_update")
         self._update_button.setVisible(False)
         self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_button.setToolTip("A new app version is available.")
-        self._update_button.setStyleSheet(
-            "QPushButton {"
-            " background-color: #2f4f2f;"
-            " color: #d9fdd3;"
-            " border: 1px solid #4e7c4e;"
-            " border-radius: 10px;"
-            " padding: 2px 10px;"
-            " font-size: 12px;"
-            " font-weight: 600;"
-            "}"
-            "QPushButton:hover { background-color: #386038; }"
-        )
         self._update_button.clicked.connect(self._open_update_url)
         self._statusbar.addPermanentWidget(self._update_button)
         self._pending_update_url: Optional[str] = None
@@ -1375,6 +1623,17 @@ class MainWindow(QMainWindow):
 
         self._last_output_devices = out_signature
         self._last_input_devices = in_signature
+        if hasattr(self, "_log_event"):
+            self._log_event(
+                "INFO",
+                "devices",
+                "Audio devices refreshed",
+                output_count=len(out_devices),
+                input_count=len(in_devices),
+                selected_output=self._current_output_device_label(),
+                selected_input=self._current_input_device_label(),
+                input_channel=self._current_input_channel() + 1,
+            )
 
         if out_ambiguous or in_ambiguous:
             self._statusbar.showMessage(
@@ -1600,15 +1859,18 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(
             f"Update available: v{latest_version}. Click 'Update' to open release notes."
         )
+        self._log_event("INFO", "update", "Update available", version=latest_version)
 
     def _on_update_up_to_date(self, _latest_version: str) -> None:
         self._pending_update_url = None
         self._update_button.setVisible(False)
+        self._log_event("DEBUG", "update", "Application is up to date", version=_latest_version)
 
     def _on_update_check_failed(self, _error: str) -> None:
         # Keep this fully non-intrusive by silently failing.
         self._pending_update_url = None
         self._update_button.setVisible(False)
+        self._log_event("WARNING", "update", "Update check failed", error=_error)
 
     def _open_update_url(self) -> None:
         if not self._pending_update_url:
@@ -1706,7 +1968,9 @@ class MainWindow(QMainWindow):
         self._queue_target = int(self._queue_n_spin.value())
         self._queue_index = 0
         self._current_sweep_attempts = 0
-        self._settings.set("queue_count", self._queue_target)
+        overrides = self._settings.session_overrides() if hasattr(self._settings, "session_overrides") else {}
+        if "queue_count" not in overrides:
+            self._settings.set("queue_count", self._queue_target)
 
         self._queue_progress_bar.setRange(0, max(1, self._queue_target))
         self._queue_progress_bar.setValue(0)
@@ -1800,6 +2064,15 @@ class MainWindow(QMainWindow):
             f"Sweeping {self._queue_index + 1}/{self._queue_target} "
             f"(attempt {self._current_sweep_attempts})..."
         )
+        self._log_event(
+            "INFO", "measurement", "Sweep started",
+            index=self._queue_index + 1,
+            total=self._queue_target,
+            attempt=self._current_sweep_attempts,
+            sample_rate=int(self._settings.get("sample_rate")),
+            buffer_size=int(self._settings.get("buffer_size")),
+            output_level_db=float(self._queue_level_spin.value()),
+        )
 
     def _on_sweep_progress(self, frac: float) -> None:
         self._sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
@@ -1811,6 +2084,15 @@ class MainWindow(QMainWindow):
 
     def _on_measurement_diagnostics(self, diagnostics: object) -> None:
         self._last_measurement_diagnostics = diagnostics
+        details = {
+            name: getattr(diagnostics, name)
+            for name in (
+                "start_confidence", "marker_confidence", "timing_error_ms", "snr_db",
+                "failure_reason", "warning_reason", "bluetooth_headphone_mode", "buffer_size",
+            )
+            if hasattr(diagnostics, name)
+        }
+        self._log_event("INFO", "diagnostics", "Measurement diagnostics received", **details)
 
     def _on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
@@ -1832,6 +2114,10 @@ class MainWindow(QMainWindow):
             )
 
             self._pending_curve = (freqs_ds, mag_ds)
+            self._log_event(
+                "INFO", "processing", "Frequency response processed",
+                input_points=len(freqs), output_points=len(freqs_ds),
+            )
             self._state = AppState.PASS_FAIL
             self._apply_state_ui()
             self._update_plots(show_pending=True)
@@ -1872,6 +2158,7 @@ class MainWindow(QMainWindow):
             self._on_sweep_error(f"Processing error: {exc}")
 
     def _on_sweep_error(self, message: str) -> None:
+        self._log_event("ERROR", "measurement", message)
         self._cleanup_sweep_thread()
         self._close_pass_fail_dialog()
         self._pending_curve = None
@@ -1961,6 +2248,11 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._kept_curves.append(self._pending_curve)
+        self._log_event(
+            "INFO", "review", "Measurement kept",
+            index=self._queue_index + 1,
+            kept_count=len(self._kept_curves),
+        )
         self._pending_curve = None
         self._queue_index += 1
         self._current_sweep_attempts = 0
@@ -1983,6 +2275,7 @@ class MainWindow(QMainWindow):
             return
 
         self._close_pass_fail_dialog()
+        self._log_event("WARNING", "review", "Measurement rejected", index=self._queue_index + 1)
         self._pending_curve = None
         self._state = AppState.QUEUE_RUNNING
         self._apply_state_ui()
@@ -2319,6 +2612,8 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Headphone metadata cleared.")
 
     def _on_queue_level_changed(self, value: float) -> None:
+        if hasattr(self._settings, "clear_session"):
+            self._settings.clear_session("queue_output_level_db")
         clamped = max(-120.0, min(0.0, float(value)))
         if abs(clamped - float(value)) > 1e-9:
             self._queue_level_spin.blockSignals(True)
@@ -2326,6 +2621,10 @@ class MainWindow(QMainWindow):
             self._queue_level_spin.blockSignals(False)
         if self._queue_level_persist_toggle.isChecked():
             self._settings.set("queue_output_level_db", clamped)
+
+    def _on_queue_count_changed(self, _value: int) -> None:
+        if hasattr(self._settings, "clear_session"):
+            self._settings.clear_session("queue_count")
 
     def _on_queue_level_persist_changed(self, _state: int) -> None:
         persist = self._queue_level_persist_toggle.isChecked()
@@ -2480,32 +2779,53 @@ class MainWindow(QMainWindow):
         if self._bottom_view_mode() == "variation":
             self._export_variation()
             return
+        self._export_average()
 
-        curve = self._bottom_curve_for_display_and_export()
-        if curve is None:
-            QMessageBox.information(
-                self,
-                "Nothing to Export",
-                "No averaged curve available yet.",
-            )
-            return
-
-        compensated = self._is_hrtf_active()
-        filename = build_filename(self._session, compensated=compensated)
-
+    def _resolve_export_path(
+        self,
+        requested_path: Optional[str],
+        filename: str,
+        title: str,
+        file_filter: str = "Text Files (*.txt);;All Files (*)",
+    ) -> Optional[Path]:
+        if requested_path:
+            path = Path(requested_path).expanduser()
+            if path.exists() and path.is_dir():
+                path = path / filename
+            if not path.parent.exists():
+                raise ValueError(f"Export directory does not exist: {path.parent}")
+            if path.exists():
+                choice = QMessageBox.question(
+                    self,
+                    "Confirm Overwrite",
+                    f"Overwrite existing file?\n\n{path}",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if choice != QMessageBox.StandardButton.Yes:
+                    return None
+            return path
         default_dir = self._export_dir_input.text().strip() or str(
             self._settings.get("export_directory") or ""
         )
         default_path = str(Path(default_dir) / filename) if default_dir else filename
         path_str, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Average",
-            default_path,
-            "Text Files (*.txt);;All Files (*)",
+            self, title, default_path, file_filter
         )
-        if not path_str:
+        return Path(path_str) if path_str else None
+
+    def _export_average(self, requested_path: Optional[str] = None) -> None:
+        curve = self._bottom_curve_for_display_and_export()
+        if curve is None:
+            QMessageBox.information(self, "Nothing to Export", "No averaged curve available yet.")
             return
-        export_dir = str(Path(path_str).parent)
+
+        compensated = self._is_hrtf_active()
+        filename = build_filename(self._session, compensated=compensated)
+        path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Average")
+        if path is None:
+            return
+        export_dir = str(path.parent)
         self._export_dir_input.setText(export_dir)
         self._settings.set("export_directory", export_dir)
 
@@ -2515,40 +2835,30 @@ class MainWindow(QMainWindow):
                 freqs=freqs,
                 mag_db=mag_db,
                 session=self._session,
-                output_path=Path(path_str),
+                output_path=path,
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=len(self._kept_curves),
             )
-            self._statusbar.showMessage(f"Exported average: {path_str}")
+            self._statusbar.showMessage(f"Exported average: {path}")
+            if hasattr(self, "_log_event"):
+                self._log_event("INFO", "export", "Average exported", path=str(path), compensated=compensated)
         except Exception as exc:
+            if hasattr(self, "_log_event"):
+                self._log_event("ERROR", "export", f"Average export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
 
-    def _export_variation(self) -> None:
+    def _export_variation(self, requested_path: Optional[str] = None) -> None:
         if self._variation is None:
-            QMessageBox.information(
-                self,
-                "Nothing to Export",
-                "No variation band available yet.",
-            )
+            QMessageBox.information(self, "Nothing to Export", "No variation band available yet.")
             return
 
         compensated = self._is_hrtf_active()
         filename = build_variation_filename(self._session, compensated=compensated)
-
-        default_dir = self._export_dir_input.text().strip() or str(
-            self._settings.get("export_directory") or ""
-        )
-        default_path = str(Path(default_dir) / filename) if default_dir else filename
-        path_str, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Variation",
-            default_path,
-            "Text Files (*.txt);;All Files (*)",
-        )
-        if not path_str:
+        path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Variation")
+        if path is None:
             return
-        export_dir = str(Path(path_str).parent)
+        export_dir = str(path.parent)
         self._export_dir_input.setText(export_dir)
         self._settings.set("export_directory", export_dir)
 
@@ -2562,15 +2872,31 @@ class MainWindow(QMainWindow):
                 p75_db=p75,
                 p90_db=p90,
                 session=self._session,
-                output_path=Path(path_str),
+                output_path=path,
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=len(self._kept_curves),
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
             )
-            self._statusbar.showMessage(f"Exported variation: {path_str}")
+            self._statusbar.showMessage(f"Exported variation: {path}")
+            if hasattr(self, "_log_event"):
+                self._log_event("INFO", "export", "Variation exported", path=str(path), compensated=compensated)
         except Exception as exc:
+            if hasattr(self, "_log_event"):
+                self._log_event("ERROR", "export", f"Variation export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
+
+    def _export_console_log(self, requested_path: Optional[str] = None) -> None:
+        path = self._resolve_export_path(
+            requested_path,
+            "fastgraph-console.log",
+            "Export Console Log",
+            "Log Files (*.log *.txt);;All Files (*)",
+        )
+        if path is None:
+            return
+        self._console_events.export(path)
+        self._log_event("INFO", "export", "Console log exported", path=str(path))
 
     def _sync_export_button(self) -> None:
         idle = self._state == AppState.IDLE
@@ -2613,6 +2939,8 @@ class MainWindow(QMainWindow):
                 "Squiglink SFTP host is not configured yet. Add it later in settings.json.",
             )
             return
+
+        self._log_event("INFO", "upload", "Squiglink upload requested", host=host, port=port)
 
         saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
         remember_saved = bool(self._settings.get("squiglink_remember_credentials"))
@@ -2682,6 +3010,7 @@ class MainWindow(QMainWindow):
                 phone_book_stem=phone_book_stem,
             )
             self._statusbar.showMessage("Upload to Squiglink completed successfully.")
+            self._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
             QMessageBox.information(
                 self,
                 "Upload Complete",
@@ -2689,6 +3018,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
+            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
             QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
         finally:
             if tmp_path is not None:

@@ -10,7 +10,7 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.2.6`
+Current beta version: `0.2.7`
 
 ## Quick Start
 
@@ -47,6 +47,25 @@ Drop one or more local `.txt` measurement files onto the top plot to import
 them as kept curves without live fixture hardware. Files should contain two
 columns: frequency in Hz and magnitude in dB. Whitespace- or comma-delimited
 REW-style text is accepted; comments/header rows are skipped when possible.
+
+## Measure and Console Tabs
+
+The **Measure** tab contains the normal measurement interface. The **Console**
+tab shows live application, device, sweep, processing, and timing diagnostics.
+It supports filtering, search, copy, and explicit log export; console history is
+kept in memory only for the current launch.
+
+Type `help` in the Console for safe Fastgraph commands. Available commands can
+inspect status, devices, settings, and the latest diagnostics; apply temporary
+measurement-setting overrides; start/cancel a queue; pass or fail a pending
+measurement; export average/variation TXT files; and launch Squiglink upload.
+Temporary settings are persisted only with `settings save`.
+
+## Light and Dark Themes
+
+Fastgraph starts in Dark mode. Use the sun/moon switch beside the feedback
+button in the bottom status bar to change themes immediately. The selected
+theme is saved and restored the next time Fastgraph starts.
 
 ## HRTF Files
 

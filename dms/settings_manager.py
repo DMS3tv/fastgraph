@@ -5,6 +5,7 @@ from typing import Any
 
 
 _DEFAULTS: dict[str, Any] = {
+    "theme": "dark",
     "sweep_duration": 2.0,
     "sample_rate": 48000,
     "buffer_size": 1024,
@@ -41,18 +42,51 @@ class SettingsManager:
     def __init__(self) -> None:
         self._path = _config_dir() / "settings.json"
         self._data: dict[str, Any] = dict(_DEFAULTS)
+        self._session_overrides: dict[str, Any] = {}
         self._load()
 
     def get(self, key: str) -> Any:
+        if key in self._session_overrides:
+            return self._session_overrides[key]
         return self._data.get(key, _DEFAULTS.get(key))
 
     def set(self, key: str, value: Any) -> None:
+        self._session_overrides.pop(key, None)
         self._data[key] = value
         self._save()
 
     def update(self, updates: dict[str, Any]) -> None:
+        for key in updates:
+            self._session_overrides.pop(key, None)
         self._data.update(updates)
         self._save()
+
+    def set_session(self, key: str, value: Any) -> None:
+        """Set an in-memory value that takes precedence until saved or cleared."""
+        self._session_overrides[key] = value
+
+    def session_overrides(self) -> dict[str, Any]:
+        return dict(self._session_overrides)
+
+    def save_session(self, key: str | None = None) -> list[str]:
+        """Persist one or all session overrides and return the keys saved."""
+        if key is None:
+            keys = list(self._session_overrides)
+        elif key in self._session_overrides:
+            keys = [key]
+        else:
+            return []
+        for override_key in keys:
+            self._data[override_key] = self._session_overrides.pop(override_key)
+        if keys:
+            self._save()
+        return keys
+
+    def clear_session(self, key: str | None = None) -> None:
+        if key is None:
+            self._session_overrides.clear()
+        else:
+            self._session_overrides.pop(key, None)
 
     def _load(self) -> None:
         if self._path.exists():

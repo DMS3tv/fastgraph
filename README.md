@@ -173,6 +173,27 @@ PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/curator/*.py dm
 git status --short
 ```
 
+## Packaging For Linux
+
+Linux packaging is experimental and currently documented for Ubuntu 26.04.
+Install the required system packages, then run the build with its test gate:
+
+```bash
+cd /path/to/fastgraph
+sudo ./.linux/ubuntu_deps.sh
+./build_linux.sh --test
+```
+
+To build without running pytest, use `./build_linux.sh`. The finished app folder
+will be created at:
+
+```bash
+dist/FastGraph Beta
+```
+
+This is currently a local application folder rather than an AppImage or distro
+package. Runtime measurement behavior still needs wider Linux hardware testing.
+
 ## Packaging For Windows
 
 Build the Windows app on a Windows machine:

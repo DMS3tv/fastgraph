@@ -59,6 +59,8 @@ from dms.audio_engine import (
 )
 from dms.calibration import CalibrationStore
 from dms.console import ConsoleEventStore
+from dms.curator.models import CurveData
+from dms.curator.parser import parse_measurement_txt
 from dms.export import (
     build_filename,
     build_variation_filename,
@@ -104,6 +106,7 @@ from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.console_widget import ConsoleWidget
+from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.session_dialog import SessionDialog
@@ -663,6 +666,13 @@ class MainWindow(QMainWindow):
         controls_scroll.setWidget(self._build_control_panel())
         root.addWidget(controls_scroll, 0)
 
+        self._curator_widget = CuratorWidget(
+            self._console_events,
+            theme=self._theme_controller.theme,
+            parent=self,
+        )
+        self._tabs.addTab(self._curator_widget, "Curator")
+
         self._console_widget = ConsoleWidget(self._console_events)
         self._console_widget.command_submitted.connect(self._run_console_command)
         self._tabs.addTab(self._console_widget, "Console")
@@ -704,6 +714,9 @@ class MainWindow(QMainWindow):
         plots = getattr(self, "_plots", None)
         if plots is not None:
             plots.apply_theme(theme)
+        curator = getattr(self, "_curator_widget", None)
+        if curator is not None:
+            curator.apply_theme(theme)
         meter = getattr(self, "_level_meter", None)
         if meter is not None:
             meter.update()
@@ -750,6 +763,18 @@ class MainWindow(QMainWindow):
                 self._run_measure_command(args[1:])
             elif args[0] == "export":
                 self._run_export_command(args[1:])
+            elif args[0] == "curator":
+                try:
+                    self._run_curator_command(args[1:])
+                except Exception as exc:
+                    self._log_event(
+                        "ERROR",
+                        "curator",
+                        "Curator command failed",
+                        command=" ".join(args[1:]),
+                        error=str(exc),
+                    )
+                    raise
             else:
                 self._command_reply("Unknown command. Type 'help' for available commands.", error=True)
         except Exception as exc:
@@ -764,6 +789,7 @@ class MainWindow(QMainWindow):
             "  settings save [<name>|all]",
             "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
             "  export average [path] | export variation [path] | export squiglink | export log [path]",
+            "  curator help  (Curator workspace commands)",
         ))
 
     def _console_status(self) -> str:
@@ -771,6 +797,8 @@ class MainWindow(QMainWindow):
             f"State: {self._state}",
             f"Queue: {self._queue_index}/{self._queue_target or 0}",
             f"Kept curves: {len(self._kept_curves)}",
+            f"Curator layers: {len(self._curator_widget.graph_state.layers)} "
+            f"({sum(layer.visible for layer in self._curator_widget.graph_state.layers)} visible)",
             f"Output: {self._current_output_device_label() or 'none'}",
             f"Input: {self._current_input_device_label() or 'none'} / channel {self._current_input_channel() + 1}",
             f"Bluetooth mode: {bool(self._settings.get('bluetooth_headphone_mode'))}",
@@ -979,6 +1007,129 @@ class MainWindow(QMainWindow):
         else:
             raise ValueError("Usage: export average|variation|squiglink|log [path]")
 
+    @staticmethod
+    def _curator_help() -> str:
+        return "\n".join((
+            "Curator commands:",
+            "  curator status | curator layers | curator send",
+            "  curator import <path> [<path>...]",
+            "  curator layer <n> show|hide|remove",
+            "  curator layer <n> offset <db> | color <#RRGGBB> | hrtf <name|none>",
+            "  curator combine <n> <n> [...] | curator clear",
+            "  curator bounds on|off",
+            "  curator view limits <min_db> <max_db> | aspect on|off",
+            "  curator view background <#RRGGBB|theme>",
+            "  curator text title|fixture|footer <text>",
+            "  curator reset | curator export <path>",
+        ))
+
+    @staticmethod
+    def _console_on_off(value: str) -> bool:
+        lowered = value.lower()
+        if lowered not in {"on", "off"}:
+            raise ValueError("Expected on or off.")
+        return lowered == "on"
+
+    def _run_curator_command(self, args: list[str]) -> None:
+        curator = self._curator_widget
+        if args == ["help"]:
+            self._command_reply(self._curator_help())
+            return
+        if args == ["status"]:
+            layers = curator.graph_state.layers
+            self._command_reply("\n".join((
+                f"Layers: {len(layers)}",
+                f"Visible: {sum(layer.visible for layer in layers)}",
+                f"Bounds: {'on' if curator.graph_state.bounds.enabled else 'off'}",
+                f"Limits: {curator.graph_state.y_min:g} to {curator.graph_state.y_max:g} dB",
+                f"25 dB/decade: {'on' if curator.graph_state.aspect_locked_25db else 'off'}",
+                f"Background: {curator.graph_state.background}",
+            )))
+            return
+        if args == ["layers"]:
+            self._command_reply(curator.layer_summary())
+            return
+        if args == ["send"]:
+            self._send_to_curator()
+            return
+        if args and args[0] == "import" and len(args) >= 2:
+            paths = [Path(raw).expanduser() for raw in args[1:]]
+            for path in paths:
+                if not path.exists() or not path.is_file():
+                    raise ValueError(f"Import file does not exist: {path}")
+            parsed = [(path, parse_measurement_txt(path)) for path in paths]
+            for path, curve in parsed:
+                curator.add_curve(curve, path.stem, source_path=path, normalize=True)
+            self._command_reply(f"Imported {len(parsed)} Curator file(s).")
+            return
+        if args and args[0] == "layer" and len(args) >= 3:
+            try:
+                number = int(args[1])
+            except ValueError as exc:
+                raise ValueError("Layer number must be an integer.") from exc
+            action = args[2].lower()
+            if len(args) == 3 and action in {"show", "hide"}:
+                curator.set_layer_number_visible(number, action == "show")
+            elif len(args) == 3 and action == "remove":
+                curator.remove_layer_number(number)
+            elif len(args) == 4 and action == "offset":
+                curator.set_layer_number_offset(number, float(args[3]))
+            elif len(args) == 4 and action == "color":
+                curator.set_layer_number_color(number, args[3])
+            elif len(args) >= 4 and action == "hrtf":
+                curator.set_layer_number_hrtf(number, " ".join(args[3:]))
+            else:
+                raise ValueError(
+                    "Usage: curator layer <n> show|hide|remove|offset <db>|"
+                    "color <#RRGGBB>|hrtf <name|none>"
+                )
+            self._command_reply(f"Curator layer {number} updated.")
+            return
+        if args and args[0] == "combine" and len(args) >= 3:
+            try:
+                numbers = [int(value) for value in args[1:]]
+            except ValueError as exc:
+                raise ValueError("Combine expects integer layer numbers.") from exc
+            layer = curator.combine_layer_numbers(numbers)
+            self._command_reply(f"Created Curator layer {len(curator.graph_state.layers)}: {layer.name}")
+            return
+        if args == ["clear"]:
+            curator.clear_layers()
+            self._command_reply("Curator layers cleared.")
+            return
+        if len(args) == 2 and args[0] == "bounds":
+            curator.set_bounds_enabled(self._console_on_off(args[1]))
+            self._command_reply(f"Curator bounds {args[1].lower()}.")
+            return
+        if len(args) == 4 and args[:2] == ["view", "limits"]:
+            curator.set_y_limits(float(args[2]), float(args[3]))
+            self._command_reply(f"Curator limits set to {args[2]}..{args[3]} dB.")
+            return
+        if len(args) == 3 and args[:2] == ["view", "aspect"]:
+            curator.set_aspect_locked(self._console_on_off(args[2]))
+            self._command_reply(f"Curator aspect lock {args[2].lower()}.")
+            return
+        if len(args) == 3 and args[:2] == ["view", "background"]:
+            if args[2].lower() == "theme":
+                curator.reset_background_to_theme()
+            else:
+                curator.set_background(args[2])
+            self._command_reply(f"Curator background set to {curator.graph_state.background}.")
+            return
+        if len(args) >= 3 and args[0] == "text" and args[1] in {"title", "fixture", "footer"}:
+            curator.set_export_text(args[1], " ".join(args[2:]))
+            self._command_reply(f"Curator {args[1]} updated.")
+            return
+        if args == ["reset"]:
+            curator.reset_view()
+            self._command_reply("Curator view reset.")
+            return
+        if len(args) == 2 and args[0] == "export":
+            path = curator.export_png(args[1])
+            self._command_reply(f"Exported Curator PNG: {path}")
+            return
+        raise ValueError("Unknown Curator command. Type 'curator help' for available commands.")
+
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -1128,9 +1279,10 @@ class MainWindow(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         persist_layout.addWidget(self._queue_level_persist_label)
-        level_layout.addLayout(persist_layout)
         level_layout.addStretch(1)
         queue_layout.addLayout(level_layout)
+        persist_layout.addStretch(1)
+        queue_layout.addLayout(persist_layout)
 
         self._queue_progress_label = QLabel("Kept: 0")
         queue_layout.addWidget(self._queue_progress_label)
@@ -1245,6 +1397,13 @@ class MainWindow(QMainWindow):
         export_btn.clicked.connect(self._export)
         export_layout.addWidget(export_btn)
         self._export_btn = export_btn
+
+        self._send_to_curator_btn = QPushButton("Send to Curator")
+        self._send_to_curator_btn.clicked.connect(self._send_to_curator)
+        self._send_to_curator_btn.setToolTip(
+            "Add the current average or variation view to Curator."
+        )
+        export_layout.addWidget(self._send_to_curator_btn)
 
         self._upload_btn = QPushButton("Upload to Squiglink")
         self._upload_btn.setObjectName("btn_upload")
@@ -2781,6 +2940,79 @@ class MainWindow(QMainWindow):
             return
         self._export_average()
 
+    def _send_to_curator(self) -> None:
+        if self._state != AppState.IDLE:
+            raise ValueError("Measurements can only be sent to Curator while idle.")
+
+        mode = self._bottom_view_mode()
+        active_hrtf = self._hrtf if self._is_hrtf_active() else None
+        correction = None
+        curve: CurveData
+        if mode == "variation":
+            if self._variation is None:
+                raise ValueError("No variation band is available to send.")
+            freqs, p10, p25, p75, p90, median = self._variation
+            if active_hrtf is not None:
+                correction = active_hrtf.evaluate(freqs)
+            curve = CurveData(
+                kind="variation",
+                freqs=np.array(freqs, dtype=float, copy=True),
+                p10_db=np.array(p10, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                p25_db=np.array(p25, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                median_db=np.array(median, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                p75_db=np.array(p75, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                p90_db=np.array(p90, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                metadata={"Source": "Fastgraph current variation"},
+            )
+            kind_label = "VAR"
+        else:
+            displayed = self._bottom_curve_for_display()
+            if displayed is None:
+                raise ValueError("No averaged curve is available to send.")
+            freqs, magnitude = displayed
+            if active_hrtf is not None:
+                correction = active_hrtf.evaluate(freqs)
+            baseline = np.array(magnitude, dtype=float, copy=True)
+            if correction is not None:
+                baseline = baseline + correction
+            curve = CurveData(
+                kind="fr",
+                freqs=np.array(freqs, dtype=float, copy=True),
+                mag_db=baseline,
+                metadata={"Source": "Fastgraph current average"},
+            )
+            kind_label = "AVG"
+
+        identity = self._session.asset_tag.strip() or " ".join(
+            part for part in (self._session.brand.strip(), self._session.model.strip()) if part
+        )
+        if not identity:
+            identity = "Fastgraph"
+        comp_label = "COMP" if active_hrtf is not None else "RAW"
+        name = f"{identity} {comp_label} {kind_label}"
+        # Make Curator visible before its reveal animation starts. Some Qt
+        # platforms defer animation paints for hidden tab pages.
+        self._tabs.setCurrentWidget(self._curator_widget)
+        layer = self._curator_widget.add_curve(
+            curve,
+            name,
+            source_path="<fastgraph>",
+            hrtf=active_hrtf,
+            normalize=False,
+        )
+        self._curator_widget.offset_layer_to_zero_at_1khz(layer)
+        if not self._curator_widget.graph_state.export_text.fixture:
+            self._curator_widget.set_export_text("fixture", self._session.rig)
+        self._statusbar.showMessage(f"Sent to Curator: {layer.name}")
+        self._log_event(
+            "INFO",
+            "curator",
+            "Measure view sent to Curator",
+            name=layer.name,
+            kind=curve.kind,
+            hrtf=active_hrtf.name if active_hrtf else None,
+        )
+
     def _resolve_export_path(
         self,
         requested_path: Optional[str],
@@ -2914,6 +3146,8 @@ class MainWindow(QMainWindow):
             export_enabled = idle and self._average is not None
         upload_enabled = idle and self._average is not None
         self._export_btn.setEnabled(export_enabled)
+        if hasattr(self, "_send_to_curator_btn"):
+            self._send_to_curator_btn.setEnabled(export_enabled)
         self._upload_btn.setEnabled(upload_enabled)
 
     def _squiglink_endpoint(self) -> tuple[str, int]:

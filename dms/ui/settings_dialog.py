@@ -114,14 +114,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(sweep_group)
 
         layout.addWidget(QLabel(
-            '<span style="color:#888; font-size:11px;">'
+            '<span style="font-size:11px;">'
             "Buffer size / latency mode affect reliability on some OSes.<br>"
             "If recording has artifacts/dropouts, increase buffer size or use 'high' latency.<br>"
             "If timing drift/latency is unstable (especially Bluetooth), try lowering buffer size."
             "</span>"
         ))
         layout.addWidget(QLabel(
-            '<span style="color:#888; font-size:11px;">'
+            '<span style="font-size:11px;">'
             "<b>Timing Tuning:</b> These controls tune how strict measurement acceptance is.<br>"
             "Start confidence applies to sweep alignment; end confidence and drift apply to Bluetooth timing markers.<br>"
             "Confidence guide: <b>&gt;=12 strong</b>, <b>9-12 good</b>, "

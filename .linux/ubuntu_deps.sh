@@ -1,6 +1,15 @@
-#!/bin/bash
-apt update
-apt install -y --no-install-recommends \
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (( EUID != 0 )); then
+    echo "Run this script as root: sudo ./.linux/ubuntu_deps.sh"
+    exit 1
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get install -y --no-install-recommends \
                 binutils \
                 build-essential \
                 git \

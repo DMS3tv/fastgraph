@@ -25,14 +25,24 @@ cd "${SCRIPT_DIR}"
 # Build .venv if it doesn't exist.
 if [ ! -d ".venv/" ]; then
     python3 -m venv .venv
-    .venv/bin/python -m pip install --upgrade pip
-    .venv/bin/pip install pyinstaller
 fi
 
 # Check if requirements.txt has changed and install stuff if it has.
 REQUIREMENTS_SHAFILE="requirements.txt.sha256"
-if [ ! -f "${REQUIREMENTS_SHAFILE}" ] || [ "$(sha256sum "${REQUIREMENTS_SHAFILE}")" != "$(sha256sum "requirements.txt")" ]; then
+set +e
+sha256sum -c "${REQUIREMENTS_SHAFILE}"
+set -e
+SHARES="$?"
+
+if [ ! -f "${REQUIREMENTS_SHAFILE}" ] || [ "${SHARES}" != "0" ]; then
+    .venv/bin/python -m pip install --upgrade pip
+    .venv/bin/pip install pyinstaller
     .venv/bin/pip install -r requirements.txt
+    
+    if [ "$1" == "--test" ]; then
+        .venv/bin/pip install -r requirements-dev.txt
+        PYTHONPATH=. .venv/bin/pytest -q
+    fi
 fi
 
 rm -rf build dist
@@ -43,5 +53,4 @@ echo
 echo "Built app bundle:"
 echo "  ${PWD}/dist/FastGraph Beta"
 
-sha256sum requirements.txt > .build/requirements.txt.sha256
-sha256sum requirements-dev.txt > .build/requirements-dev.txt.sha256
+sha256sum requirements.txt > "${REQUIREMENTS_SHAFILE}"

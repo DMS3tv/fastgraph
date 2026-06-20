@@ -54,6 +54,13 @@ def test_custom_switch_uses_full_painted_hitbox() -> None:
     assert switch.hitButton(QPoint(51, 27)) is True
 
 
+def test_custom_switch_reserves_space_for_painted_track() -> None:
+    _app()
+    switch = ToggleSwitch("")
+    assert switch.sizeHint().width() >= 54
+    assert switch.minimumSizeHint().width() >= 54
+
+
 def test_theme_toggle_container_click_changes_mode() -> None:
     _app()
     toggle = ThemeToggleWidget(dark=True)

@@ -12,6 +12,10 @@ from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QWidget
 
 
 class ToggleSwitch(QCheckBox):
+    _TRACK_WIDTH = 42
+    _HORIZONTAL_MARGIN = 6
+    _TEXT_GAP = 10
+
     def __init__(self, label: str = "", parent=None) -> None:
         super().__init__(label, parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -27,8 +31,19 @@ class ToggleSwitch(QCheckBox):
 
     def sizeHint(self):
         hint = super().sizeHint()
+        text_width = self.fontMetrics().horizontalAdvance(self.text()) if self.text() else 0
+        painted_width = (
+            self._HORIZONTAL_MARGIN
+            + self._TRACK_WIDTH
+            + (self._TEXT_GAP + text_width if text_width else 0)
+            + self._HORIZONTAL_MARGIN
+        )
+        hint.setWidth(max(painted_width, hint.width()))
         hint.setHeight(max(30, hint.height()))
         return hint
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
     def hitButton(self, pos) -> bool:
         """Treat the full custom-painted control as clickable."""
@@ -53,10 +68,10 @@ class ToggleSwitch(QCheckBox):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        track_w = 42
+        track_w = self._TRACK_WIDTH
         track_h = 22
-        margin = 6
-        text_gap = 10
+        margin = self._HORIZONTAL_MARGIN
+        text_gap = self._TEXT_GAP
         y = (self.height() - track_h) / 2.0
 
         track_rect = QRectF(margin, y, track_w, track_h)

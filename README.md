@@ -10,7 +10,20 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.2.6`
+Current beta version: `0.3.0`
+
+## What's New in 0.3.0
+
+Fastgraph now includes **Curator**, a graph image generation tool for comparing
+headphone frequency-response and variation-band measurements and turning them
+into presentation-ready graph images. Curator lives between the Measure and
+Console tabs, shares Fastgraph's HRTF library and theme, and reports its actions
+to the same diagnostic console.
+
+The Measure tab can send its current average or variation view directly to
+Curator. The transferred layer receives an editable 1 kHz offset so it sits at
+0 dB without changing the source data or frequency-response shape. Any active
+HRTF remains selected and can be changed or removed in Curator.
 
 ## Quick Start
 
@@ -47,6 +60,55 @@ Drop one or more local `.txt` measurement files onto the top plot to import
 them as kept curves without live fixture hardware. Files should contain two
 columns: frequency in Hz and magnitude in dB. Whitespace- or comma-delimited
 REW-style text is accepted; comments/header rows are skipped when possible.
+
+## Measure, Curator, and Console Tabs
+
+The **Measure** tab contains the normal measurement interface. Its **Send to
+Curator** button adds the currently selected average or variation view to the
+Curator workspace and switches to that tab. The new layer is offset to 0 dB at
+1 kHz without changing its source data or frequency-response shape, and its
+HRTF selection remains editable.
+
+The **Curator** tab is a graph image generation tool. It imports and compares
+two-column frequency-response TXT files and six-column Fastgraph variation
+exports, with per-layer visibility, color, offset, and HRTF controls. It also
+supports combined variation layers, optional preference bounds, fixed graph
+presentation controls, and composed 1920x1080 PNG export. Curator state is kept
+only for the current application launch.
+
+The **Console** tab shows live application, device, sweep, processing, Curator,
+and timing diagnostics. It supports filtering, search, copy, and explicit log
+export; console history is kept in memory only for the current launch.
+
+Type `help` in the Console for safe Fastgraph commands. Available commands can
+inspect status, devices, settings, and the latest diagnostics; apply temporary
+measurement-setting overrides; start/cancel a queue; pass or fail a pending
+measurement; export average/variation TXT files; and launch Squiglink upload.
+Temporary settings are persisted only with `settings save`.
+
+Type `curator help` for the built-in command reference. Curator commands include:
+
+```text
+curator status | curator layers | curator send
+curator import <path> [<path>...]
+curator layer <n> show|hide|remove
+curator layer <n> offset <db> | color <#RRGGBB> | hrtf <name|none>
+curator combine <n> <n> [...] | curator clear
+curator bounds on|off
+curator view limits <min_db> <max_db> | aspect on|off
+curator view background <#RRGGBB|theme>
+curator text title|fixture|footer <text>
+curator reset | curator export <path>
+```
+
+Layer numbers are one-based and are shown by `curator layers`. Quote paths or
+text containing spaces.
+
+## Light and Dark Themes
+
+Fastgraph starts in Dark mode. Use the sun/moon switch beside the feedback
+button in the bottom status bar to change themes immediately. The selected
+theme is saved and restored the next time Fastgraph starts.
 
 ## HRTF Files
 
@@ -107,7 +169,7 @@ Before packaging or tagging a beta, run:
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q
-PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/ui/*.py
+PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/curator/*.py dms/ui/*.py
 git status --short
 ```
 
@@ -149,6 +211,7 @@ dist/FastGraph Beta.app
 Notes:
 
 - The app bundle includes a microphone usage description for macOS permission prompts.
+- Packaged apps include the shared HRTF library and Curator preference bounds.
 - If Gatekeeper warns about the app because it is unsigned, right-click the app and choose `Open`.
 
 ## Quiet Update Indicator
@@ -169,8 +232,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.2.5",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.2.5",
-  "summary": "Minor bug fixes"
+  "version": "0.3.0",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.0",
+  "summary": "Adds the integrated Curator graph image generation tool"
 }
 ```

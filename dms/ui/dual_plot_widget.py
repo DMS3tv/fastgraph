@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
+from dms.theme import LIGHT, normalize_theme, theme_colors
 
 
 pg.setConfigOption("background", "#1a1a1a")
@@ -121,6 +122,7 @@ class DualPlotWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._theme = "dark"
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
 
         layout = QVBoxLayout(self)
@@ -150,6 +152,7 @@ class DualPlotWidget(QWidget):
         self._reveal_timer.timeout.connect(self._tick_reveal_animation)
 
         # 1 kHz reference line (both plots)
+        self._reference_lines: list[pg.InfiniteLine] = []
         for pw in (self._top_plot, self._bot_plot):
             ref = pg.InfiniteLine(
                 pos=np.log10(1000.0),
@@ -157,12 +160,14 @@ class DualPlotWidget(QWidget):
                 pen=pg.mkPen(color=(80, 80, 80), style=Qt.PenStyle.DashLine),
             )
             pw.addItem(ref)
+            self._reference_lines.append(ref)
             zero = pg.InfiniteLine(
                 pos=0.0,
                 angle=0,
                 pen=pg.mkPen(color=(70, 70, 70), style=Qt.PenStyle.DashLine),
             )
             pw.addItem(zero)
+            self._reference_lines.append(zero)
 
     def _emit_measurement_files_dropped(self, paths: list[str]) -> None:
         self.measurement_files_dropped.emit(paths)
@@ -170,6 +175,31 @@ class DualPlotWidget(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = normalize_theme(theme)
+        colors = theme_colors(self._theme)
+        foreground = colors["plot_fg"]
+        for plot in (self._top_plot, self._bot_plot):
+            plot.setBackground(colors["plot_bg"])
+            for axis_name in ("left", "bottom"):
+                axis = plot.getAxis(axis_name)
+                axis.setPen(pg.mkPen(foreground))
+                axis.setTextPen(pg.mkPen(foreground))
+            plot.getPlotItem().titleLabel.setAttr("color", foreground)
+        reference = (135, 143, 153) if self._theme == LIGHT else (75, 75, 75)
+        for line in self._reference_lines:
+            line.setPen(pg.mkPen(color=reference, style=Qt.PenStyle.DashLine))
+        for index, item in enumerate(self._top_items):
+            is_last = index == len(self._top_items) - 1
+            if is_last:
+                color = (35, 135, 128, 235) if self._theme == LIGHT else _TEAL
+                width = 1.7 if self._theme == LIGHT else 1.5
+            else:
+                color = (90, 98, 108, 180) if self._theme == LIGHT else _GREY
+                width = 1.0
+            item.setPen(pg.mkPen(color=color, width=width))
+        self.update()
 
     def update_curves(
         self,
@@ -267,9 +297,11 @@ class DualPlotWidget(QWidget):
         for i, (freqs, mag_db) in enumerate(kept):
             is_last = i == len(kept) - 1
             if is_last:
-                pen = pg.mkPen(color=_TEAL, width=1.5)
+                color = (35, 135, 128, 235) if self._theme == LIGHT else _TEAL
+                pen = pg.mkPen(color=color, width=1.7 if self._theme == LIGHT else 1.5)
             else:
-                pen = pg.mkPen(color=_GREY, width=1.0)
+                color = (90, 98, 108, 180) if self._theme == LIGHT else _GREY
+                pen = pg.mkPen(color=color, width=1.0)
             item = self._top_plot.plot(freqs, mag_db, pen=pen)
             self._top_items.append(item)
 

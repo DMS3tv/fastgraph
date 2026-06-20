@@ -3,6 +3,7 @@ apt update
 apt install -y --no-install-recommends \
                 binutils \
                 build-essential \
+                git \
                 libatk1.0-0t64 \
                 libcairo2 \
                 libcairo-gobject2 \

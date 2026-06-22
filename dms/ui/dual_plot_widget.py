@@ -35,6 +35,7 @@ _BAND_MEDIAN = (170, 215, 255, 220)
 
 _FREQ_MIN = 20.0
 _FREQ_MAX = 20000.0
+_X_RANGE_MARGIN = 0.025
 _Y_WINDOW_DB = 30.0
 _Y_DEFAULT_TOP_DB = 15.0
 _Y_TOP_HEADROOM_DB = 1.0
@@ -92,7 +93,14 @@ def _configure_plot_widget(pw: pg.PlotWidget) -> None:
     pw.getAxis("left").setLabel("Magnitude", units="dB")
     pw.setLogMode(x=True, y=False)
     pw.showGrid(x=True, y=True, alpha=0.15)
-    pw.setXRange(np.log10(_FREQ_MIN), np.log10(_FREQ_MAX), padding=0)
+    log_min = np.log10(_FREQ_MIN)
+    log_max = np.log10(_FREQ_MAX)
+    log_span = log_max - log_min
+    pw.setXRange(
+        log_min - log_span * _X_RANGE_MARGIN,
+        log_max + log_span * _X_RANGE_MARGIN,
+        padding=0,
+    )
     # Frequency tick values for log axis
     ticks = [
         (np.log10(20), "20"),
@@ -140,6 +148,8 @@ class DualPlotWidget(QWidget):
 
         layout.addWidget(self._top_plot, 1)
         layout.addWidget(self._bot_plot, 1)
+        self._between_plots_widget: Optional[QWidget] = None
+        self._footer_widget: Optional[QWidget] = None
 
         self._top_items: list[pg.PlotDataItem] = []
         self._bot_item: Optional[pg.PlotDataItem] = None
@@ -233,6 +243,22 @@ class DualPlotWidget(QWidget):
         for item in self._bot_extra_items:
             self._bot_plot.removeItem(item)
         self._bot_extra_items.clear()
+
+    def set_between_plots_widget(self, widget: QWidget) -> None:
+        """Insert application controls between the top and bottom viewports."""
+        if self._between_plots_widget is not None:
+            self.layout().removeWidget(self._between_plots_widget)
+            self._between_plots_widget.setParent(None)
+        self._between_plots_widget = widget
+        self.layout().insertWidget(1, widget, 0)
+
+    def set_footer_widget(self, widget: QWidget) -> None:
+        """Insert application controls immediately below the bottom viewport."""
+        if self._footer_widget is not None:
+            self.layout().removeWidget(self._footer_widget)
+            self._footer_widget.setParent(None)
+        self._footer_widget = widget
+        self.layout().addWidget(widget, 0)
 
     def bottom_plot_global_rect(self) -> QRect:
         top_left = self._bot_plot.mapToGlobal(self._bot_plot.rect().topLeft())

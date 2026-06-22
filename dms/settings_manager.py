@@ -18,6 +18,8 @@ _DEFAULTS: dict[str, Any] = {
     "queue_count": 5,
     "queue_output_level_db": -6.0,
     "queue_output_level_persist": False,
+    "confirm_clear_measurements": True,
+    "confirm_clear_metadata": True,
     "export_directory": "",
     "hrtf_path": None,
     "pre_sweep_silence": 0.2,

@@ -58,10 +58,14 @@ def application_stylesheet(theme: str) -> str:
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['alternate']}; padding-top: 7px; }}
     QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
+    QWidget#tab_header_controls QPushButton {{ min-height: 20px; max-height: 24px; padding: 2px 10px; border-radius: 6px; }}
+    QWidget#tab_header_controls QPushButton:pressed {{ padding-top: 3px; }}
     QPushButton#btn_keep {{ background-color: {keep_bg}; color: {keep_text}; font-weight: bold; }}
     QPushButton#btn_keep:hover {{ background-color: {keep_hover}; }}
     QPushButton#btn_fail {{ background-color: {fail_bg}; color: {fail_text}; font-weight: bold; }}
     QPushButton#btn_fail:hover {{ background-color: {fail_hover}; }}
+    QPushButton#btn_danger {{ background-color: {fail_bg}; color: {fail_text}; font-weight: bold; }}
+    QPushButton#btn_danger:hover {{ background-color: {fail_hover}; }}
     QPushButton#btn_start {{ background-color: {start_bg}; color: {start_text}; font-weight: bold; }}
     QPushButton#btn_start:hover {{ background-color: {start_hover}; }}
     QPushButton#btn_cancel {{ background-color: {cancel_bg}; color: {cancel_text}; font-weight: bold; }}

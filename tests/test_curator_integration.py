@@ -6,7 +6,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QGroupBox, QToolButton
 
 import dms.settings_manager as settings_module
 from dms.curator.transforms import apply_layer_transform
@@ -38,9 +39,178 @@ def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
 def test_curator_is_middle_tab(qapp, monkeypatch, tmp_path: Path) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "Curator", "Console"
+        "Measure", "Curator", "Console", "Settings"
     ]
     assert window._queue_level_persist_toggle.minimumSizeHint().width() >= 54
+    window.close()
+
+
+def test_measure_controls_are_embedded_around_plots(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    assert window._plots._between_plots_widget.objectName() == "measure_interplot_controls"
+    assert window._plots._footer_widget.objectName() == "measure_export_controls"
+    assert window._clear_btn.objectName() == "btn_danger"
+    assert window._level_meter.parent() is window._plots._between_plots_widget
+    assert window._export_dir_input.parent() is window._plots._footer_widget
+    assert not window._clear_btn.isEnabled()
+    window.close()
+
+
+def test_session_and_bluetooth_controls_precede_tabs(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    header = window._tabs.cornerWidget(Qt.Corner.TopLeftCorner)
+    assert header is not None
+    assert header.objectName() == "tab_header_controls"
+    assert header.geometry().right() <= window._tabs.tabBar().geometry().left()
+    assert header.width() == header.sizeHint().width()
+    assert window._tabs.tabBar().geometry().left() - header.geometry().right() <= 1
+    assert window._metadata_btn.parent() is header
+    assert window._clear_metadata_btn.parent() is header
+    assert window._clear_metadata_btn.objectName() == "btn_danger"
+    assert window._bluetooth_mode_toggle.parent() is header
+    assert window._session_summary_label.text() == "DMS Demo · Test Rig"
+    assert window._metadata_btn.geometry().bottom() <= header.rect().bottom()
+    assert window._clear_metadata_btn.geometry().bottom() <= header.rect().bottom()
+
+    section_titles = [button.text() for button in window.findChildren(QToolButton)]
+    group_titles = [group.title() for group in window.findChildren(QGroupBox)]
+    assert "Session" not in section_titles
+    assert "Measurement Mode" not in group_titles
+
+    window._tabs.setCurrentWidget(window._console_widget)
+    qapp.processEvents()
+    assert header.isVisible()
+    window.close()
+
+
+def test_measure_plots_keep_frequency_endpoints_inside_view(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    expected_min = np.log10(20.0)
+    expected_max = np.log10(20000.0)
+    for plot in (window._plots._top_plot, window._plots._bot_plot):
+        x_min, x_max = plot.getPlotItem().getViewBox().viewRange()[0]
+        assert x_min < expected_min
+        assert x_max > expected_max
+    window.close()
+
+
+def test_settings_tab_saves_immediately_and_disables_edits_while_busy(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    settings_widget = window._settings_widget
+
+    settings_widget._fs.setCurrentIndex(settings_widget._fs.findData(96000))
+    assert window._settings.get("sample_rate") == 96000
+
+    settings_widget._confirm_clear.setChecked(False)
+    assert window._settings.get("confirm_clear_measurements") is False
+    settings_widget._confirm_clear_metadata.setChecked(False)
+    assert window._settings.get("confirm_clear_metadata") is False
+
+    window._state = "queue_running"
+    window._apply_state_ui()
+    assert window._tabs.isTabEnabled(window._tabs.indexOf(window._settings_scroll))
+    assert not settings_widget._sweep_group.isEnabled()
+    assert not settings_widget._audio_tools_group.isEnabled()
+    assert not window._metadata_btn.isEnabled()
+    assert not window._clear_metadata_btn.isEnabled()
+    assert not window._bluetooth_mode_toggle.isEnabled()
+    window.close()
+
+
+def test_settings_column_is_compact_and_left_aligned(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    window._tabs.setCurrentWidget(window._settings_scroll)
+    qapp.processEvents()
+
+    column = window._settings_widget._settings_column
+    assert column.x() == 0
+    assert column.width() == 560
+    assert column.geometry().right() < window._settings_widget.width()
+    window.close()
+
+
+def test_header_summary_refreshes_when_metadata_is_cleared(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (True, False))
+    window._clear_metadata()
+
+    assert window._session_summary_label.text() == "Unknown Unknown · Unknown Rig"
+    assert "Headphone: Unknown Unknown" in window._session_summary_label.toolTip()
+    assert "Unknown Unknown @ Unknown Rig" in window.windowTitle()
+    window.close()
+
+
+def test_metadata_clear_confirmation_and_preference(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (False, True))
+    window._clear_metadata()
+    assert window._session.display_name() == "DMS Demo"
+    assert window._settings.get("confirm_clear_metadata") is True
+
+    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (True, True))
+    window._clear_metadata()
+    assert window._session.display_name() == "Unknown Unknown"
+    assert window._settings.get("confirm_clear_metadata") is False
+    assert not window._settings_widget._confirm_clear_metadata.isChecked()
+
+    window._settings_widget._confirm_clear_metadata.setChecked(True)
+    assert window._settings.get("confirm_clear_metadata") is True
+    window.close()
+
+
+def test_clear_confirmation_preference_and_tab_isolation(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
+    window._kept_curves = [curve]
+    window._recompute_average()
+    window._update_plots()
+    curator_marker = object()
+    window._curator_widget.graph_state.layers.append(curator_marker)
+    window._console_events.publish("INFO", "test", "keep me")
+    event_count = len(window._console_events.events())
+
+    monkeypatch.setattr(window, "_confirm_clear_all", lambda: (False, True))
+    window._clear_all()
+    assert len(window._kept_curves) == 1
+    assert window._kept_curves[0] is curve
+    assert window._settings.get("confirm_clear_measurements") is True
+
+    monkeypatch.setattr(window, "_confirm_clear_all", lambda: (True, True))
+    window._clear_all()
+    assert window._kept_curves == []
+    assert window._settings.get("confirm_clear_measurements") is False
+    assert window._curator_widget.graph_state.layers == [curator_marker]
+    assert len(window._console_events.events()) >= event_count
+    assert not window._clear_btn.isEnabled()
+
+    window._settings_widget._confirm_clear.setChecked(True)
+    assert window._settings.get("confirm_clear_measurements") is True
     window.close()
 
 

@@ -26,12 +26,14 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStatusBar,
     QTabWidget,
@@ -110,7 +112,7 @@ from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.session_dialog import SessionDialog
-from dms.ui.settings_dialog import SettingsDialog
+from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
 
@@ -616,7 +618,7 @@ class MainWindow(QMainWindow):
         self._level_monitor.error_occurred.connect(self._on_level_error)
 
         self._refresh_window_title()
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(1280, 700)
 
         self._build_ui()
         self._on_theme_changed(self._theme_controller.theme, log=False)
@@ -643,6 +645,10 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
+        self._tabs.setCornerWidget(
+            self._build_tab_header(),
+            Qt.Corner.TopLeftCorner,
+        )
 
         central = QWidget()
         self._tabs.addTab(central, "Measure")
@@ -653,6 +659,8 @@ class MainWindow(QMainWindow):
 
         self._plots = DualPlotWidget()
         self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
+        self._plots.set_between_plots_widget(self._build_measure_plot_controls())
+        self._plots.set_footer_widget(self._build_export_controls())
         root.addWidget(self._plots, 1)
 
         controls_scroll = QScrollArea()
@@ -676,6 +684,18 @@ class MainWindow(QMainWindow):
         self._console_widget = ConsoleWidget(self._console_events)
         self._console_widget.command_submitted.connect(self._run_console_command)
         self._tabs.addTab(self._console_widget, "Console")
+
+        self._settings_widget = SettingsWidget(self._settings, self)
+        self._settings_widget.settings_changed.connect(self._on_settings_tab_changed)
+        self._settings_widget.calibration_requested.connect(self._open_calibration)
+        self._settings_widget.test_level_requested.connect(self._open_test_level)
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        settings_scroll.setWidget(self._settings_widget)
+        self._settings_scroll = settings_scroll
+        self._tabs.addTab(settings_scroll, "Settings")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         self._statusbar = _EventStatusBar(self._console_events, self)
         self.setStatusBar(self._statusbar)
@@ -706,6 +726,62 @@ class MainWindow(QMainWindow):
 
     def _on_theme_toggled(self, dark: bool) -> None:
         self._theme_controller.set_theme(DARK if dark else LIGHT)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._tabs.currentWidget() is self._settings_scroll:
+            self._settings_widget.refresh_from_settings()
+
+    def _on_settings_tab_changed(self, key: str, _value: object) -> None:
+        if key in {"sample_rate", "buffer_size", "latency"}:
+            self._start_level_monitor()
+        self._log_event("INFO", "settings", "Setting saved", name=key)
+        self._statusbar.showMessage("Setting saved.")
+
+    def _build_tab_header(self) -> QWidget:
+        header = QWidget()
+        header.setObjectName("tab_header_controls")
+        header.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        row = QHBoxLayout(header)
+        row.setContentsMargins(6, 0, 8, 0)
+        row.setSpacing(6)
+        row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+
+        self._session_summary_label = QLabel()
+        self._session_summary_label.setObjectName("tab_session_summary")
+        self._session_summary_label.setFixedWidth(180)
+        self._session_summary_label.setProperty("tone", "muted")
+        row.addWidget(self._session_summary_label)
+
+        self._metadata_btn = QPushButton("Headphone Metadata…")
+        self._metadata_btn.setObjectName("btn_metadata")
+        self._metadata_btn.setFixedHeight(30)
+        self._metadata_btn.clicked.connect(self._open_metadata_dialog)
+        row.addWidget(self._metadata_btn)
+
+        self._clear_metadata_btn = QPushButton("Clear Metadata")
+        self._clear_metadata_btn.setObjectName("btn_danger")
+        self._clear_metadata_btn.setFixedHeight(30)
+        self._clear_metadata_btn.clicked.connect(self._clear_metadata)
+        row.addWidget(self._clear_metadata_btn)
+
+        self._bluetooth_mode_toggle = ToggleSwitch("Bluetooth")
+        self._bluetooth_mode_toggle.setFixedHeight(30)
+        self._bluetooth_mode_toggle.setChecked(
+            bool(self._settings.get("bluetooth_headphone_mode"))
+        )
+        self._bluetooth_mode_toggle.setToolTip(
+            "Bluetooth Headphone Mode applies safer timing settings for "
+            "Bluetooth latency and jitter paths."
+        )
+        self._bluetooth_mode_toggle.stateChanged.connect(
+            self._on_bluetooth_mode_changed
+        )
+        row.addWidget(self._bluetooth_mode_toggle)
+        self._refresh_session_labels()
+        return header
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
         toggle = getattr(self, "_theme_toggle", None)
@@ -918,6 +994,7 @@ class MainWindow(QMainWindow):
             self._queue_level_spin.blockSignals(False)
         if name in {"sample_rate", "buffer_size"}:
             self._start_level_monitor()
+        self._settings_widget.refresh_from_settings()
 
     def _set_console_bluetooth_mode(self, enabled: bool) -> None:
         current = bool(self._settings.get("bluetooth_headphone_mode"))
@@ -941,6 +1018,7 @@ class MainWindow(QMainWindow):
         self._bluetooth_mode_toggle.blockSignals(True)
         self._bluetooth_mode_toggle.setChecked(enabled)
         self._bluetooth_mode_toggle.blockSignals(False)
+        self._settings_widget.refresh_from_settings()
 
     def _run_measure_command(self, args: list[str]) -> None:
         if args and args[0] == "start" and len(args) <= 3:
@@ -1130,47 +1208,97 @@ class MainWindow(QMainWindow):
             return
         raise ValueError("Unknown Curator command. Type 'curator help' for available commands.")
 
+    def _build_measure_plot_controls(self) -> QWidget:
+        row_widget = QWidget()
+        row_widget.setObjectName("measure_interplot_controls")
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(8)
+
+        input_label = QLabel("Input")
+        input_label.setProperty("tone", "muted")
+        row.addWidget(input_label)
+        self._level_meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
+        self._level_meter.setMinimumWidth(120)
+        row.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
+        self._level_status_label = QLabel("RMS")
+        self._level_status_label.setProperty("tone", "muted")
+        self._level_status_label.setMinimumWidth(30)
+        self._level_status_label.setToolTip("Live input RMS monitor")
+        row.addWidget(self._level_status_label)
+
+        self._variation_toggle = ToggleSwitch("Variation")
+        self._variation_toggle.setToolTip(
+            "Show confidence-style spread of kept measurements in the bottom viewport."
+        )
+        self._variation_toggle.stateChanged.connect(self._on_bottom_view_changed)
+        row.addWidget(self._variation_toggle)
+
+        self._hrtf_toggle = ToggleSwitch("HRTF")
+        self._hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
+        self._hrtf_toggle.stateChanged.connect(self._update_plots)
+        row.addWidget(self._hrtf_toggle)
+
+        self._hrtf_combo = QComboBox()
+        self._hrtf_combo.setMinimumWidth(120)
+        self._hrtf_combo.setToolTip("Select the HRTF used for compensation.")
+        self._hrtf_combo.currentIndexChanged.connect(self._on_hrtf_selected)
+        row.addWidget(self._hrtf_combo)
+        self._hrtf_label = QLabel("None")
+        self._hrtf_label.setProperty("tone", "muted")
+        self._hrtf_label.setMaximumWidth(90)
+        row.addWidget(self._hrtf_label)
+        self._refresh_hrtf_options()
+
+        self._undo_btn = QPushButton("Undo")
+        self._undo_btn.clicked.connect(self._undo_last_measurement)
+        row.addWidget(self._undo_btn)
+
+        self._clear_btn = QPushButton("Clear All")
+        self._clear_btn.setObjectName("btn_danger")
+        self._clear_btn.clicked.connect(self._clear_all)
+        row.addWidget(self._clear_btn)
+        return row_widget
+
+    def _build_export_controls(self) -> QWidget:
+        row_widget = QWidget()
+        row_widget.setObjectName("measure_export_controls")
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(8)
+
+        row.addWidget(QLabel("Export directory:"))
+        self._export_dir_input = QLineEdit()
+        self._export_dir_input.setPlaceholderText("Default: choose at export")
+        self._export_dir_input.setText(str(self._settings.get("export_directory") or ""))
+        row.addWidget(self._export_dir_input, 1)
+        export_dir_btn = QPushButton("Browse…")
+        export_dir_btn.clicked.connect(self._choose_export_directory)
+        row.addWidget(export_dir_btn)
+
+        self._export_btn = QPushButton("Export Average…")
+        self._export_btn.setObjectName("btn_export")
+        self._export_btn.clicked.connect(self._export)
+        row.addWidget(self._export_btn)
+
+        self._send_to_curator_btn = QPushButton("Send to Curator")
+        self._send_to_curator_btn.clicked.connect(self._send_to_curator)
+        self._send_to_curator_btn.setToolTip(
+            "Add the current average or variation view to Curator."
+        )
+        row.addWidget(self._send_to_curator_btn)
+
+        self._upload_btn = QPushButton("Upload to Squiglink")
+        self._upload_btn.setObjectName("btn_upload")
+        self._upload_btn.clicked.connect(self._upload_to_squiglink)
+        row.addWidget(self._upload_btn)
+        return row_widget
+
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-
-        bt_mode_box = QGroupBox("Measurement Mode")
-        bt_mode_layout = QVBoxLayout(bt_mode_box)
-        self._bluetooth_mode_toggle = ToggleSwitch("Bluetooth Headphone Mode")
-        self._bluetooth_mode_toggle.setChecked(
-            bool(self._settings.get("bluetooth_headphone_mode"))
-        )
-        self._bluetooth_mode_toggle.stateChanged.connect(
-            self._on_bluetooth_mode_changed
-        )
-        bt_mode_layout.addWidget(self._bluetooth_mode_toggle)
-        bt_hint = QLabel(
-            "Applies safer timing settings for Bluetooth latency/jitter paths."
-        )
-        bt_hint.setWordWrap(True)
-        bt_hint.setProperty("tone", "muted")
-        bt_mode_layout.addWidget(bt_hint)
-        layout.addWidget(bt_mode_box)
-
-        self._clear_metadata_btn = QPushButton("Clear Metadata")
-        self._clear_metadata_btn.clicked.connect(self._clear_metadata)
-        layout.addWidget(self._clear_metadata_btn)
-
-        session_box = QGroupBox("Session")
-        sb_layout = QVBoxLayout(session_box)
-        self._session_name_label = QLabel("")
-        self._session_name_label.setTextFormat(Qt.TextFormat.RichText)
-        self._session_rig_label = QLabel("")
-        self._metadata_btn = QPushButton("Headphone Metadata…")
-        self._metadata_btn.setObjectName("btn_metadata")
-        self._metadata_btn.clicked.connect(self._open_metadata_dialog)
-        sb_layout.addWidget(self._session_name_label)
-        sb_layout.addWidget(self._session_rig_label)
-        sb_layout.addWidget(self._metadata_btn)
-        self._refresh_session_labels()
-        layout.addWidget(self._make_collapsible_section("Session", session_box))
 
         dev_box = QGroupBox("Devices")
         dev_layout = QVBoxLayout(dev_box)
@@ -1211,21 +1339,6 @@ class MainWindow(QMainWindow):
         dev_layout.addWidget(self._refresh_devices_btn)
 
         layout.addWidget(self._make_collapsible_section("Devices", dev_box))
-
-        meter_box = QGroupBox("Input Level")
-        meter_layout = QHBoxLayout(meter_box)
-        meter_layout.setSpacing(12)
-        self._level_meter = LevelMeterWidget(
-            orientation=Qt.Orientation.Horizontal
-        )
-        self._level_status_label = QLabel("Live RMS monitor")
-        self._level_status_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        self._level_status_label.setWordWrap(True)
-        meter_layout.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
-        meter_layout.addWidget(self._level_status_label, 1)
-        layout.addWidget(self._make_collapsible_section("Input Level", meter_box))
 
         queue_box = QGroupBox("Queue")
         queue_layout = QVBoxLayout(queue_box)
@@ -1317,99 +1430,6 @@ class MainWindow(QMainWindow):
         queue_layout.addWidget(self._queue_hint_label)
 
         layout.addWidget(self._make_collapsible_section("Queue", queue_box))
-
-        bottom_box = QGroupBox("Bottom View")
-        bottom_layout = QVBoxLayout(bottom_box)
-
-        self._variation_toggle = ToggleSwitch("Variation Band")
-        self._variation_toggle.stateChanged.connect(self._on_bottom_view_changed)
-        bottom_layout.addWidget(self._variation_toggle)
-
-        self._hrtf_toggle = ToggleSwitch("HRTF Compensation")
-        self._hrtf_toggle.stateChanged.connect(self._update_plots)
-        bottom_layout.addWidget(self._hrtf_toggle)
-
-        bottom_hint = QLabel("Variation shows confidence-style spread of kept measurements.")
-        bottom_hint.setWordWrap(True)
-        bottom_hint.setProperty("tone", "muted")
-        bottom_layout.addWidget(bottom_hint)
-
-        self._hrtf_combo = QComboBox()
-        self._hrtf_combo.currentIndexChanged.connect(self._on_hrtf_selected)
-        bottom_layout.addWidget(self._hrtf_combo)
-
-        self._hrtf_label = QLabel("No HRTF selected")
-        self._hrtf_label.setWordWrap(True)
-        bottom_layout.addWidget(self._hrtf_label)
-        self._refresh_hrtf_options()
-
-        layout.addWidget(
-            self._make_collapsible_section("Bottom View", bottom_box, collapsed=True),
-            1,
-        )
-
-        misc_box = QGroupBox("Tools")
-        misc_layout = QVBoxLayout(misc_box)
-
-        undo_btn = QPushButton("↶ Undo Last Measurement")
-        undo_btn.clicked.connect(self._undo_last_measurement)
-        misc_layout.addWidget(undo_btn)
-        self._undo_btn = undo_btn
-
-        clear_btn = QPushButton("Clear All Measurements")
-        clear_btn.clicked.connect(self._clear_all)
-        misc_layout.addWidget(clear_btn)
-        self._clear_btn = clear_btn
-
-        settings_btn = QPushButton("Settings…")
-        settings_btn.clicked.connect(self._open_settings)
-        misc_layout.addWidget(settings_btn)
-        self._settings_btn = settings_btn
-
-        cal_btn = QPushButton("SPL Calibration…")
-        cal_btn.clicked.connect(self._open_calibration)
-        misc_layout.addWidget(cal_btn)
-        self._cal_btn = cal_btn
-
-        test_level_btn = QPushButton("Test Level…")
-        test_level_btn.clicked.connect(self._open_test_level)
-        misc_layout.addWidget(test_level_btn)
-        self._test_level_btn = test_level_btn
-
-        layout.addWidget(self._make_collapsible_section("Tools", misc_box, collapsed=True))
-
-        export_box = QGroupBox("Export")
-        export_layout = QVBoxLayout(export_box)
-
-        export_dir_row = QHBoxLayout()
-        export_dir_row.addWidget(QLabel("Directory:"))
-        self._export_dir_input = QLineEdit()
-        self._export_dir_input.setPlaceholderText("Default: choose at export")
-        self._export_dir_input.setText(str(self._settings.get("export_directory") or ""))
-        export_dir_row.addWidget(self._export_dir_input, 1)
-        export_dir_btn = QPushButton("Browse…")
-        export_dir_btn.clicked.connect(self._choose_export_directory)
-        export_dir_row.addWidget(export_dir_btn)
-        export_layout.addLayout(export_dir_row)
-
-        export_btn = QPushButton("Export Average…")
-        export_btn.setObjectName("btn_export")
-        export_btn.clicked.connect(self._export)
-        export_layout.addWidget(export_btn)
-        self._export_btn = export_btn
-
-        self._send_to_curator_btn = QPushButton("Send to Curator")
-        self._send_to_curator_btn.clicked.connect(self._send_to_curator)
-        self._send_to_curator_btn.setToolTip(
-            "Add the current average or variation view to Curator."
-        )
-        export_layout.addWidget(self._send_to_curator_btn)
-
-        self._upload_btn = QPushButton("Upload to Squiglink")
-        self._upload_btn.setObjectName("btn_upload")
-        self._upload_btn.clicked.connect(self._upload_to_squiglink)
-        export_layout.addWidget(self._upload_btn)
-        layout.addWidget(export_box)
 
         layout.addStretch(1)
         return panel
@@ -1661,10 +1681,12 @@ class MainWindow(QMainWindow):
         self._hrtf_toggle.setEnabled(has_hrtf)
 
         if has_hrtf:
-            self._hrtf_label.setText(self._hrtf.path)
+            self._hrtf_label.setText(Path(self._hrtf.path).stem)
+            self._hrtf_label.setToolTip(self._hrtf.path)
             index = self._hrtf_combo.findData(self._hrtf.path)
         else:
-            self._hrtf_label.setText("No HRTF selected")
+            self._hrtf_label.setText("None")
+            self._hrtf_label.setToolTip("")
             self._hrtf_toggle.setChecked(False)
             index = 0
 
@@ -1913,7 +1935,7 @@ class MainWindow(QMainWindow):
         if input_device is None:
             self._displayed_level_dbfs = -60.0
             self._level_meter.set_level(-60.0)
-            self._level_status_label.setText("No input device selected")
+            self._level_status_label.setText("No input")
             return
 
         try:
@@ -1924,7 +1946,7 @@ class MainWindow(QMainWindow):
                 fs=int(self._settings.get("sample_rate")),
                 buffer_size=int(self._settings.get("buffer_size")),
             )
-            self._level_status_label.setText("Live RMS monitor")
+            self._level_status_label.setText("RMS")
         except Exception as exc:
             self._statusbar.showMessage(f"Level monitor start failed: {exc}")
 
@@ -2059,9 +2081,6 @@ class MainWindow(QMainWindow):
             self._bluetooth_mode_toggle,
             self._variation_toggle,
             self._hrtf_combo,
-            self._settings_btn,
-            self._cal_btn,
-            self._test_level_btn,
             self._undo_btn,
             self._clear_btn,
             self._metadata_btn,
@@ -2072,9 +2091,12 @@ class MainWindow(QMainWindow):
             widget.setEnabled(idle)
 
         self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
+        self._settings_widget.set_editing_enabled(idle)
         self._start_queue_btn.setEnabled(idle and device_ok)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
         self._undo_btn.setEnabled(idle and len(self._kept_curves) > 0)
+        has_measurements = bool(self._kept_curves) or self._pending_curve is not None
+        self._clear_btn.setEnabled(idle and has_measurements)
         self._sync_export_button()
 
     def _start_queue(self) -> None:
@@ -2711,6 +2733,17 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self._kept_curves and self._pending_curve is None:
+            return
+
+        if bool(self._settings.get("confirm_clear_measurements")):
+            confirmed, dont_show_again = self._confirm_clear_all()
+            if not confirmed:
+                return
+            if dont_show_again:
+                self._settings.set("confirm_clear_measurements", False)
+                self._settings_widget.refresh_from_settings()
+
         self._kept_curves.clear()
         self._average = None
         self._variation = None
@@ -2722,7 +2755,26 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
         self._sync_export_button()
+        self._apply_state_ui()
         self._statusbar.showMessage("All measurements cleared.")
+
+    def _confirm_clear_all(self) -> tuple[bool, bool]:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Clear All Measurements")
+        dialog.setText(
+            "Are you sure you want to clear all measurements from this tab?"
+        )
+        clear_button = dialog.addButton(
+            "Clear All", QMessageBox.ButtonRole.DestructiveRole
+        )
+        clear_button.setObjectName("btn_danger")
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dont_show = QCheckBox("Don’t show this warning again")
+        dialog.setCheckBox(dont_show)
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        return dialog.clickedButton() is clear_button, dont_show.isChecked()
 
     def _undo_last_measurement(self) -> None:
         if self._state != AppState.IDLE:
@@ -2741,12 +2793,8 @@ class MainWindow(QMainWindow):
         self._recompute_variation()
         self._update_queue_progress()
         self._update_plots()
+        self._apply_state_ui()
         self._statusbar.showMessage("Last kept measurement removed.")
-
-    def _open_settings(self) -> None:
-        dlg = SettingsDialog(self._settings, self)
-        if dlg.exec():
-            self._start_level_monitor()
 
     def _open_metadata_dialog(self) -> None:
         dlg = SessionDialog(
@@ -2761,6 +2809,14 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("Headphone metadata updated.")
 
     def _clear_metadata(self) -> None:
+        if bool(self._settings.get("confirm_clear_metadata")):
+            confirmed, dont_show_again = self._confirm_clear_metadata()
+            if not confirmed:
+                return
+            if dont_show_again:
+                self._settings.set("confirm_clear_metadata", False)
+                self._settings_widget.refresh_from_settings()
+
         self._session = SessionData(
             rig="Unknown Rig",
             brand="Unknown",
@@ -2769,6 +2825,22 @@ class MainWindow(QMainWindow):
         self._refresh_session_labels()
         self._refresh_window_title()
         self._statusbar.showMessage("Headphone metadata cleared.")
+
+    def _confirm_clear_metadata(self) -> tuple[bool, bool]:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Clear Headphone Metadata")
+        dialog.setText("Are you sure you want to clear all headphone metadata?")
+        clear_button = dialog.addButton(
+            "Clear Metadata", QMessageBox.ButtonRole.DestructiveRole
+        )
+        clear_button.setObjectName("btn_danger")
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dont_show = QCheckBox("Don’t show this warning again")
+        dialog.setCheckBox(dont_show)
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        return dialog.clickedButton() is clear_button, dont_show.isChecked()
 
     def _on_queue_level_changed(self, value: float) -> None:
         if hasattr(self._settings, "clear_session"):
@@ -2825,6 +2897,7 @@ class MainWindow(QMainWindow):
                 current_profile
             )
         self._settings.update(updates)
+        self._settings_widget.refresh_from_settings()
         if notify:
             self._statusbar.showMessage(
                 "Bluetooth mode applied: high latency, 512 buffer, and Bluetooth-safe timing thresholds."
@@ -2836,6 +2909,7 @@ class MainWindow(QMainWindow):
         )
         updates[PROFILE_SNAPSHOT_SETTING] = None
         self._settings.update(updates)
+        self._settings_widget.refresh_from_settings()
         return used_fallback
 
     def _choose_export_directory(self) -> None:
@@ -3149,6 +3223,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
         self._upload_btn.setEnabled(upload_enabled)
+        if hasattr(self, "_undo_btn"):
+            self._undo_btn.setEnabled(idle and bool(self._kept_curves))
+        if hasattr(self, "_clear_btn"):
+            self._clear_btn.setEnabled(
+                idle and (bool(self._kept_curves) or self._pending_curve is not None)
+            )
 
     def _squiglink_endpoint(self) -> tuple[str, int]:
         host = str(self._settings.get("squiglink_host") or "").strip()
@@ -3371,8 +3451,11 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _refresh_session_labels(self) -> None:
-        self._session_name_label.setText(f"<b>{self._session.display_name()}</b>")
-        self._session_rig_label.setText(f"Rig: {self._session.rig}")
+        summary = f"{self._session.display_name()} · {self._session.rig}"
+        self._session_summary_label.setText(summary)
+        self._session_summary_label.setToolTip(
+            f"Headphone: {self._session.display_name()}\nRig: {self._session.rig}"
+        )
 
     def _refresh_window_title(self) -> None:
         self.setWindowTitle(

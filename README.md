@@ -61,13 +61,20 @@ them as kept curves without live fixture hardware. Files should contain two
 columns: frequency in Hz and magnitude in dB. Whitespace- or comma-delimited
 REW-style text is accepted; comments/header rows are skipped when possible.
 
-## Measure, Curator, and Console Tabs
+## Measure, Curator, Console, and Settings Tabs
 
-The **Measure** tab contains the normal measurement interface. Its **Send to
-Curator** button adds the currently selected average or variation view to the
-Curator workspace and switches to that tab. The new layer is offset to 0 dB at
-1 kHz without changing its source data or frequency-response shape, and its
-HRTF selection remains editable.
+The **Measure** tab contains the normal measurement interface. Input level,
+bottom-view controls, Undo, and the guarded Clear All action sit between its two
+plots. Export directory, TXT export, Curator transfer, and Squiglink upload sit
+below the bottom plot. **Send to Curator** adds the currently selected average
+or variation view to the Curator workspace and switches to that tab. The new
+layer is offset to 0 dB at 1 kHz without changing its source data or
+frequency-response shape, and its HRTF selection remains editable.
+
+The tab header keeps the current headphone and rig visible alongside Headphone
+Metadata, Clear Metadata, and Bluetooth mode controls. These application-wide
+controls remain available while moving between Measure, Curator, Console, and
+Settings.
 
 The **Curator** tab is a graph image generation tool. It imports and compares
 two-column frequency-response TXT files and six-column Fastgraph variation
@@ -85,6 +92,11 @@ inspect status, devices, settings, and the latest diagnostics; apply temporary
 measurement-setting overrides; start/cancel a queue; pass or fail a pending
 measurement; export average/variation TXT files; and launch Squiglink upload.
 Temporary settings are persisted only with `settings save`.
+
+The **Settings** tab saves sweep and timing changes immediately and contains
+SPL Calibration, Test Level, and options to restore the measurement and
+metadata clearing warnings. Its controls are grouped in a compact left-aligned
+column and remain visible but disabled while a measurement queue is active.
 
 Type `curator help` for the built-in command reference. Curator commands include:
 

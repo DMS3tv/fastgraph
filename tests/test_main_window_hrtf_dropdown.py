@@ -104,7 +104,8 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
     assert settings.data["hrtf_path"] == str(hrtf_path)
     assert fake._hrtf_toggle.isEnabled()
     assert fake._hrtf_toggle.isChecked()
-    assert fake._hrtf_label.text() == str(hrtf_path)
+    assert fake._hrtf_label.text() == "Fixture A"
+    assert fake._hrtf_label.toolTip() == str(hrtf_path)
     assert fake.update_count == 1
 
 
@@ -128,7 +129,8 @@ def test_selecting_none_clears_hrtf_and_disables_compensation(
     assert settings.data["hrtf_path"] is None
     assert not fake._hrtf_toggle.isEnabled()
     assert not fake._hrtf_toggle.isChecked()
-    assert fake._hrtf_label.text() == "No HRTF selected"
+    assert fake._hrtf_label.text() == "None"
+    assert fake._hrtf_label.toolTip() == ""
 
 
 def test_restore_ignores_missing_or_legacy_custom_hrtf_path(

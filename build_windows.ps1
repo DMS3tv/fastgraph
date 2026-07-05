@@ -14,6 +14,31 @@ if (-not (Test-Path $Python)) {
 & $Python -m pip install --upgrade pip
 & $Python -m pip install -r requirements.txt pyinstaller
 
+$PngIcon = Join-Path $RootDir "fastgraph icon.png"
+$IcoIcon = Join-Path $RootDir "fastgraph.ico"
+if (-not (Test-Path $PngIcon)) {
+    Write-Error "Missing icon source: $PngIcon"
+}
+
+$env:FASTGRAPH_PNG_ICON = $PngIcon
+$env:FASTGRAPH_ICO_ICON = $IcoIcon
+@'
+import os
+from pathlib import Path
+from PyQt6.QtGui import QImage
+
+png_path = Path(os.environ["FASTGRAPH_PNG_ICON"])
+ico_path = Path(os.environ["FASTGRAPH_ICO_ICON"])
+image = QImage(str(png_path))
+if image.isNull():
+    raise SystemExit(f"Unable to load icon source: {png_path}")
+if not image.save(str(ico_path), "ICO"):
+    raise SystemExit(f"Unable to write Windows icon: {ico_path}")
+'@ | & $Python -
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 $BuildDir = Join-Path $RootDir "build"
 $DistDir = Join-Path $RootDir "dist"
 foreach ($Path in @($BuildDir, $DistDir)) {
@@ -23,6 +48,9 @@ foreach ($Path in @($BuildDir, $DistDir)) {
 }
 
 & $Python -m PyInstaller --noconfirm dms_fastgraph.spec
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
 
 $AppDir = Join-Path $DistDir "FastGraph Beta"
 $ZipPath = Join-Path $DistDir "FastGraph Beta-windows-x64.zip"
@@ -30,6 +58,9 @@ if (Test-Path $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
 
 Write-Host ""
 Write-Host "Built Windows app:"

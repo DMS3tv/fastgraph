@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QFileDialog,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -137,6 +139,18 @@ class SettingsWidget(QWidget):
         )
         safety_layout.addWidget(self._confirm_clear_metadata)
         layout.addWidget(self._safety_group)
+
+        self._rnd_group = QGroupBox("R&D Sessions")
+        rnd_layout = QVBoxLayout(self._rnd_group)
+        rnd_row = QHBoxLayout()
+        self._rnd_session_dir = QLineEdit()
+        self._rnd_session_dir.setPlaceholderText("Default: Documents")
+        rnd_row.addWidget(self._rnd_session_dir, 1)
+        self._rnd_session_browse = QPushButton("Browse...")
+        rnd_row.addWidget(self._rnd_session_browse)
+        rnd_layout.addWidget(QLabel("Default save/load folder"))
+        rnd_layout.addLayout(rnd_row)
+        layout.addWidget(self._rnd_group)
         layout.addStretch(1)
         root_layout.addWidget(self._settings_column)
         root_layout.addStretch(1)
@@ -179,6 +193,10 @@ class SettingsWidget(QWidget):
         self._confirm_clear_metadata.toggled.connect(
             lambda checked: self._save("confirm_clear_metadata", checked)
         )
+        self._rnd_session_dir.editingFinished.connect(
+            lambda: self._save("rnd_session_directory", self._rnd_session_dir.text().strip())
+        )
+        self._rnd_session_browse.clicked.connect(self._choose_rnd_session_dir)
         self._calibration_btn.clicked.connect(self.calibration_requested)
         self._test_level_btn.clicked.connect(self.test_level_requested)
 
@@ -191,6 +209,18 @@ class SettingsWidget(QWidget):
             return
         self._settings.update({"latency": value, "latency_user_override": True})
         self.settings_changed.emit("latency", value)
+
+    def _choose_rnd_session_dir(self) -> None:
+        current = self._rnd_session_dir.text().strip()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose R&D Session Folder",
+            current,
+        )
+        if not chosen:
+            return
+        self._rnd_session_dir.setText(chosen)
+        self._save("rnd_session_directory", chosen)
 
     def refresh_from_settings(self) -> None:
         controls = (
@@ -205,6 +235,7 @@ class SettingsWidget(QWidget):
             self._timing_drift_max_ms,
             self._confirm_clear,
             self._confirm_clear_metadata,
+            self._rnd_session_dir,
         )
         for control in controls:
             control.blockSignals(True)
@@ -230,6 +261,7 @@ class SettingsWidget(QWidget):
             self._confirm_clear_metadata.setChecked(
                 bool(self._settings.get("confirm_clear_metadata"))
             )
+            self._rnd_session_dir.setText(str(self._settings.get("rnd_session_directory") or ""))
         finally:
             for control in controls:
                 control.blockSignals(False)
@@ -238,3 +270,4 @@ class SettingsWidget(QWidget):
         self._sweep_group.setEnabled(enabled)
         self._audio_tools_group.setEnabled(enabled)
         self._safety_group.setEnabled(enabled)
+        self._rnd_group.setEnabled(enabled)

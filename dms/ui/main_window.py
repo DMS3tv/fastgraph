@@ -7,6 +7,7 @@ pass/fail UI, HRTF selector, settings/calibration, and export.
 import sys
 import shlex
 import tempfile
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -38,6 +39,7 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTabWidget,
     QToolButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
     QApplication,
@@ -89,6 +91,14 @@ from dms.processing import (
     normalize_at_1khz,
     smooth_fractional_octave,
 )
+from dms.rnd.models import (
+    RnDMeasurement,
+    RnDSession,
+    generate_measurement_name,
+    group_variation as rnd_group_variation,
+    measurement_session_data,
+    session_snapshot,
+)
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
@@ -111,6 +121,7 @@ from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
+from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionDialog
 from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
@@ -426,6 +437,119 @@ class PassFailDialog(QDialog):
         self.accept()
 
 
+class RnDReviewDialog(QDialog):
+    KEEP_NO_CHANGE = "keep_no_change"
+    KEEP_CHANGE = "keep_change"
+    FAIL = "fail"
+    CANCEL = "cancel"
+
+    def __init__(
+        self,
+        previous_name: str,
+        timing_quality: Optional[tuple[float, float, float, float]] = None,
+        diagnostics: Optional[object] = None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._choice = self.CANCEL
+        self.setModal(False)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setWindowTitle("Review R&D Measurement")
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setMinimumWidth(430)
+
+        layout = QVBoxLayout(self)
+        summary = QLabel("Review the latest R&D sweep before adding it to the session.")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        previous = QLabel(
+            f"Previous kept measurement: {previous_name}" if previous_name else "Previous kept measurement: none"
+        )
+        previous.setProperty("tone", "muted")
+        previous.setWordWrap(True)
+        layout.addWidget(previous)
+
+        if timing_quality is not None:
+            start_conf, end_conf, drift_ms, snr_db = timing_quality
+            bluetooth_mode = bool(getattr(diagnostics, "bluetooth_headphone_mode", False))
+            if bluetooth_mode:
+                quality_text = (
+                    f"Timing Quality - start: {start_conf:.1f}, end: {end_conf:.1f}, "
+                    f"drift: {drift_ms:.1f} ms, SNR: {snr_db:.1f} dB"
+                )
+            else:
+                quality_text = f"Sweep Quality - alignment: {start_conf:.1f}, SNR: {snr_db:.1f} dB"
+            timing = QLabel(quality_text)
+            timing.setProperty("tone", "muted")
+            timing.setWordWrap(True)
+            layout.addWidget(timing)
+
+        if diagnostics is not None:
+            details_toggle = QToolButton()
+            details_toggle.setText("Measurement Diagnostics")
+            details_toggle.setCheckable(True)
+            details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            layout.addWidget(details_toggle)
+            details = QLabel(format_diagnostics_summary(diagnostics))
+            details.setObjectName("diagnostic_details")
+            details.setWordWrap(True)
+            details.setVisible(False)
+            layout.addWidget(details)
+            details_toggle.toggled.connect(details.setVisible)
+            details_toggle.toggled.connect(lambda _checked: self.adjustSize())
+
+        self._notes = QTextEdit()
+        self._notes.setPlaceholderText("Change notes, design/sample details, pads, EQ, fixture notes...")
+        self._notes.setMaximumHeight(96)
+        layout.addWidget(self._notes)
+
+        button_row = QHBoxLayout()
+        no_change_btn = QPushButton("Keep: No Change")
+        no_change_btn.setDefault(True)
+        no_change_btn.setObjectName("btn_keep")
+        no_change_btn.clicked.connect(self._accept_no_change)
+        button_row.addWidget(no_change_btn)
+
+        change_btn = QPushButton("Keep: Change...")
+        change_btn.setObjectName("btn_keep")
+        change_btn.clicked.connect(self._accept_change)
+        button_row.addWidget(change_btn)
+
+        fail_btn = QPushButton("Fail / Redo")
+        fail_btn.setObjectName("btn_fail")
+        fail_btn.clicked.connect(self._accept_fail)
+        button_row.addWidget(fail_btn)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self._accept_cancel)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+    def choice(self) -> str:
+        return self._choice
+
+    def notes(self) -> str:
+        return self._notes.toPlainText().strip()
+
+    def _accept_no_change(self) -> None:
+        self._choice = self.KEEP_NO_CHANGE
+        self.accept()
+
+    def _accept_change(self) -> None:
+        self._choice = self.KEEP_CHANGE
+        self.accept()
+
+    def _accept_fail(self) -> None:
+        self._choice = self.FAIL
+        self.accept()
+
+    def _accept_cancel(self) -> None:
+        self._choice = self.CANCEL
+        self.accept()
+
+
 class SquiglinkAuthDialog(QDialog):
     def __init__(
         self,
@@ -599,6 +723,8 @@ class MainWindow(QMainWindow):
         self._sweep_thread: Optional[_SweepThread] = None
         self._active_sweep_worker: Optional[SweepWorker] = None
         self._pass_fail_dialog: Optional[PassFailDialog] = None
+        self._rnd_review_dialog: Optional[RnDReviewDialog] = None
+        self._rnd_sweep_active = False
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
@@ -673,6 +799,15 @@ class MainWindow(QMainWindow):
         controls_scroll.setMaximumWidth(380)
         controls_scroll.setWidget(self._build_control_panel())
         root.addWidget(controls_scroll, 0)
+
+        self._rnd_widget = RnDWidget(parent=self)
+        self._rnd_widget.measure_requested.connect(self._start_rnd_measurement)
+        self._rnd_widget.cancel_requested.connect(self._cancel_rnd_measurement)
+        self._rnd_widget.export_requested.connect(self._export_rnd_selected)
+        self._rnd_widget.send_to_curator_requested.connect(self._send_rnd_to_curator)
+        self._rnd_widget.save_requested.connect(self._save_rnd_session)
+        self._rnd_widget.load_requested.connect(self._load_rnd_session)
+        self._tabs.addTab(self._rnd_widget, "R&&D")
 
         self._curator_widget = CuratorWidget(
             self._console_events,
@@ -790,6 +925,9 @@ class MainWindow(QMainWindow):
         plots = getattr(self, "_plots", None)
         if plots is not None:
             plots.apply_theme(theme)
+        rnd = getattr(self, "_rnd_widget", None)
+        if rnd is not None:
+            rnd.apply_theme(theme)
         curator = getattr(self, "_curator_widget", None)
         if curator is not None:
             curator.apply_theme(theme)
@@ -2092,6 +2230,8 @@ class MainWindow(QMainWindow):
 
         self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)
+        if hasattr(self, "_rnd_widget"):
+            self._rnd_widget.set_busy(not idle)
         self._start_queue_btn.setEnabled(idle and device_ok)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
         self._undo_btn.setEnabled(idle and len(self._kept_curves) > 0)
@@ -2545,6 +2685,277 @@ class MainWindow(QMainWindow):
             return
         dlg = self._pass_fail_dialog
         self._pass_fail_dialog = None
+        dlg.blockSignals(True)
+        dlg.close()
+
+    def _start_rnd_measurement(self) -> None:
+        if self._state != AppState.IDLE:
+            return
+        if self._current_output_device() is None:
+            QMessageBox.warning(self, "No Output Device", "Select an output device.")
+            return
+        if self._current_input_device() is None:
+            QMessageBox.warning(self, "No Input Device", "Select an input device.")
+            return
+        if not self._selected_audio_pair_is_compatible():
+            QMessageBox.warning(
+                self,
+                "Windows Audio Driver Mismatch",
+                self._windows_audio_pair_message(),
+            )
+            return
+        if self._ch_combo.count() == 0:
+            QMessageBox.warning(
+                self,
+                "No Input Channel",
+                "Selected input device has no available input channels.",
+            )
+            return
+        ambient_dbfs = float(self._last_level_dbfs)
+        if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
+            choice = QMessageBox.question(
+                self,
+                "Ambient Level Warning",
+                "Current ambient/input RMS looks high before R&D measurement:\n"
+                f"{ambient_dbfs:.1f} dBFS (warning threshold: {_QUEUE_AMBIENT_WARN_DBFS:.1f} dBFS).\n\n"
+                "This can reduce measurement SNR.\n"
+                "Start measurement anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                self._statusbar.showMessage("R&D measurement canceled due to high ambient level.")
+                return
+
+        self._rnd_sweep_active = True
+        self._current_sweep_attempts = 0
+        self._start_rnd_sweep()
+
+    def _start_rnd_sweep(self) -> None:
+        self._current_sweep_attempts += 1
+        self._state = AppState.SWEEPING
+        self._apply_state_ui()
+        self._rnd_widget.set_status(f"Sweeping attempt {self._current_sweep_attempts}...")
+        self._sweep_progress.setValue(0)
+
+        output_device = self._current_output_device()
+        input_device = self._current_input_device()
+        input_channel = self._current_input_channel()
+        if output_device is None or input_device is None:
+            self._on_rnd_sweep_error("Selected device is unavailable.")
+            return
+        if not self._selected_audio_pair_is_compatible():
+            self._on_rnd_sweep_error(self._windows_audio_pair_message())
+            return
+
+        self._level_monitor.stop()
+        self._last_timing_quality = None
+        self._last_measurement_diagnostics = None
+
+        sweep = generate_log_sweep(
+            duration=float(self._settings.get("sweep_duration")),
+            fs=int(self._settings.get("sample_rate")),
+            f_low=_MEASUREMENT_F_MIN,
+            f_high=_MEASUREMENT_F_MAX,
+        )
+        output_level_db = float(self._queue_level_spin.value())
+        sweep = (sweep * (10.0 ** (output_level_db / 20.0))).astype(np.float32, copy=False)
+
+        worker = SweepWorker()
+        worker.finished.connect(self._on_rnd_sweep_finished)
+        worker.error.connect(self._on_rnd_sweep_error)
+        worker.progress.connect(self._on_sweep_progress)
+        worker.timing_quality.connect(self._on_timing_quality)
+        worker.measurement_diagnostics.connect(self._on_measurement_diagnostics)
+        self._active_sweep_worker = worker
+        self._sweep_thread = _SweepThread(
+            worker,
+            sweep=sweep,
+            output_device=output_device,
+            input_device=input_device,
+            output_device_label=self._current_output_device_label(),
+            input_device_label=self._current_input_device_label(),
+            input_channel=input_channel,
+            fs=int(self._settings.get("sample_rate")),
+            buffer_size=int(self._settings.get("buffer_size")),
+            pre_silence=float(self._settings.get("pre_sweep_silence")),
+            post_silence=float(self._settings.get("post_sweep_silence")),
+            latency=self._sweep_latency_mode(),
+            bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
+            start_alignment_confidence_min=float(self._settings.get("start_alignment_confidence_min")),
+            end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
+            timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+        )
+        self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
+        self._sweep_thread.start()
+        self._statusbar.showMessage(f"R&D sweep started (attempt {self._current_sweep_attempts}).")
+        self._log_event(
+            "INFO",
+            "rnd",
+            "R&D sweep started",
+            attempt=self._current_sweep_attempts,
+            sample_rate=int(self._settings.get("sample_rate")),
+            buffer_size=int(self._settings.get("buffer_size")),
+            output_level_db=output_level_db,
+        )
+
+    def _on_rnd_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
+        try:
+            freqs, mag_db = compute_frequency_response(
+                recording=recording,
+                sweep=sweep,
+                fs=int(self._settings.get("sample_rate")),
+                f_low=_MEASUREMENT_F_MIN,
+                f_high=_MEASUREMENT_F_MAX,
+            )
+            mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+            freqs_ds, mag_ds = downsample_to_log_points(
+                freqs,
+                mag_db,
+                n_points=600,
+                f_ref=1000.0,
+                normalize_ref=True,
+            )
+            self._pending_curve = (freqs_ds, mag_ds)
+            self._state = AppState.PASS_FAIL
+            self._apply_state_ui()
+            self._rnd_widget.set_status("Sweep complete. Waiting for review.")
+            self._statusbar.showMessage("R&D sweep complete. Waiting for review.")
+            QTimer.singleShot(0, self._show_rnd_review_dialog)
+        except Exception as exc:
+            self._on_rnd_sweep_error(f"Processing error: {exc}")
+
+    def _on_rnd_sweep_error(self, message: str) -> None:
+        self._log_event("ERROR", "rnd", message)
+        self._cleanup_sweep_thread()
+        self._close_rnd_review_dialog()
+        self._pending_curve = None
+        failure_reason = None
+        if self._last_measurement_diagnostics is not None:
+            failure_reason = getattr(self._last_measurement_diagnostics, "failure_reason", None)
+        is_timing_quality_error = is_retryable_timing_failure(
+            message=message,
+            failure_reason=failure_reason,
+        )
+        if is_timing_quality_error and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS:
+            choice = QMessageBox.question(
+                self,
+                "Timing Quality Retry",
+                f"{message}\n\nRetry R&D measurement attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self._state = AppState.IDLE
+                self._apply_state_ui()
+                QTimer.singleShot(150, self._start_rnd_sweep)
+                return
+        self._rnd_sweep_active = False
+        self._current_sweep_attempts = 0
+        self._state = AppState.IDLE
+        self._sweep_progress.setValue(0)
+        self._apply_state_ui()
+        self._start_level_monitor()
+        self._rnd_widget.set_status("Ready")
+        self._statusbar.showMessage(message)
+        QMessageBox.warning(self, "R&D Sweep Error", message)
+
+    def _show_rnd_review_dialog(self) -> None:
+        if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+            return
+        if self._rnd_review_dialog is not None:
+            self._rnd_review_dialog.raise_()
+            self._rnd_review_dialog.activateWindow()
+            return
+        previous = self._rnd_widget.session.measurements[-1].name if self._rnd_widget.session.measurements else ""
+        dlg = RnDReviewDialog(
+            previous,
+            timing_quality=self._last_timing_quality,
+            diagnostics=self._last_measurement_diagnostics,
+            parent=self,
+        )
+        dlg.adjustSize()
+        dlg.finished.connect(lambda _result: self._handle_rnd_review_choice(dlg))
+        self._rnd_review_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _handle_rnd_review_choice(self, dlg: RnDReviewDialog) -> None:
+        if self._rnd_review_dialog is dlg:
+            self._rnd_review_dialog = None
+        choice = dlg.choice()
+        if choice == RnDReviewDialog.FAIL:
+            self._pending_curve = None
+            self._state = AppState.IDLE
+            self._apply_state_ui()
+            self._statusbar.showMessage("R&D measurement rejected. Redoing...")
+            QTimer.singleShot(100, self._start_rnd_measurement)
+            return
+        if choice in {RnDReviewDialog.KEEP_NO_CHANGE, RnDReviewDialog.KEEP_CHANGE}:
+            self._keep_rnd_measurement(
+                change_status="changed" if choice == RnDReviewDialog.KEEP_CHANGE else "no_change",
+                notes=dlg.notes() if choice == RnDReviewDialog.KEEP_CHANGE else dlg.notes(),
+            )
+            return
+        self._cancel_rnd_measurement()
+
+    def _keep_rnd_measurement(self, *, change_status: str, notes: str) -> None:
+        if self._pending_curve is None:
+            return
+        freqs, mag_db = self._pending_curve
+        channel_label = self._ch_combo.currentText().strip() or f"Channel {self._current_input_channel() + 1}"
+        existing_names = {item.name for item in self._rnd_widget.session.measurements}
+        measurement = RnDMeasurement(
+            name=generate_measurement_name(
+                self._session,
+                self._current_input_device_label(),
+                channel_label,
+                existing_names,
+            ),
+            freqs=np.array(freqs, dtype=float, copy=True),
+            mag_db=np.array(mag_db, dtype=float, copy=True),
+            metadata=session_snapshot(self._session),
+            rig=self._session.rig,
+            input_device_label=self._current_input_device_label(),
+            input_channel_index=self._current_input_channel(),
+            input_channel_label=channel_label,
+            output_device_label=self._current_output_device_label(),
+            notes=notes,
+            change_status=change_status,
+            top_visible=True,
+            pinned=False,
+        )
+        self._rnd_widget.add_measurement(measurement)
+        self._pending_curve = None
+        self._rnd_sweep_active = False
+        self._current_sweep_attempts = 0
+        self._state = AppState.IDLE
+        self._sweep_progress.setValue(100)
+        self._apply_state_ui()
+        self._start_level_monitor()
+        self._rnd_widget.set_status("Ready")
+        self._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
+        self._log_event("INFO", "rnd", "R&D measurement kept", name=measurement.name, status=change_status)
+
+    def _cancel_rnd_measurement(self) -> None:
+        self._abort_active_sweep()
+        self._close_rnd_review_dialog()
+        self._pending_curve = None
+        self._rnd_sweep_active = False
+        self._current_sweep_attempts = 0
+        self._state = AppState.IDLE
+        self._sweep_progress.setValue(0)
+        self._apply_state_ui()
+        self._start_level_monitor()
+        self._rnd_widget.set_status("Ready")
+        self._statusbar.showMessage("R&D measurement canceled.")
+
+    def _close_rnd_review_dialog(self) -> None:
+        if self._rnd_review_dialog is None:
+            return
+        dlg = self._rnd_review_dialog
+        self._rnd_review_dialog = None
         dlg.blockSignals(True)
         dlg.close()
 
@@ -3087,6 +3498,258 @@ class MainWindow(QMainWindow):
             hrtf=active_hrtf.name if active_hrtf else None,
         )
 
+    def _send_rnd_to_curator(self) -> None:
+        if self._state != AppState.IDLE:
+            return
+        active_hrtf = self._hrtf if self._is_hrtf_active() else None
+        measurement = self._rnd_widget.selected_measurement()
+        group = self._rnd_widget.selected_group()
+        if measurement is not None:
+            freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
+            freqs = np.array(freqs, dtype=float, copy=True)
+            mag = np.array(mag, dtype=float, copy=True)
+            curve = CurveData(
+                kind="fr",
+                freqs=freqs,
+                mag_db=mag,
+                metadata={"Source": "Fastgraph R&D measurement"},
+            )
+            name = measurement.name
+        elif group is not None:
+            if not group.variation_enabled:
+                QMessageBox.information(
+                    self,
+                    "Variation Disabled",
+                    "Enable variation for the selected group before sending it to Curator.",
+                )
+                return
+            variation = rnd_group_variation(self._rnd_widget.displayed_group_measurements(group))
+            if variation is None:
+                QMessageBox.information(
+                    self,
+                    "Nothing to Send",
+                    "Selected group needs at least two measurements for a variation layer.",
+                )
+                return
+            freqs, p10, p25, p75, p90, median = variation
+            curve = CurveData(
+                kind="variation",
+                freqs=np.array(freqs, dtype=float, copy=True),
+                p10_db=np.array(p10, dtype=float, copy=True),
+                p25_db=np.array(p25, dtype=float, copy=True),
+                median_db=np.array(median, dtype=float, copy=True),
+                p75_db=np.array(p75, dtype=float, copy=True),
+                p90_db=np.array(p90, dtype=float, copy=True),
+                metadata={"Source": "Fastgraph R&D group variation"},
+            )
+            name = f"{group.name} VAR"
+        else:
+            QMessageBox.information(self, "Nothing Selected", "Select an R&D measurement or group first.")
+            return
+
+        self._tabs.setCurrentWidget(self._curator_widget)
+        layer = self._curator_widget.add_curve(
+            curve,
+            name,
+            source_path="<fastgraph-rnd>",
+            hrtf=None,
+            normalize=False,
+        )
+        self._curator_widget.offset_layer_to_zero_at_1khz(layer)
+        self._statusbar.showMessage(f"Sent R&D item to Curator: {layer.name}")
+        self._log_event("INFO", "rnd", "R&D item sent to Curator", name=layer.name, kind=curve.kind)
+
+    def _export_rnd_selected(self) -> None:
+        if self._state != AppState.IDLE:
+            return
+        measurement = self._rnd_widget.selected_measurement()
+        group = self._rnd_widget.selected_group()
+        if measurement is not None:
+            self._export_rnd_measurement(measurement)
+            return
+        if group is not None:
+            if group.variation_enabled:
+                self._export_rnd_group_variation(group)
+            else:
+                self._export_rnd_group_measurements(group)
+            return
+        QMessageBox.information(self, "Nothing Selected", "Select an R&D measurement or group first.")
+
+    def _export_rnd_measurement(self, measurement: RnDMeasurement, requested_path: Optional[str] = None) -> None:
+        session = measurement_session_data(measurement)
+        compensated = bool(measurement.hrtf_path)
+        filename = f"{self._safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
+        path = self._resolve_export_path(requested_path, filename, "Export R&D Measurement")
+        if path is None:
+            return
+        freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
+        hrtf = HRTFCurve(measurement.hrtf_path) if compensated else None
+        export_curve(
+            freqs=freqs,
+            mag_db=mag,
+            session=session,
+            output_path=path,
+            compensated=compensated,
+            hrtf=hrtf,
+            n_sweeps=1,
+        )
+        self._settings.set("export_directory", str(path.parent))
+        self._export_dir_input.setText(str(path.parent))
+        self._statusbar.showMessage(f"Exported R&D measurement: {path}")
+        self._log_event("INFO", "rnd", "R&D measurement exported", path=str(path))
+
+    def _export_rnd_group_variation(self, group) -> None:
+        measurements = self._rnd_widget.displayed_group_measurements(group)
+        variation = rnd_group_variation(measurements)
+        if variation is None:
+            QMessageBox.information(
+                self,
+                "Nothing to Export",
+                "Selected group needs at least two measurements for variation export.",
+            )
+            return
+        compensated = any(bool(measurement.hrtf_path) for measurement in measurements)
+        filename = f"{self._safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
+        path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
+        if path is None:
+            return
+        freqs, p10, p25, p75, p90, median = variation
+        hrtf = None
+        session = measurement_session_data(measurements[0])
+        export_variation(
+            freqs=freqs,
+            p10_db=p10,
+            p25_db=p25,
+            median_db=median,
+            p75_db=p75,
+            p90_db=p90,
+            session=session,
+            output_path=path,
+            compensated=compensated,
+            hrtf=hrtf,
+            n_sweeps=len(measurements),
+            smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+        )
+        self._settings.set("export_directory", str(path.parent))
+        self._export_dir_input.setText(str(path.parent))
+        self._statusbar.showMessage(f"Exported R&D variation: {path}")
+        self._log_event("INFO", "rnd", "R&D variation exported", path=str(path))
+
+    def _export_rnd_group_measurements(self, group) -> None:
+        measurements = self._rnd_widget.selected_group_measurements()
+        if not measurements:
+            QMessageBox.information(self, "Nothing to Export", "Selected group has no measurements.")
+            return
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Export R&D Group Measurements",
+            str(self._settings.get("export_directory") or ""),
+        )
+        if not directory:
+            return
+        for measurement in measurements:
+            path = Path(directory) / f"{self._safe_filename(measurement.name)}.txt"
+            self._export_rnd_measurement(measurement, str(path))
+        self._statusbar.showMessage(f"Exported {len(measurements)} R&D measurements.")
+
+    def _rnd_default_dir(self) -> Path:
+        configured = str(self._settings.get("rnd_session_directory") or "").strip()
+        if configured:
+            return Path(configured).expanduser()
+        documents = Path.home() / "Documents"
+        return documents if documents.exists() else Path.home()
+
+    def _save_rnd_session(self) -> bool:
+        default_dir = self._rnd_default_dir()
+        default_path = default_dir / "fastgraph-rnd-session.fastgraph-rnd.json"
+        path_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save R&D Session",
+            str(default_path),
+            "Fastgraph R&D Session (*.fastgraph-rnd.json);;JSON Files (*.json);;All Files (*)",
+        )
+        if not path_str:
+            return False
+        path = Path(path_str)
+        if path.suffix.lower() == ".json" and not path.name.endswith(".fastgraph-rnd.json"):
+            path = path.with_name(path.stem + ".fastgraph-rnd.json")
+        elif path.suffix == "":
+            path = path.with_suffix(".fastgraph-rnd.json")
+        self._rnd_widget.session.saved_app_version = __version__
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(self._rnd_widget.session.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        self._settings.set("rnd_session_directory", str(path.parent))
+        self._settings_widget.refresh_from_settings()
+        self._statusbar.showMessage(f"Saved R&D session: {path}")
+        self._log_event("INFO", "rnd", "R&D session saved", path=str(path))
+        return True
+
+    def _load_rnd_session(self) -> None:
+        default_dir = self._rnd_default_dir()
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load R&D Session",
+            str(default_dir),
+            "Fastgraph R&D Session (*.fastgraph-rnd.json *.json);;All Files (*)",
+        )
+        if not path_str:
+            return
+        try:
+            incoming = RnDSession.from_dict(json.loads(Path(path_str).read_text(encoding="utf-8")))
+        except Exception as exc:
+            QMessageBox.warning(self, "Load Failed", f"Could not load R&D session.\n\n{exc}")
+            return
+
+        mode = self._choose_rnd_load_mode()
+        if mode == "cancel":
+            return
+        if mode == "clear":
+            if not self._rnd_widget.session.is_empty():
+                save_choice = QMessageBox.question(
+                    self,
+                    "Save Current R&D Session?",
+                    "Save the current R&D session before clearing it?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                    | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if save_choice == QMessageBox.StandardButton.Cancel:
+                    return
+                if save_choice == QMessageBox.StandardButton.Yes and not self._save_rnd_session():
+                    return
+            self._rnd_widget.replace_session(incoming)
+        else:
+            self._rnd_widget.merge_session(incoming)
+        self._settings.set("rnd_session_directory", str(Path(path_str).parent))
+        self._settings_widget.refresh_from_settings()
+        self._statusbar.showMessage(f"Loaded R&D session: {path_str}")
+        self._log_event("INFO", "rnd", "R&D session loaded", path=path_str, mode=mode)
+
+    def _choose_rnd_load_mode(self) -> str:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Load R&D Session")
+        dialog.setText("How should this R&D session be loaded?")
+        clear_btn = dialog.addButton("Clear current session and load", QMessageBox.ButtonRole.AcceptRole)
+        add_btn = dialog.addButton("Add to current session", QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is clear_btn:
+            return "clear"
+        if clicked is add_btn:
+            return "add"
+        return "cancel"
+
+    @staticmethod
+    def _safe_filename(value: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch in " ._-()" else "_" for ch in value).strip()
+        return safe or "R&D Measurement"
+
     def _resolve_export_path(
         self,
         requested_path: Optional[str],
@@ -3426,6 +4089,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._close_pass_fail_dialog()
+        self._close_rnd_review_dialog()
         try:
             self._device_check_timer.stop()
         except Exception:

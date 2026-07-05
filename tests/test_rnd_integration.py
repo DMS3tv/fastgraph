@@ -8,6 +8,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 import dms.settings_manager as settings_module
+import dms.ui.main_window as main_window_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.session import SessionData
@@ -163,6 +164,47 @@ def test_rnd_group_variation_follows_group_viewport_visibility(qapp, monkeypatch
     window.close()
 
 
+def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Only")
+    group = RnDGroup(
+        id="g1",
+        name="Prototype A",
+        visible=True,
+        variation_enabled=True,
+        measurement_ids=["m1"],
+    )
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.groups = [group]
+    window._rnd_widget.session.ungrouped_order = []
+
+    calls: list[dict] = []
+    window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
+    window._rnd_widget._redraw()
+
+    assert calls[-1]["top_group_variations"] == []
+    assert calls[-1]["top_measurements"] == []
+    assert window._rnd_widget._status_label.text() == "Ready - Var needs 2 measurements: Prototype A"
+    window.close()
+
+
+def test_rnd_group_bottom_toggle_shows_all_group_children(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    first = _measurement("m1", "First")
+    second = _measurement("m2", "Second")
+    group = RnDGroup(id="g1", name="Prototype A", pinned=True, measurement_ids=["m1", "m2"])
+    window._rnd_widget.session.measurements = [first, second]
+    window._rnd_widget.session.groups = [group]
+    window._rnd_widget.session.ungrouped_order = []
+
+    calls: list[dict] = []
+    window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
+    window._rnd_widget._redraw()
+
+    assert [measurement.name for measurement, _mag in calls[-1]["pinned_measurements"]] == ["First", "Second"]
+    window.close()
+
+
 def test_rnd_offsets_are_additive_for_display_and_curator_send(qapp, monkeypatch, tmp_path: Path) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
     measurement = _measurement("m1", "Offset Target")
@@ -287,6 +329,40 @@ def test_rnd_default_hrtf_is_applied_to_new_measurements(qapp, monkeypatch, tmp_
 
     assert window._rnd_widget.session.hrtf_path == "fixture.txt"
     assert window._rnd_widget.session.measurements[0].hrtf_path == "fixture.txt"
+    window.close()
+
+
+def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(qapp, monkeypatch, tmp_path: Path) -> None:
+    hrtf_dir = tmp_path / "HRTFs"
+    hrtf_dir.mkdir()
+    hrtf_path = hrtf_dir / "Fixture A.txt"
+    hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
+    monkeypatch.setattr(rnd_widget_module, "HRTF_DIR", hrtf_dir)
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Portable HRTF")
+    measurement.hrtf_name = "Fixture A"
+    measurement.hrtf_path = str(tmp_path / "old" / "Fixture A.txt")
+
+    resolved = window._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
+    _freqs, mag = window._rnd_widget.displayed_measurement_curve(measurement)
+
+    assert resolved == str(hrtf_path)
+    assert np.allclose(mag, [0.0, -2.0])
+    window.close()
+
+
+def test_rnd_export_blocks_missing_hrtf(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Missing HRTF")
+    measurement.hrtf_name = "Fixture Gone"
+    measurement.hrtf_path = str(tmp_path / "missing" / "Fixture Gone.txt")
+    warnings: list[tuple] = []
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args: warnings.append(args))
+
+    window._export_rnd_measurement(measurement, str(tmp_path / "out.txt"))
+
+    assert warnings
+    assert not (tmp_path / "out.txt").exists()
     window.close()
 
 

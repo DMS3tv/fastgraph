@@ -293,6 +293,7 @@ class RnDWidget(QWidget):
         self._syncing = False
         self._hrtf_options = self._load_hrtf_options()
         self._preference_bounds = self._load_preference_bounds()
+        self._missing_hrtf_names: set[str] = set()
         self._build_ui()
         self._sync_tree()
         self.apply_theme(self._theme)
@@ -319,6 +320,9 @@ class RnDWidget(QWidget):
         measurement.color = DEFAULT_COLORS[len(self.session.measurements) % len(DEFAULT_COLORS)]
         if not measurement.hrtf_path and self.session.hrtf_path:
             measurement.hrtf_path = str(self.session.hrtf_path)
+            measurement.hrtf_name = self.session.hrtf_name or self._hrtf_label(measurement.hrtf_path, "")
+        elif measurement.hrtf_path and not measurement.hrtf_name:
+            measurement.hrtf_name = self._hrtf_label(measurement.hrtf_path, "")
         self.session.measurements.append(measurement)
         self.session.ungrouped_order.append(measurement.id)
         self.session.selected_id = measurement.id
@@ -494,6 +498,11 @@ class RnDWidget(QWidget):
         self._default_hrtf_combo.setMinimumWidth(132)
         for label, value in self._hrtf_options:
             self._default_hrtf_combo.addItem(label, value)
+        self._ensure_hrtf_combo_option(
+            self._default_hrtf_combo,
+            self.session.hrtf_path or "",
+            self.session.hrtf_name,
+        )
         hrtf_index = self._default_hrtf_combo.findData(self.session.hrtf_path or "")
         self._default_hrtf_combo.setCurrentIndex(hrtf_index if hrtf_index >= 0 else 0)
         self._default_hrtf_combo.currentIndexChanged.connect(self._on_default_hrtf_changed)
@@ -793,12 +802,15 @@ class RnDWidget(QWidget):
         combo.setMaximumWidth(108)
         for label, value in self._hrtf_options:
             combo.addItem(label, value)
-        index = combo.findData(measurement.hrtf_path)
+        resolved = self.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
+        self._ensure_hrtf_combo_option(combo, measurement.hrtf_path, measurement.hrtf_name)
+        index = combo.findData(resolved or measurement.hrtf_path)
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.currentIndexChanged.connect(
             lambda _index, measurement_id=measurement.id, widget=combo: self._set_measurement_hrtf(
                 measurement_id,
                 str(widget.currentData() or ""),
+                self._combo_hrtf_name(widget),
             )
         )
         return combo
@@ -827,11 +839,12 @@ class RnDWidget(QWidget):
         self._redraw()
         self.state_changed.emit()
 
-    def _set_measurement_hrtf(self, measurement_id: str, path: str) -> None:
+    def _set_measurement_hrtf(self, measurement_id: str, path: str, name: str = "") -> None:
         measurement = self.session.measurement_by_id(measurement_id)
         if measurement is None:
             return
         measurement.hrtf_path = path
+        measurement.hrtf_name = name
         self._redraw()
         self.state_changed.emit()
 
@@ -1008,6 +1021,7 @@ class RnDWidget(QWidget):
         if self._syncing:
             return
         self.session.hrtf_path = str(self._default_hrtf_combo.currentData() or "")
+        self.session.hrtf_name = self._combo_hrtf_name(self._default_hrtf_combo)
         self.session.hrtf_enabled = bool(self.session.hrtf_path)
         self.state_changed.emit()
 
@@ -1034,7 +1048,13 @@ class RnDWidget(QWidget):
     def _sync_default_hrtf_control(self) -> None:
         self._syncing = True
         try:
-            index = self._default_hrtf_combo.findData(self.session.hrtf_path or "")
+            resolved = self.resolve_hrtf_path(self.session.hrtf_path or "", self.session.hrtf_name)
+            self._ensure_hrtf_combo_option(
+                self._default_hrtf_combo,
+                self.session.hrtf_path or "",
+                self.session.hrtf_name,
+            )
+            index = self._default_hrtf_combo.findData(resolved or self.session.hrtf_path or "")
             self._default_hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
         finally:
             self._syncing = False
@@ -1161,6 +1181,8 @@ class RnDWidget(QWidget):
         return measurements
 
     def _redraw(self) -> None:
+        self._missing_hrtf_names.clear()
+        variation_needs_more: set[str] = set()
         self._refresh_group_colors()
         top = self._visible_measurements_for_group(None, top=True)
         pinned = self._visible_measurements_for_group(None, top=False)
@@ -1179,6 +1201,8 @@ class RnDWidget(QWidget):
                 top_variation = group_variation(measurements)
                 if top_variation is not None:
                     top_variations.append((group, top_variation))
+                elif len(measurements) < 2:
+                    variation_needs_more.add(group.name)
             if group.pinned and group.variation_enabled:
                 measurements = [
                     self._with_mag(measurement, mag)
@@ -1187,9 +1211,10 @@ class RnDWidget(QWidget):
                 bottom_variation = group_variation(measurements)
                 if bottom_variation is not None:
                     bottom_variations.append((group, bottom_variation))
-            if top_variation is None:
+                elif len(measurements) < 2:
+                    variation_needs_more.add(group.name)
+            if not group.variation_enabled:
                 top.extend(group_top)
-            if bottom_variation is None:
                 pinned.extend(group_pinned)
         target_curve = None
         if self.session.target_visible and len(self.session.target_freqs) >= 2 and len(self.session.target_mag_db) >= 2:
@@ -1206,6 +1231,14 @@ class RnDWidget(QWidget):
             preference_bounds=self._preference_bounds if self.session.preference_bounds_enabled else None,
             target_curve=target_curve,
         )
+        if self._missing_hrtf_names:
+            missing = ", ".join(sorted(self._missing_hrtf_names))
+            self.set_status(f"Ready - missing HRTF: {missing}")
+        elif variation_needs_more:
+            groups = ", ".join(sorted(variation_needs_more))
+            self.set_status(f"Ready - Var needs 2 measurements: {groups}")
+        elif self._status_label.text().startswith("Ready - "):
+            self.set_status("Ready")
 
     def displayed_measurement_curve(self, measurement: RnDMeasurement) -> tuple[np.ndarray, np.ndarray]:
         return measurement.freqs, self._display_mag(measurement)
@@ -1220,11 +1253,14 @@ class RnDWidget(QWidget):
 
     def _display_mag(self, measurement: RnDMeasurement, group: RnDGroup | None = None) -> np.ndarray:
         mag = np.array(measurement.mag_db, dtype=float, copy=True)
-        if measurement.hrtf_path:
+        hrtf_path = self.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
+        if hrtf_path:
             try:
-                mag = HRTFCurve(measurement.hrtf_path).apply(measurement.freqs, mag)
+                mag = HRTFCurve(hrtf_path).apply(measurement.freqs, mag)
             except Exception:
-                pass
+                self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
+        elif measurement.hrtf_path or measurement.hrtf_name:
+            self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
         offset = float(measurement.vertical_offset_db)
         if group is None:
             parent_id = self.session.parent_group_id(measurement.id)
@@ -1254,9 +1290,53 @@ class RnDWidget(QWidget):
             pinned=measurement.pinned,
             color=measurement.color,
             hrtf_path=measurement.hrtf_path,
+            hrtf_name=measurement.hrtf_name,
             vertical_offset_db=measurement.vertical_offset_db,
         )
         return copy
+
+    def resolve_hrtf_path(self, path: str | None, name: str | None = "") -> str:
+        requested_path = str(path or "")
+        if requested_path and Path(requested_path).exists():
+            return requested_path
+        requested_name = str(name or "").strip()
+        fallback_name = Path(requested_path).stem if requested_path else ""
+        wanted = (requested_name or fallback_name).casefold()
+        if wanted:
+            for label, value in self._hrtf_options:
+                if value and label.casefold() == wanted:
+                    return value
+        return ""
+
+    @staticmethod
+    def _hrtf_label(path: str | None, name: str | None) -> str:
+        label = str(name or "").strip()
+        if label:
+            return label
+        requested_path = str(path or "")
+        return Path(requested_path).stem if requested_path else "Unknown"
+
+    @staticmethod
+    def _combo_hrtf_name(combo: QComboBox) -> str:
+        path = str(combo.currentData() or "")
+        if not path:
+            return ""
+        label = combo.currentText().strip()
+        if label.startswith("Missing: "):
+            return label.removeprefix("Missing: ").strip()
+        return label
+
+    def _ensure_hrtf_combo_option(self, combo: QComboBox, path: str | None, name: str | None) -> None:
+        requested_path = str(path or "")
+        if not requested_path and not name:
+            return
+        resolved = self.resolve_hrtf_path(requested_path, name)
+        if resolved and combo.findData(resolved) >= 0:
+            return
+        if requested_path and combo.findData(requested_path) >= 0:
+            return
+        label = self._hrtf_label(requested_path, name)
+        combo.addItem(f"Missing: {label}", requested_path)
 
     @staticmethod
     def _load_hrtf_options() -> list[tuple[str, str]]:

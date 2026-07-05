@@ -1,0 +1,336 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+import numpy as np
+
+from dms.processing import compute_rms_average, smooth_fractional_octave
+from dms.session import SessionData
+
+
+SCHEMA_VERSION = 1
+
+
+DEFAULT_COLORS = [
+    "#15f4ee",
+    "#d8ff38",
+    "#ff4fd8",
+    "#ff8a22",
+    "#7f5cff",
+    "#4dff88",
+]
+
+
+@dataclass
+class RnDMeasurement:
+    name: str
+    freqs: np.ndarray
+    mag_db: np.ndarray
+    metadata: dict[str, Any]
+    rig: str
+    input_device_label: str
+    input_channel_index: int
+    input_channel_label: str
+    output_device_label: str
+    id: str = field(default_factory=lambda: uuid4().hex)
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    notes: str = ""
+    change_status: str = "no_change"
+    milestone: bool = False
+    top_visible: bool = True
+    pinned: bool = False
+    color: str = DEFAULT_COLORS[0]
+    hrtf_path: str = ""
+    vertical_offset_db: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "freqs": self.freqs.astype(float).tolist(),
+            "mag_db": self.mag_db.astype(float).tolist(),
+            "metadata": dict(self.metadata),
+            "rig": self.rig,
+            "input_device_label": self.input_device_label,
+            "input_channel_index": int(self.input_channel_index),
+            "input_channel_label": self.input_channel_label,
+            "output_device_label": self.output_device_label,
+            "timestamp": self.timestamp,
+            "notes": self.notes,
+            "change_status": self.change_status,
+            "milestone": self.milestone,
+            "top_visible": self.top_visible,
+            "pinned": self.pinned,
+            "color": self.color,
+            "hrtf_path": self.hrtf_path,
+            "vertical_offset_db": float(self.vertical_offset_db),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RnDMeasurement":
+        return cls(
+            id=str(data.get("id") or uuid4().hex),
+            name=str(data.get("name") or "R&D Measurement"),
+            freqs=np.array(data.get("freqs") or [], dtype=float),
+            mag_db=np.array(data.get("mag_db") or [], dtype=float),
+            metadata=dict(data.get("metadata") or {}),
+            rig=str(data.get("rig") or ""),
+            input_device_label=str(data.get("input_device_label") or ""),
+            input_channel_index=int(data.get("input_channel_index") or 0),
+            input_channel_label=str(data.get("input_channel_label") or ""),
+            output_device_label=str(data.get("output_device_label") or ""),
+            timestamp=str(data.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+            notes=str(data.get("notes") or ""),
+            change_status=str(data.get("change_status") or "no_change"),
+            milestone=bool(data.get("milestone")),
+            top_visible=bool(data.get("top_visible", True)),
+            pinned=bool(data.get("pinned", False)),
+            color=str(data.get("color") or DEFAULT_COLORS[0]),
+            hrtf_path=str(data.get("hrtf_path") or ""),
+            vertical_offset_db=float(data.get("vertical_offset_db") or 0.0),
+        )
+
+
+@dataclass
+class RnDGroup:
+    name: str
+    id: str = field(default_factory=lambda: uuid4().hex)
+    notes: str = ""
+    expanded: bool = True
+    visible: bool = True
+    pinned: bool = False
+    milestone: bool = False
+    variation_enabled: bool = False
+    vertical_offset_db: float = 0.0
+    color: str = DEFAULT_COLORS[0]
+    measurement_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "notes": self.notes,
+            "expanded": self.expanded,
+            "visible": self.visible,
+            "pinned": self.pinned,
+            "milestone": self.milestone,
+            "variation_enabled": self.variation_enabled,
+            "vertical_offset_db": float(self.vertical_offset_db),
+            "color": self.color,
+            "measurement_ids": list(self.measurement_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RnDGroup":
+        return cls(
+            id=str(data.get("id") or uuid4().hex),
+            name=str(data.get("name") or "Group"),
+            notes=str(data.get("notes") or ""),
+            expanded=bool(data.get("expanded", True)),
+            visible=bool(data.get("visible", True)),
+            pinned=bool(data.get("pinned", False)),
+            milestone=bool(data.get("milestone")),
+            variation_enabled=bool(data.get("variation_enabled")),
+            vertical_offset_db=float(data.get("vertical_offset_db") or 0.0),
+            color=str(data.get("color") or DEFAULT_COLORS[0]),
+            measurement_ids=[str(item) for item in data.get("measurement_ids") or []],
+        )
+
+
+@dataclass
+class RnDSession:
+    measurements: list[RnDMeasurement] = field(default_factory=list)
+    groups: list[RnDGroup] = field(default_factory=list)
+    ungrouped_order: list[str] = field(default_factory=list)
+    selected_id: str | None = None
+    hrtf_path: str | None = None
+    hrtf_enabled: bool = False
+    preference_bounds_enabled: bool = False
+    target_visible: bool = False
+    target_name: str = ""
+    target_path: str = ""
+    target_freqs: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
+    target_mag_db: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
+    target_offset_db: float = 0.0
+    schema_version: int = SCHEMA_VERSION
+    saved_app_version: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "saved_app_version": self.saved_app_version,
+            "measurements": [item.to_dict() for item in self.measurements],
+            "groups": [item.to_dict() for item in self.groups],
+            "ungrouped_order": list(self.ungrouped_order),
+            "selected_id": self.selected_id,
+            "hrtf_path": self.hrtf_path,
+            "hrtf_enabled": self.hrtf_enabled,
+            "preference_bounds_enabled": self.preference_bounds_enabled,
+            "target_visible": self.target_visible,
+            "target_name": self.target_name,
+            "target_path": self.target_path,
+            "target_freqs": self.target_freqs.astype(float).tolist(),
+            "target_mag_db": self.target_mag_db.astype(float).tolist(),
+            "target_offset_db": float(self.target_offset_db),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RnDSession":
+        version = int(data.get("schema_version") or 0)
+        if version != SCHEMA_VERSION:
+            raise ValueError(f"Unsupported R&D session schema version: {version}")
+        session = cls(
+            schema_version=version,
+            saved_app_version=str(data.get("saved_app_version") or ""),
+            measurements=[
+                RnDMeasurement.from_dict(item)
+                for item in data.get("measurements") or []
+            ],
+            groups=[RnDGroup.from_dict(item) for item in data.get("groups") or []],
+            ungrouped_order=[str(item) for item in data.get("ungrouped_order") or []],
+            selected_id=data.get("selected_id"),
+            hrtf_path=data.get("hrtf_path"),
+            hrtf_enabled=bool(data.get("hrtf_enabled")),
+            preference_bounds_enabled=bool(data.get("preference_bounds_enabled", False)),
+            target_visible=bool(data.get("target_visible", False)),
+            target_name=str(data.get("target_name") or ""),
+            target_path=str(data.get("target_path") or ""),
+            target_freqs=np.array(data.get("target_freqs") or [], dtype=float),
+            target_mag_db=np.array(data.get("target_mag_db") or [], dtype=float),
+            target_offset_db=float(data.get("target_offset_db") or 0.0),
+        )
+        session.repair_ordering()
+        return session
+
+    def measurement_by_id(self, measurement_id: str) -> RnDMeasurement | None:
+        return next((item for item in self.measurements if item.id == measurement_id), None)
+
+    def group_by_id(self, group_id: str) -> RnDGroup | None:
+        return next((item for item in self.groups if item.id == group_id), None)
+
+    def parent_group_id(self, measurement_id: str) -> str | None:
+        for group in self.groups:
+            if measurement_id in group.measurement_ids:
+                return group.id
+        return None
+
+    def all_ordered_measurement_ids(self) -> list[str]:
+        ordered: list[str] = []
+        ordered.extend(self.ungrouped_order)
+        for group in self.groups:
+            ordered.extend(group.measurement_ids)
+        return ordered
+
+    def repair_ordering(self) -> None:
+        valid_ids = {item.id for item in self.measurements}
+        seen: set[str] = set()
+        self.ungrouped_order = [
+            item for item in self.ungrouped_order
+            if item in valid_ids and not (item in seen or seen.add(item))
+        ]
+        for group in self.groups:
+            group.measurement_ids = [
+                item for item in group.measurement_ids
+                if item in valid_ids and not (item in seen or seen.add(item))
+            ]
+        for measurement in self.measurements:
+            if measurement.id not in seen:
+                self.ungrouped_order.append(measurement.id)
+                seen.add(measurement.id)
+
+    def is_empty(self) -> bool:
+        return not self.measurements and not self.groups
+
+
+def session_snapshot(session: SessionData) -> dict[str, Any]:
+    return session.to_dict()
+
+
+def measurement_session_data(measurement: RnDMeasurement) -> SessionData:
+    metadata = dict(measurement.metadata)
+    metadata.setdefault("rig", measurement.rig)
+    return SessionData(
+        rig=str(metadata.get("rig") or measurement.rig or "Unknown Rig"),
+        brand=str(metadata.get("brand") or "Unknown"),
+        model=str(metadata.get("model") or "Unknown"),
+        model_number=str(metadata.get("model_number") or ""),
+        asset_tag=str(metadata.get("asset_tag") or ""),
+        firmware=str(metadata.get("firmware") or ""),
+        eq_applied=bool(metadata.get("eq_applied", False)),
+        anc_mode=bool(metadata.get("anc_mode", False)),
+        transparency_mode=bool(metadata.get("transparency_mode", False)),
+        form_factor=str(metadata.get("form_factor") or "over-ear"),
+        in_ear_fitment=str(metadata.get("in_ear_fitment") or ""),
+        open_back=bool(metadata.get("open_back", True)),
+        pads_notes=str(metadata.get("pads_notes") or ""),
+        connection=str(metadata.get("connection") or "wired analog"),
+        channel_side=str(metadata.get("channel_side") or ""),
+    )
+
+
+def generate_measurement_name(
+    session: SessionData,
+    input_label: str,
+    input_channel_label: str,
+    existing_names: set[str],
+) -> str:
+    identity = session.asset_tag.strip() or " ".join(
+        part for part in (session.brand.strip(), session.model.strip()) if part
+    )
+    if not identity:
+        identity = "Unknown"
+    base = " - ".join(
+        part for part in (
+            identity,
+            session.rig.strip(),
+            input_label.strip(),
+            input_channel_label.strip(),
+        ) if part
+    )
+    if not base:
+        base = "R&D Measurement"
+    if base not in existing_names:
+        return base
+    suffix = 2
+    while f"{base} ({suffix})" in existing_names:
+        suffix += 1
+    return f"{base} ({suffix})"
+
+
+def group_variation(
+    measurements: list[RnDMeasurement],
+    *,
+    smoothing_fraction: int = 48,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    if len(measurements) < 2:
+        return None
+    curves = [(item.freqs, item.mag_db) for item in measurements]
+    base_freqs, _avg = compute_rms_average(
+        curves,
+        n_points=1200,
+        f_ref=1000.0,
+        f_min=20.0,
+        f_max=20000.0,
+        normalize_ref=True,
+    )
+    rows = []
+    for measurement in measurements:
+        values = np.interp(base_freqs, measurement.freqs, measurement.mag_db)
+        _, values = smooth_fractional_octave(
+            base_freqs,
+            values,
+            fraction=smoothing_fraction,
+        )
+        rows.append(values)
+    mat = np.vstack(rows)
+    return (
+        base_freqs,
+        np.percentile(mat, 10, axis=0),
+        np.percentile(mat, 25, axis=0),
+        np.percentile(mat, 75, axis=0),
+        np.percentile(mat, 90, axis=0),
+        np.percentile(mat, 50, axis=0),
+    )

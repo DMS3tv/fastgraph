@@ -21,6 +21,7 @@ _DEFAULTS: dict[str, Any] = {
     "confirm_clear_measurements": True,
     "confirm_clear_metadata": True,
     "export_directory": "",
+    "rnd_session_directory": "",
     "hrtf_path": None,
     "pre_sweep_silence": 0.2,
     "post_sweep_silence": 0.5,

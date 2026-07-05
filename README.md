@@ -10,7 +10,44 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.3.0`
+Current beta version: `0.3.2`
+
+## What's New in 0.3.2
+
+R&D groups now draw **Var** with the same confidence-style band used by Measure
+and Curator: p10-p90 outer fill, p25-p75 inner fill, and a median line. When a
+group's **Var** is active, the band replaces that group's individual traces in
+that viewport. Multiple visible group variation bands use distinct colors.
+
+The R&D tab also adds top-of-viewport preference bounds, an importable custom
+session target with its own dB offset, row-level Curator-style dB offsets for
+measurements and groups, and a default HRTF dropdown next to the R&D Measure
+button. Group and measurement offsets are additive, so a group can shift a whole
+prototype set while individual measurements can still be fine-tuned. New R&D
+measurements inherit the default R&D HRTF selection when they are kept.
+
+R&D session saves include the new offset, target, HRTF, and preference-bounds
+state. Older R&D session files still load with offsets set to `0 dB`, no target,
+and bounds off.
+
+## What's New in 0.3.1
+
+Fastgraph now includes an **R&D** tab for exploratory single-sweep measurement
+sessions. R&D measurements are kept as individual named entries with metadata,
+input/channel identity, notes, milestone flags, per-measurement HRTF selection,
+top-view visibility, and bottom-view visibility. Measurements can be
+organized into named groups with group notes, show/pin controls, milestone
+marking, and optional group variation bands.
+
+R&D group variation follows the viewports where the group is visible: **Show**
+controls top-viewport group visibility, **Bottom** controls bottom-viewport
+group visibility, and **Var** adds the variation band only to those active
+group viewports. R&D sessions can be saved and loaded as `.fastgraph-rnd.json`
+files; Settings includes a default folder for those session files.
+
+R&D exports operate on the selected measurement or group. Measurements export as
+TXT, groups with variation enabled export as variation TXT, and selected
+measurements or group variations can be sent directly to Curator.
 
 ## What's New in 0.3.0
 
@@ -61,7 +98,7 @@ them as kept curves without live fixture hardware. Files should contain two
 columns: frequency in Hz and magnitude in dB. Whitespace- or comma-delimited
 REW-style text is accepted; comments/header rows are skipped when possible.
 
-## Measure, Curator, Console, and Settings Tabs
+## Measure, R&D, Curator, Console, and Settings Tabs
 
 The **Measure** tab contains the normal measurement interface. Input level,
 bottom-view controls, Undo, and the guarded Clear All action sit between its two
@@ -73,8 +110,17 @@ frequency-response shape, and its HRTF selection remains editable.
 
 The tab header keeps the current headphone and rig visible alongside Headphone
 Metadata, Clear Metadata, and Bluetooth mode controls. These application-wide
-controls remain available while moving between Measure, Curator, Console, and
-Settings.
+controls remain available while moving between Measure, R&D, Curator, Console,
+and Settings.
+
+The **R&D** tab is a single-sweep exploratory measurement workspace. New kept
+measurements default to the top viewport, can be shown in the bottom viewport,
+and can be grouped for product-development comparisons. Groups support notes,
+show/bottom toggles, milestone marking, drag/drop organization, optional
+confidence-style variation bands, and additive dB offsets. Each measurement can
+choose its own HRTF from the shared HRTF library and can be shifted with its own
+dB offset. R&D sessions save processed measurement curves and workspace state to
+JSON; raw recordings are not saved.
 
 The **Curator** tab is a graph image generation tool. It imports and compares
 two-column frequency-response TXT files and six-column Fastgraph variation
@@ -96,7 +142,9 @@ Temporary settings are persisted only with `settings save`.
 The **Settings** tab saves sweep and timing changes immediately and contains
 SPL Calibration, Test Level, and options to restore the measurement and
 metadata clearing warnings. Its controls are grouped in a compact left-aligned
-column and remain visible but disabled while a measurement queue is active.
+column and remain visible but disabled while a measurement queue or R&D sweep is
+active. Settings also includes the default folder for R&D session save/load
+dialogs.
 
 Type `curator help` for the built-in command reference. Curator commands include:
 
@@ -181,7 +229,7 @@ Before packaging or tagging a beta, run:
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q
-PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/curator/*.py dms/ui/*.py
+PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/curator/*.py dms/rnd/*.py dms/ui/*.py
 git status --short
 ```
 
@@ -265,8 +313,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.3.0",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.0",
-  "summary": "Adds the integrated Curator graph image generation tool"
+  "version": "0.3.2",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.2",
+  "summary": "Adds the R&D exploratory measurement workspace"
 }
 ```

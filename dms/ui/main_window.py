@@ -3501,10 +3501,11 @@ class MainWindow(QMainWindow):
     def _send_rnd_to_curator(self) -> None:
         if self._state != AppState.IDLE:
             return
-        active_hrtf = self._hrtf if self._is_hrtf_active() else None
         measurement = self._rnd_widget.selected_measurement()
         group = self._rnd_widget.selected_group()
         if measurement is not None:
+            if not self._ensure_rnd_hrtfs_available([measurement]):
+                return
             freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
             freqs = np.array(freqs, dtype=float, copy=True)
             mag = np.array(mag, dtype=float, copy=True)
@@ -3522,6 +3523,8 @@ class MainWindow(QMainWindow):
                     "Variation Disabled",
                     "Enable variation for the selected group before sending it to Curator.",
                 )
+                return
+            if not self._ensure_rnd_hrtfs_available(self._rnd_widget.displayed_group_measurements(group)):
                 return
             variation = rnd_group_variation(self._rnd_widget.displayed_group_measurements(group))
             if variation is None:
@@ -3577,13 +3580,16 @@ class MainWindow(QMainWindow):
 
     def _export_rnd_measurement(self, measurement: RnDMeasurement, requested_path: Optional[str] = None) -> None:
         session = measurement_session_data(measurement)
-        compensated = bool(measurement.hrtf_path)
+        hrtf_path = self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
+        if not self._ensure_rnd_hrtfs_available([measurement]):
+            return
+        compensated = bool(hrtf_path)
         filename = f"{self._safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
         path = self._resolve_export_path(requested_path, filename, "Export R&D Measurement")
         if path is None:
             return
         freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
-        hrtf = HRTFCurve(measurement.hrtf_path) if compensated else None
+        hrtf = HRTFCurve(hrtf_path) if compensated else None
         export_curve(
             freqs=freqs,
             mag_db=mag,
@@ -3600,6 +3606,8 @@ class MainWindow(QMainWindow):
 
     def _export_rnd_group_variation(self, group) -> None:
         measurements = self._rnd_widget.displayed_group_measurements(group)
+        if not self._ensure_rnd_hrtfs_available(measurements):
+            return
         variation = rnd_group_variation(measurements)
         if variation is None:
             QMessageBox.information(
@@ -3608,7 +3616,10 @@ class MainWindow(QMainWindow):
                 "Selected group needs at least two measurements for variation export.",
             )
             return
-        compensated = any(bool(measurement.hrtf_path) for measurement in measurements)
+        compensated = any(
+            bool(self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name))
+            for measurement in measurements
+        )
         filename = f"{self._safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
         path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
         if path is None:
@@ -3636,9 +3647,15 @@ class MainWindow(QMainWindow):
         self._log_event("INFO", "rnd", "R&D variation exported", path=str(path))
 
     def _export_rnd_group_measurements(self, group) -> None:
-        measurements = self._rnd_widget.selected_group_measurements()
+        measurements = [
+            measurement
+            for measurement_id in group.measurement_ids
+            if (measurement := self._rnd_widget.session.measurement_by_id(measurement_id)) is not None
+        ]
         if not measurements:
             QMessageBox.information(self, "Nothing to Export", "Selected group has no measurements.")
+            return
+        if not self._ensure_rnd_hrtfs_available(measurements):
             return
         directory = QFileDialog.getExistingDirectory(
             self,
@@ -3651,6 +3668,28 @@ class MainWindow(QMainWindow):
             path = Path(directory) / f"{self._safe_filename(measurement.name)}.txt"
             self._export_rnd_measurement(measurement, str(path))
         self._statusbar.showMessage(f"Exported {len(measurements)} R&D measurements.")
+
+    def _ensure_rnd_hrtfs_available(self, measurements: list[RnDMeasurement]) -> bool:
+        missing = []
+        for measurement in measurements:
+            if not (measurement.hrtf_path or measurement.hrtf_name):
+                continue
+            if self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name):
+                continue
+            label = measurement.hrtf_name or Path(measurement.hrtf_path).stem or measurement.hrtf_path
+            missing.append(f"{measurement.name}: {label}")
+        if not missing:
+            return True
+        QMessageBox.warning(
+            self,
+            "Missing R&D HRTF",
+            "One or more R&D measurements reference an HRTF that is not available on this machine.\n\n"
+            + "\n".join(missing[:6])
+            + ("\n..." if len(missing) > 6 else "")
+            + "\n\nChoose an available HRTF or set the row to None before exporting or sending to Curator.",
+        )
+        self._rnd_widget.set_status("Ready - missing R&D HRTF")
+        return False
 
     def _rnd_default_dir(self) -> Path:
         configured = str(self._settings.get("rnd_session_directory") or "").strip()

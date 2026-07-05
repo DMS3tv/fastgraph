@@ -44,6 +44,7 @@ class RnDMeasurement:
     pinned: bool = False
     color: str = DEFAULT_COLORS[0]
     hrtf_path: str = ""
+    hrtf_name: str = ""
     vertical_offset_db: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +67,7 @@ class RnDMeasurement:
             "pinned": self.pinned,
             "color": self.color,
             "hrtf_path": self.hrtf_path,
+            "hrtf_name": self.hrtf_name,
             "vertical_offset_db": float(self.vertical_offset_db),
         }
 
@@ -90,6 +92,7 @@ class RnDMeasurement:
             pinned=bool(data.get("pinned", False)),
             color=str(data.get("color") or DEFAULT_COLORS[0]),
             hrtf_path=str(data.get("hrtf_path") or ""),
+            hrtf_name=str(data.get("hrtf_name") or ""),
             vertical_offset_db=float(data.get("vertical_offset_db") or 0.0),
         )
 
@@ -147,6 +150,7 @@ class RnDSession:
     ungrouped_order: list[str] = field(default_factory=list)
     selected_id: str | None = None
     hrtf_path: str | None = None
+    hrtf_name: str = ""
     hrtf_enabled: bool = False
     preference_bounds_enabled: bool = False
     target_visible: bool = False
@@ -167,6 +171,7 @@ class RnDSession:
             "ungrouped_order": list(self.ungrouped_order),
             "selected_id": self.selected_id,
             "hrtf_path": self.hrtf_path,
+            "hrtf_name": self.hrtf_name,
             "hrtf_enabled": self.hrtf_enabled,
             "preference_bounds_enabled": self.preference_bounds_enabled,
             "target_visible": self.target_visible,
@@ -193,6 +198,7 @@ class RnDSession:
             ungrouped_order=[str(item) for item in data.get("ungrouped_order") or []],
             selected_id=data.get("selected_id"),
             hrtf_path=data.get("hrtf_path"),
+            hrtf_name=str(data.get("hrtf_name") or ""),
             hrtf_enabled=bool(data.get("hrtf_enabled")),
             preference_bounds_enabled=bool(data.get("preference_bounds_enabled", False)),
             target_visible=bool(data.get("target_visible", False)),

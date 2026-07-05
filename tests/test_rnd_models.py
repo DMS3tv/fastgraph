@@ -32,11 +32,15 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
     first = _measurement("a", "A")
     second = _measurement("b", "B", 1.0)
     first.vertical_offset_db = 1.5
+    first.hrtf_name = "Fixture A"
+    first.hrtf_path = "old/path/Fixture A.txt"
     session = RnDSession(
         measurements=[first, second],
         groups=[RnDGroup(id="g", name="Group", pinned=True, vertical_offset_db=-2.0, measurement_ids=["b"])],
         ungrouped_order=["a"],
         selected_id="b",
+        hrtf_name="Fixture A",
+        hrtf_path="old/path/Fixture A.txt",
         preference_bounds_enabled=True,
         target_visible=True,
         target_name="Target",
@@ -55,6 +59,8 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
     assert loaded.groups[0].pinned is True
     assert loaded.groups[0].vertical_offset_db == -2.0
     assert loaded.measurements[0].vertical_offset_db == 1.5
+    assert loaded.measurements[0].hrtf_name == "Fixture A"
+    assert loaded.hrtf_name == "Fixture A"
     assert loaded.preference_bounds_enabled is True
     assert loaded.target_visible is True
     assert loaded.target_name == "Target"

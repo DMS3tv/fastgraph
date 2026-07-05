@@ -10,7 +10,22 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.3.2`
+Current beta version: `0.3.3`
+
+## What's New in 0.3.3
+
+R&D session HRTF selections now save both the original file path and the HRTF
+name. When a session is opened on another machine or install folder, Fastgraph
+tries to reconnect the selection to a matching file in the current `HRTFs`
+folder. If an HRTF is still missing, the R&D status line and row dropdown show
+that clearly, and export/Curator transfer is blocked until the row is changed to
+an available HRTF or `None`.
+
+R&D **Var** behavior is stricter: when a group has **Var** enabled, its original
+traces are hidden even if there are not yet enough measurements to draw the
+band. The status line reports that the group needs at least two measurements.
+The group **Bottom** toggle continues to show the full group in the bottom
+viewport.
 
 ## What's New in 0.3.2
 
@@ -316,8 +331,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.3.2",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.2",
-  "summary": "Adds the R&D exploratory measurement workspace"
+  "version": "0.3.3",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.3",
+  "summary": "Improves R&D HRTF portability and variation display behavior"
 }
 ```

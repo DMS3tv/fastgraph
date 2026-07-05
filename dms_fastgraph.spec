@@ -22,6 +22,7 @@ exe = EXE(
     a.scripts,
     [],
     name="FastGraph Beta",
+    icon="fastgraph.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

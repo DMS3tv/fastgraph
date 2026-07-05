@@ -265,6 +265,9 @@ python -m venv .venv
 .\build_windows.ps1
 ```
 
+The Windows build regenerates `fastgraph.ico` from the tracked
+`fastgraph icon.png` source before running PyInstaller.
+
 The finished app folder and shareable zip will be created at:
 
 ```powershell

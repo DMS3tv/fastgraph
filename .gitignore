@@ -1,6 +1,7 @@
 /.venv*
 /dist
 /build
+fastgraph.ico
 **/*.pyc
 __pycache__
 **/*.DS_Store

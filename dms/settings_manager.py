@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
+
 
 _DEFAULTS: dict[str, Any] = {
     "theme": "dark",
@@ -22,6 +24,8 @@ _DEFAULTS: dict[str, Any] = {
     "confirm_clear_metadata": True,
     "export_directory": "",
     "rnd_session_directory": "",
+    "automation_directory": "",
+    "shortcut_bindings": dict(DEFAULT_SHORTCUT_BINDINGS),
     "hrtf_path": None,
     "pre_sweep_silence": 0.2,
     "post_sweep_silence": 0.5,

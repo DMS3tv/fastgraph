@@ -48,6 +48,8 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
         target_freqs=np.array([100.0, 1000.0]),
         target_mag_db=np.array([2.0, 3.0]),
         target_offset_db=-4.5,
+        smoothing_fraction=12,
+        delta_mode_enabled=True,
         saved_app_version="0.3.0",
     )
 
@@ -66,6 +68,8 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
     assert loaded.target_name == "Target"
     assert loaded.target_offset_db == -4.5
     assert np.allclose(loaded.target_mag_db, [2.0, 3.0])
+    assert loaded.smoothing_fraction == 12
+    assert loaded.delta_mode_enabled is True
     assert loaded.ungrouped_order == ["a"]
     assert np.allclose(loaded.measurements[1].mag_db, second.mag_db)
 
@@ -78,7 +82,16 @@ def test_rnd_session_old_offset_and_bounds_fields_default_to_zero_and_off() -> N
     )
     data = session.to_dict()
     data.pop("preference_bounds_enabled")
-    for key in ("target_visible", "target_name", "target_path", "target_freqs", "target_mag_db", "target_offset_db"):
+    for key in (
+        "target_visible",
+        "target_name",
+        "target_path",
+        "target_freqs",
+        "target_mag_db",
+        "target_offset_db",
+        "smoothing_fraction",
+        "delta_mode_enabled",
+    ):
         data.pop(key)
     data["measurements"][0].pop("vertical_offset_db")
     data["groups"][0].pop("vertical_offset_db")
@@ -91,6 +104,8 @@ def test_rnd_session_old_offset_and_bounds_fields_default_to_zero_and_off() -> N
     assert loaded.target_visible is False
     assert loaded.target_offset_db == 0.0
     assert loaded.target_freqs.size == 0
+    assert loaded.smoothing_fraction == 48
+    assert loaded.delta_mode_enabled is False
 
 
 def test_rnd_session_rejects_unknown_schema() -> None:

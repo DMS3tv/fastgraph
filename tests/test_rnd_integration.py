@@ -5,7 +5,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QAbstractItemView, QApplication
 
 import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
@@ -54,7 +55,7 @@ def test_rnd_tab_and_settings_folder_control(qapp, monkeypatch, tmp_path: Path) 
     window = _window(qapp, monkeypatch, tmp_path)
 
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "R&&D", "Curator", "Console", "Settings"
+        "Measure", "R&&D", "Curator", "Automation", "Settings"
     ]
     window._settings_widget._rnd_session_dir.setText(str(tmp_path / "sessions"))
     window._settings_widget._rnd_session_dir.editingFinished.emit()
@@ -272,7 +273,7 @@ def test_rnd_group_variation_uses_displayed_offsets(qapp, monkeypatch, tmp_path:
 
     captured: list[list[np.ndarray]] = []
 
-    def fake_group_variation(measurements):
+    def fake_group_variation(measurements, smoothing_fraction=48):
         captured.append([np.array(item.mag_db, copy=True) for item in measurements])
         freqs = np.array([100.0, 1000.0])
         return (freqs, freqs * 0, freqs * 0, freqs * 0, freqs * 0, freqs * 0)
@@ -296,6 +297,165 @@ def test_rnd_bounds_toggle_passes_enabled_bounds_to_both_viewports(qapp, monkeyp
 
     assert window._rnd_widget.session.preference_bounds_enabled is True
     assert calls[-1]["preference_bounds"].enabled is True
+    window.close()
+
+
+def test_rnd_smoothing_control_changes_displayed_curve(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Smooth Me")
+    calls: list[int] = []
+
+    def fake_smooth(freqs, mag_db, fraction):
+        calls.append(fraction)
+        return freqs, mag_db + fraction
+
+    monkeypatch.setattr(rnd_widget_module, "smooth_fractional_octave", fake_smooth)
+    window._rnd_widget.session.smoothing_fraction = 12
+
+    _freqs, mag = window._rnd_widget.displayed_measurement_curve(measurement)
+
+    assert calls == [12]
+    assert np.allclose(mag, [13.0, 12.0])
+    window.close()
+
+
+def test_rnd_export_uses_selected_smoothing(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Export Smooth")
+    window._rnd_widget.session.smoothing_fraction = 6
+    captured: dict[str, object] = {}
+
+    def fake_smooth(freqs, mag_db, fraction):
+        return freqs, mag_db + fraction
+
+    def fake_export_curve(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(rnd_widget_module, "smooth_fractional_octave", fake_smooth)
+    monkeypatch.setattr(main_window_module, "export_curve", fake_export_curve)
+
+    window._export_rnd_measurement(measurement, str(tmp_path / "smooth.txt"))
+
+    assert np.allclose(captured["mag_db"], [7.0, 6.0])
+    window.close()
+
+
+def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    first = _measurement("m1", "Reference")
+    first.pinned = True
+    second = _measurement("m2", "Delta")
+    second.pinned = True
+    second.mag_db = np.array([4.0, 1.5])
+    window._rnd_widget.session.measurements = [first, second]
+    window._rnd_widget.session.ungrouped_order = ["m1", "m2"]
+    window._rnd_widget.session.delta_mode_enabled = True
+    calls: list[dict] = []
+    window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
+
+    window._rnd_widget._redraw()
+
+    deltas = calls[-1]["delta_measurements"]
+    assert calls[-1]["delta_mode_active"] is True
+    assert len(deltas) == 1
+    assert deltas[0][0].name == "Delta"
+    assert np.allclose(deltas[0][2], [3.0, 1.5])
+    window.close()
+
+
+def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement("m1", "Reference")
+    measurement.pinned = True
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.ungrouped_order = ["m1"]
+    window._rnd_widget.session.delta_mode_enabled = True
+    calls: list[dict] = []
+    window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
+
+    window._rnd_widget._redraw()
+
+    assert calls[-1]["delta_mode_active"] is True
+    assert calls[-1]["delta_measurements"] == []
+    assert window._rnd_widget._status_label.text() == "Ready - Delta Mode needs at least 2 bottom items"
+    window.close()
+
+
+def test_rnd_delta_mode_supports_group_variation_bands(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    group_a = RnDGroup(
+        id="ga",
+        name="A",
+        pinned=True,
+        variation_enabled=True,
+        measurement_ids=["a1", "a2"],
+    )
+    group_b = RnDGroup(
+        id="gb",
+        name="B",
+        pinned=True,
+        variation_enabled=True,
+        measurement_ids=["b1", "b2"],
+    )
+    measurements = [
+        _measurement("a1", "A 1"),
+        _measurement("a2", "A 2"),
+        _measurement("b1", "B 1"),
+        _measurement("b2", "B 2"),
+    ]
+    window._rnd_widget.session.measurements = measurements
+    window._rnd_widget.session.groups = [group_a, group_b]
+    window._rnd_widget.session.delta_mode_enabled = True
+
+    def fake_group_variation(items, smoothing_fraction=48):
+        freqs = np.array([100.0, 1000.0])
+        base = 0.0 if items[0].name.startswith("A") else 5.0
+        values = np.array([base, base])
+        return (freqs, values - 2.0, values - 1.0, values + 1.0, values + 2.0, values)
+
+    monkeypatch.setattr(rnd_widget_module, "group_variation", fake_group_variation)
+    calls: list[dict] = []
+    window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
+
+    window._rnd_widget._redraw()
+
+    variations = calls[-1]["delta_group_variations"]
+    assert len(variations) == 1
+    _group, (_freqs, p10, p25, p75, p90, median) = variations[0]
+    assert np.allclose(p10, [3.0, 3.0])
+    assert np.allclose(p25, [4.0, 4.0])
+    assert np.allclose(median, [5.0, 5.0])
+    assert np.allclose(p75, [6.0, 6.0])
+    assert np.allclose(p90, [7.0, 7.0])
+    window.close()
+
+
+def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    assert window._rnd_widget._tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
+    assert window._rnd_widget._tree.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert "QScrollBar:vertical" in window._rnd_widget._tree.styleSheet()
+    window.close()
+
+
+def test_rnd_new_group_moves_selected_measurements_in_visual_order(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    first = _measurement("m1", "First")
+    second = _measurement("m2", "Second")
+    third = _measurement("m3", "Third")
+    window._rnd_widget.session.measurements = [first, second, third]
+    window._rnd_widget.session.ungrouped_order = ["m1", "m2", "m3"]
+    window._rnd_widget.replace_session(window._rnd_widget.session)
+    for item in window._rnd_widget._walk_items():
+        if item.data(0, rnd_widget_module.ROLE_ID) in {"m1", "m3"}:
+            item.setSelected(True)
+
+    window._rnd_widget._new_group()
+
+    group = window._rnd_widget.session.groups[0]
+    assert group.measurement_ids == ["m1", "m3"]
+    assert window._rnd_widget.session.ungrouped_order == ["m2"]
     window.close()
 
 

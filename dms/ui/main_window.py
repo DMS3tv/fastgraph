@@ -15,7 +15,7 @@ import numpy as np
 import paramiko
 import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -38,8 +38,10 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QStatusBar,
     QTabWidget,
+    QKeySequenceEdit,
     QToolButton,
     QTextEdit,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
     QApplication,
@@ -61,6 +63,7 @@ from dms.audio_engine import (
     refresh_audio_backend,
     resolve_device_selection,
 )
+from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
 from dms.console import ConsoleEventStore
 from dms.curator.models import CurveData
@@ -102,6 +105,7 @@ from dms.rnd.models import (
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
+from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
 from dms.squiglink import (
     PHONE_BOOK_REMOTE_PATH,
     RemotePhoneBookInvalidError,
@@ -117,6 +121,7 @@ from dms.theme import DARK, LIGHT, ThemeController
 from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
+from dms.ui.automation_widget import AutomationWidget
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
@@ -419,6 +424,9 @@ class PassFailDialog(QDialog):
         button_row.addWidget(cancel_btn)
 
         layout.addLayout(button_row)
+        fail_shortcut = QShortcut(QKeySequence("F"), self)
+        fail_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        fail_shortcut.activated.connect(self._accept_fail)
         self.adjustSize()
 
     def choice(self) -> str:
@@ -526,6 +534,9 @@ class RnDReviewDialog(QDialog):
         cancel_btn.clicked.connect(self._accept_cancel)
         button_row.addWidget(cancel_btn)
         layout.addLayout(button_row)
+        fail_shortcut = QShortcut(QKeySequence("F"), self)
+        fail_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        fail_shortcut.activated.connect(self._accept_fail)
 
     def choice(self) -> str:
         return self._choice
@@ -738,6 +749,8 @@ class MainWindow(QMainWindow):
         self._last_measurement_diagnostics: Optional[object] = None
         self._hrtf_options: list[tuple[str, str]] = []
         self._console_events = ConsoleEventStore(parent=self)
+        self._automation_running = False
+        self._keyboard_shortcuts: list[QShortcut] = []
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -747,6 +760,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 700)
 
         self._build_ui()
+        self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if bool(self._settings.get("bluetooth_headphone_mode")):
             self._apply_bluetooth_headphone_mode_settings(
@@ -759,6 +773,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_update_check()
         self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
+        QTimer.singleShot(0, lambda: self._run_automation_trigger("app_start"))
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -818,7 +833,14 @@ class MainWindow(QMainWindow):
 
         self._console_widget = ConsoleWidget(self._console_events)
         self._console_widget.command_submitted.connect(self._run_console_command)
-        self._tabs.addTab(self._console_widget, "Console")
+        self._automation_widget = AutomationWidget(
+            self._console_widget,
+            self._automation_default_dir,
+            lambda: __version__,
+            parent=self,
+        )
+        self._automation_widget.run_requested.connect(self._run_automation)
+        self._tabs.addTab(self._automation_widget, "Automation")
 
         self._settings_widget = SettingsWidget(self._settings, self)
         self._settings_widget.settings_changed.connect(self._on_settings_tab_changed)
@@ -869,8 +891,83 @@ class MainWindow(QMainWindow):
     def _on_settings_tab_changed(self, key: str, _value: object) -> None:
         if key in {"sample_rate", "buffer_size", "latency"}:
             self._start_level_monitor()
+        if key == "shortcut_bindings":
+            self._configure_keyboard_shortcuts()
         self._log_event("INFO", "settings", "Setting saved", name=key)
         self._statusbar.showMessage("Setting saved.")
+
+    def _configure_keyboard_shortcuts(self) -> None:
+        for shortcut in getattr(self, "_keyboard_shortcuts", []):
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self._keyboard_shortcuts = []
+        bindings = shortcut_bindings_from_settings(self._settings.get("shortcut_bindings"))
+        valid_actions = {action for action, _label, _default in SHORTCUT_ACTIONS}
+        for action in valid_actions:
+            sequence_text = str(bindings.get(action, "")).strip()
+            if not sequence_text:
+                continue
+            sequence = QKeySequence(sequence_text)
+            if sequence.isEmpty():
+                continue
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda action=action: self._handle_keyboard_shortcut(action))
+            self._keyboard_shortcuts.append(shortcut)
+
+    def _shortcut_focus_is_editing(self) -> bool:
+        focus = QApplication.focusWidget()
+        return isinstance(
+            focus,
+            (
+                QLineEdit,
+                QTextEdit,
+                QPlainTextEdit,
+                QComboBox,
+                QSpinBox,
+                QDoubleSpinBox,
+                QKeySequenceEdit,
+            ),
+        )
+
+    def _handle_keyboard_shortcut(self, action: str) -> None:
+        if self._shortcut_focus_is_editing():
+            return
+        if action == "start_measurement":
+            self._shortcut_start_measurement()
+        elif action == "fail_review":
+            self._shortcut_fail_review()
+        elif action.startswith("tab_"):
+            self._shortcut_switch_tab(action)
+
+    def _shortcut_start_measurement(self) -> None:
+        if self._tabs.currentWidget() is self._rnd_widget:
+            self._start_rnd_measurement()
+            return
+        if self._tabs.currentIndex() == 0:
+            self._start_queue()
+            return
+        self._statusbar.showMessage("Shortcut ignored: switch to Measure or R&D to start a measurement.")
+
+    def _shortcut_fail_review(self) -> None:
+        if self._state != AppState.PASS_FAIL:
+            return
+        if self._rnd_review_dialog is not None:
+            self._rnd_review_dialog._accept_fail()
+            return
+        self._on_fail()
+
+    def _shortcut_switch_tab(self, action: str) -> None:
+        tab_map = {
+            "tab_measure": 0,
+            "tab_rnd": 1,
+            "tab_curator": 2,
+            "tab_automation": 3,
+            "tab_settings": 4,
+        }
+        index = tab_map.get(action)
+        if index is not None and 0 <= index < self._tabs.count():
+            self._tabs.setCurrentIndex(index)
 
     def _build_tab_header(self) -> QWidget:
         header = QWidget()
@@ -939,9 +1036,229 @@ class MainWindow(QMainWindow):
 
     def _log_event(self, severity: str, source: str, message: str, **details) -> None:
         self._console_events.publish(severity, source, message, details)
+        if (
+            severity.upper() == "ERROR"
+            and source != "automation"
+            and hasattr(self, "_automation_widget")
+            and not getattr(self, "_automation_running", False)
+        ):
+            QTimer.singleShot(0, lambda: self._run_automation_trigger("app_error"))
 
     def _command_reply(self, message: str, error: bool = False) -> None:
         self._log_event("ERROR" if error else "INFO", "console", message)
+
+    def _automation_default_dir(self) -> Path:
+        configured = str(self._settings.get("automation_directory") or "").strip()
+        if configured:
+            return Path(configured).expanduser()
+        return default_automation_directory()
+
+    def _run_automation_trigger(self, trigger: str) -> None:
+        widget = getattr(self, "_automation_widget", None)
+        if widget is None:
+            return
+        for automation in widget.events.automations_for_trigger(trigger):
+            self._run_automation(automation, triggered_by=trigger)
+
+    def _run_automation(self, automation: AutomationDefinition, triggered_by: str = "manual") -> None:
+        if getattr(self, "_automation_running", False):
+            self._log_event("WARNING", "automation", "Automation already running", name=automation.name)
+            return
+        self._automation_running = True
+        variables = dict(automation.variables)
+        self._log_event("INFO", "automation", "Automation started", name=automation.name, trigger=triggered_by)
+        try:
+            for index, step in enumerate(automation.steps, start=1):
+                if not self._automation_condition_matches(step, variables):
+                    self._log_event("DEBUG", "automation", "Automation step skipped", step=index)
+                    continue
+                if self._automation_step_is_risky(step) and not step.skip_risky_confirmation:
+                    choice = QMessageBox.question(
+                        self,
+                        "Confirm Automation Action",
+                        f"Run risky automation action?\n\n{step.action}: {step.target} {step.value}",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if choice != QMessageBox.StandardButton.Yes:
+                        raise RuntimeError(f"Automation canceled before step {index}.")
+                self._execute_automation_step(step, variables)
+                self._log_event("INFO", "automation", "Automation step complete", step=index, action=step.action)
+            self._log_event("INFO", "automation", "Automation complete", name=automation.name)
+        except Exception as exc:
+            self._log_event("ERROR", "automation", f"Automation failed: {exc}", name=automation.name)
+            if triggered_by == "manual":
+                QMessageBox.warning(self, "Automation Failed", str(exc))
+        finally:
+            self._automation_running = False
+
+    def _automation_condition_matches(self, step: AutomationStep, variables: dict[str, object]) -> bool:
+        condition = step.condition
+        value = str(condition.value)
+        current = str(variables.get(condition.left, ""))
+        if condition.kind == "always":
+            return True
+        if condition.kind == "variable_equals":
+            return current == value
+        if condition.kind == "variable_not_equals":
+            return current != value
+        if condition.kind == "variable_contains":
+            return value in current
+        if condition.kind == "variable_true":
+            return bool(variables.get(condition.left))
+        if condition.kind == "variable_false":
+            return not bool(variables.get(condition.left))
+        if condition.kind == "app_state":
+            return self._state == value
+        if condition.kind == "kept_count_at_least":
+            return len(self._kept_curves) >= int(value or 0)
+        if condition.kind == "rnd_count_at_least":
+            return len(self._rnd_widget.session.measurements) >= int(value or 0)
+        if condition.kind == "curator_layers_at_least":
+            return len(self._curator_widget.graph_state.layers) >= int(value or 0)
+        return False
+
+    @staticmethod
+    def _automation_step_is_risky(step: AutomationStep) -> bool:
+        return step.action in {
+            "measure_start",
+            "measure_pass",
+            "measure_fail",
+            "measure_cancel",
+            "rnd_start",
+            "rnd_load_session",
+            "rnd_export_selected",
+            "rnd_send_to_curator",
+            "curator_send_measure",
+            "curator_export_png",
+            "export_average",
+            "export_variation",
+        }
+
+    def _execute_automation_step(self, step: AutomationStep, variables: dict[str, object]) -> None:
+        action = step.action
+        target = self._expand_automation_text(step.target, variables)
+        value = self._expand_automation_text(step.value, variables)
+        if action == "navigate":
+            self._automation_navigate(target)
+        elif action == "switch_input_device":
+            self._automation_switch_input_device(target or value)
+        elif action == "switch_input_channel":
+            self._automation_switch_input_channel(target or value)
+        elif action == "console_command":
+            self._run_console_command(target or value)
+        elif action == "prompt_info":
+            QMessageBox.information(self, "Automation", value or target)
+        elif action == "prompt_warning":
+            QMessageBox.warning(self, "Automation", value or target)
+        elif action == "prompt_yes_no":
+            result = QMessageBox.question(
+                self,
+                "Automation",
+                value or target,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            variables[target or "prompt_result"] = result == QMessageBox.StandardButton.Yes
+        elif action == "set_variable":
+            variables[target] = value
+        elif action == "clear_variable":
+            variables.pop(target, None)
+        elif action in {"increment_variable", "decrement_variable"}:
+            current = float(variables.get(target, 0) or 0)
+            delta = float(value or 1)
+            variables[target] = current + delta if action == "increment_variable" else current - delta
+        elif action == "measure_start":
+            args = ["start"]
+            if target:
+                args.append(target)
+            if value:
+                args.append(value)
+            self._run_measure_command(args)
+        elif action == "measure_pass":
+            self._run_measure_command(["pass"])
+        elif action == "measure_fail":
+            self._run_measure_command(["fail"])
+        elif action == "measure_cancel":
+            self._run_measure_command(["cancel"])
+        elif action == "rnd_start":
+            self._start_rnd_measurement()
+        elif action == "rnd_save_session":
+            if not self._save_rnd_session():
+                raise RuntimeError("R&D session save canceled.")
+        elif action == "rnd_load_session":
+            self._load_rnd_session()
+        elif action == "rnd_export_selected":
+            self._export_rnd_selected()
+        elif action == "rnd_send_to_curator":
+            self._send_rnd_to_curator()
+        elif action == "curator_send_measure":
+            self._send_to_curator()
+        elif action == "curator_command":
+            self._run_curator_command(shlex.split(target or value))
+        elif action == "curator_export_png":
+            self._curator_widget.export_png(target or value)
+            self._run_automation_trigger("export_complete")
+        elif action == "export_average":
+            self._export_average(target or None)
+            self._run_automation_trigger("export_complete")
+        elif action == "export_variation":
+            self._export_variation(target or None)
+            self._run_automation_trigger("export_complete")
+        elif action == "export_log":
+            self._export_console_log(target or None)
+            self._run_automation_trigger("export_complete")
+        else:
+            raise ValueError(f"Unsupported automation action: {action}")
+
+    @staticmethod
+    def _expand_automation_text(text: str, variables: dict[str, object]) -> str:
+        result = str(text or "")
+        for key, value in variables.items():
+            result = result.replace("{" + str(key) + "}", str(value))
+        return result
+
+    def _automation_navigate(self, target: str) -> None:
+        normalized = target.strip().lower()
+        labels = {
+            "measure": "Measure",
+            "r&d": "R&&D",
+            "rnd": "R&&D",
+            "curator": "Curator",
+            "automation": "Automation",
+            "console": "Automation",
+            "settings": "Settings",
+        }
+        label = labels.get(normalized, target)
+        for index in range(self._tabs.count()):
+            if self._tabs.tabText(index) == label:
+                self._tabs.setCurrentIndex(index)
+                return
+        raise ValueError(f"Automation tab target not found: {target}")
+
+    def _automation_switch_input_device(self, requested: str) -> None:
+        if self._state != AppState.IDLE:
+            raise ValueError("Input device can only be changed while idle.")
+        text = requested.strip()
+        for index in range(self._in_dev_combo.count()):
+            data = self._in_dev_combo.itemData(index)
+            label = self._in_dev_combo.itemText(index)
+            if text == str(data) or text.casefold() in label.casefold():
+                self._in_dev_combo.setCurrentIndex(index)
+                return
+        raise ValueError(f"Input device unavailable: {requested}")
+
+    def _automation_switch_input_channel(self, requested: str) -> None:
+        if self._state != AppState.IDLE:
+            raise ValueError("Input channel can only be changed while idle.")
+        raw = requested.strip().lower()
+        text = raw.removeprefix("ch").strip()
+        for index in range(self._ch_combo.count()):
+            data = self._ch_combo.itemData(index)
+            label = self._ch_combo.itemText(index).lower()
+            if text == str(data) or text == str(int(data) + 1) or raw == label:
+                self._ch_combo.setCurrentIndex(index)
+                return
+        raise ValueError(f"Input channel unavailable: {requested}")
 
     def _run_console_command(self, command: str) -> None:
         echo = command
@@ -2574,6 +2891,7 @@ class MainWindow(QMainWindow):
             index=self._queue_index + 1,
             kept_count=len(self._kept_curves),
         )
+        self._run_automation_trigger("measurement_kept")
         self._pending_curve = None
         self._queue_index += 1
         self._current_sweep_attempts = 0
@@ -2629,6 +2947,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_level_monitor()
         self._statusbar.showMessage("Queue complete.")
+        self._run_automation_trigger("queue_complete")
 
     def _update_queue_progress(self) -> None:
         target = max(0, self._queue_target)
@@ -2937,6 +3256,7 @@ class MainWindow(QMainWindow):
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
         self._log_event("INFO", "rnd", "R&D measurement kept", name=measurement.name, status=change_status)
+        self._run_automation_trigger("rnd_measurement_kept")
 
     def _cancel_rnd_measurement(self) -> None:
         self._abort_active_sweep()
@@ -3524,9 +3844,13 @@ class MainWindow(QMainWindow):
                     "Enable variation for the selected group before sending it to Curator.",
                 )
                 return
-            if not self._ensure_rnd_hrtfs_available(self._rnd_widget.displayed_group_measurements(group)):
+            measurements = self._rnd_widget.displayed_group_measurements(group)
+            if not self._ensure_rnd_hrtfs_available(measurements):
                 return
-            variation = rnd_group_variation(self._rnd_widget.displayed_group_measurements(group))
+            variation = rnd_group_variation(
+                measurements,
+                smoothing_fraction=int(self._rnd_widget.session.smoothing_fraction or 48),
+            )
             if variation is None:
                 QMessageBox.information(
                     self,
@@ -3603,12 +3927,16 @@ class MainWindow(QMainWindow):
         self._export_dir_input.setText(str(path.parent))
         self._statusbar.showMessage(f"Exported R&D measurement: {path}")
         self._log_event("INFO", "rnd", "R&D measurement exported", path=str(path))
+        self._run_automation_trigger("export_complete")
 
     def _export_rnd_group_variation(self, group) -> None:
         measurements = self._rnd_widget.displayed_group_measurements(group)
         if not self._ensure_rnd_hrtfs_available(measurements):
             return
-        variation = rnd_group_variation(measurements)
+        variation = rnd_group_variation(
+            measurements,
+            smoothing_fraction=int(self._rnd_widget.session.smoothing_fraction or 48),
+        )
         if variation is None:
             QMessageBox.information(
                 self,
@@ -3639,12 +3967,13 @@ class MainWindow(QMainWindow):
             compensated=compensated,
             hrtf=hrtf,
             n_sweeps=len(measurements),
-            smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+            smoothing_fraction=int(self._rnd_widget.session.smoothing_fraction or 48),
         )
         self._settings.set("export_directory", str(path.parent))
         self._export_dir_input.setText(str(path.parent))
         self._statusbar.showMessage(f"Exported R&D variation: {path}")
         self._log_event("INFO", "rnd", "R&D variation exported", path=str(path))
+        self._run_automation_trigger("export_complete")
 
     def _export_rnd_group_measurements(self, group) -> None:
         measurements = [
@@ -3851,6 +4180,8 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Exported average: {path}")
             if hasattr(self, "_log_event"):
                 self._log_event("INFO", "export", "Average exported", path=str(path), compensated=compensated)
+            if hasattr(self, "_run_automation_trigger"):
+                self._run_automation_trigger("export_complete")
         except Exception as exc:
             if hasattr(self, "_log_event"):
                 self._log_event("ERROR", "export", f"Average export failed: {exc}")
@@ -3889,6 +4220,8 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Exported variation: {path}")
             if hasattr(self, "_log_event"):
                 self._log_event("INFO", "export", "Variation exported", path=str(path), compensated=compensated)
+            if hasattr(self, "_run_automation_trigger"):
+                self._run_automation_trigger("export_complete")
         except Exception as exc:
             if hasattr(self, "_log_event"):
                 self._log_event("ERROR", "export", f"Variation export failed: {exc}")
@@ -3905,6 +4238,8 @@ class MainWindow(QMainWindow):
             return
         self._console_events.export(path)
         self._log_event("INFO", "export", "Console log exported", path=str(path))
+        if hasattr(self, "_run_automation_trigger"):
+            self._run_automation_trigger("export_complete")
 
     def _sync_export_button(self) -> None:
         idle = self._state == AppState.IDLE

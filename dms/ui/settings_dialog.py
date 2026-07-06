@@ -14,9 +14,15 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QKeySequenceEdit,
 )
 
 from dms.settings_manager import SettingsManager
+from dms.shortcuts import (
+    DEFAULT_SHORTCUT_BINDINGS,
+    SHORTCUT_ACTIONS,
+    shortcut_bindings_from_settings,
+)
 
 
 class SettingsWidget(QWidget):
@@ -151,8 +157,50 @@ class SettingsWidget(QWidget):
         rnd_layout.addWidget(QLabel("Default save/load folder"))
         rnd_layout.addLayout(rnd_row)
         layout.addWidget(self._rnd_group)
+
+        self._automation_group = QGroupBox("Automations")
+        automation_layout = QVBoxLayout(self._automation_group)
+        automation_row = QHBoxLayout()
+        self._automation_dir = QLineEdit()
+        self._automation_dir.setPlaceholderText("Default: Documents/Fastgraph Automations")
+        automation_row.addWidget(self._automation_dir, 1)
+        self._automation_browse = QPushButton("Browse...")
+        automation_row.addWidget(self._automation_browse)
+        automation_layout.addWidget(QLabel("Default automation folder"))
+        automation_layout.addLayout(automation_row)
+        layout.addWidget(self._automation_group)
         layout.addStretch(1)
         root_layout.addWidget(self._settings_column)
+        self._shortcuts_column = QWidget()
+        self._shortcuts_column.setObjectName("settings_shortcuts_column")
+        self._shortcuts_column.setFixedWidth(420)
+        shortcuts_layout = QVBoxLayout(self._shortcuts_column)
+        shortcuts_layout.setContentsMargins(16, 16, 16, 16)
+        shortcuts_layout.setSpacing(12)
+
+        self._shortcuts_group = QGroupBox("Keyboard Shortcuts")
+        shortcut_form = QFormLayout(self._shortcuts_group)
+        self._shortcut_edits: dict[str, QKeySequenceEdit] = {}
+        for action, label, _default in SHORTCUT_ACTIONS:
+            edit = QKeySequenceEdit()
+            edit.setClearButtonEnabled(True)
+            edit.setToolTip("Click and press the desired shortcut. Clear to disable this shortcut.")
+            self._shortcut_edits[action] = edit
+            shortcut_form.addRow(label, edit)
+        shortcuts_layout.addWidget(self._shortcuts_group)
+
+        shortcut_hint = QLabel(
+            "Shortcuts save immediately. Empty bindings are disabled. "
+            "Enter starts the active measurement workspace unless you are typing in an editor."
+        )
+        shortcut_hint.setWordWrap(True)
+        shortcut_hint.setProperty("tone", "muted")
+        shortcuts_layout.addWidget(shortcut_hint)
+        reset_btn = QPushButton("Reset Shortcuts")
+        reset_btn.clicked.connect(self._reset_shortcuts)
+        shortcuts_layout.addWidget(reset_btn)
+        shortcuts_layout.addStretch(1)
+        root_layout.addWidget(self._shortcuts_column)
         root_layout.addStretch(1)
 
     def _connect_signals(self) -> None:
@@ -197,6 +245,14 @@ class SettingsWidget(QWidget):
             lambda: self._save("rnd_session_directory", self._rnd_session_dir.text().strip())
         )
         self._rnd_session_browse.clicked.connect(self._choose_rnd_session_dir)
+        self._automation_dir.editingFinished.connect(
+            lambda: self._save("automation_directory", self._automation_dir.text().strip())
+        )
+        self._automation_browse.clicked.connect(self._choose_automation_dir)
+        for action, edit in self._shortcut_edits.items():
+            edit.editingFinished.connect(
+                lambda action=action, edit=edit: self._save_shortcut(action, edit.keySequence().toString())
+            )
         self._calibration_btn.clicked.connect(self.calibration_requested)
         self._test_level_btn.clicked.connect(self.test_level_requested)
 
@@ -222,6 +278,27 @@ class SettingsWidget(QWidget):
         self._rnd_session_dir.setText(chosen)
         self._save("rnd_session_directory", chosen)
 
+    def _choose_automation_dir(self) -> None:
+        current = self._automation_dir.text().strip()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Automation Folder",
+            current,
+        )
+        if not chosen:
+            return
+        self._automation_dir.setText(chosen)
+        self._save("automation_directory", chosen)
+
+    def _save_shortcut(self, action: str, sequence: str) -> None:
+        bindings = shortcut_bindings_from_settings(self._settings.get("shortcut_bindings"))
+        bindings[action] = sequence.strip()
+        self._save("shortcut_bindings", bindings)
+
+    def _reset_shortcuts(self) -> None:
+        self._save("shortcut_bindings", dict(DEFAULT_SHORTCUT_BINDINGS))
+        self.refresh_from_settings()
+
     def refresh_from_settings(self) -> None:
         controls = (
             self._duration,
@@ -236,6 +313,8 @@ class SettingsWidget(QWidget):
             self._confirm_clear,
             self._confirm_clear_metadata,
             self._rnd_session_dir,
+            self._automation_dir,
+            *self._shortcut_edits.values(),
         )
         for control in controls:
             control.blockSignals(True)
@@ -262,6 +341,10 @@ class SettingsWidget(QWidget):
                 bool(self._settings.get("confirm_clear_metadata"))
             )
             self._rnd_session_dir.setText(str(self._settings.get("rnd_session_directory") or ""))
+            self._automation_dir.setText(str(self._settings.get("automation_directory") or ""))
+            bindings = shortcut_bindings_from_settings(self._settings.get("shortcut_bindings"))
+            for action, edit in self._shortcut_edits.items():
+                edit.setKeySequence(bindings.get(action, ""))
         finally:
             for control in controls:
                 control.blockSignals(False)
@@ -271,3 +354,5 @@ class SettingsWidget(QWidget):
         self._audio_tools_group.setEnabled(enabled)
         self._safety_group.setEnabled(enabled)
         self._rnd_group.setEnabled(enabled)
+        self._automation_group.setEnabled(enabled)
+        self._shortcuts_group.setEnabled(enabled)

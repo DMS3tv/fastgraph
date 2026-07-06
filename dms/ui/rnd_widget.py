@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.models import PreferenceBounds
 from dms.measurement_txt import load_two_column_txt_curve
+from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
     DEFAULT_COLORS,
     RnDGroup,
@@ -49,6 +50,7 @@ UPPER_BOUNDS_PATH = BOUNDS_DIR / "- Upper Bounds.txt"
 LOWER_BOUNDS_PATH = BOUNDS_DIR / "- Lower Bounds.txt"
 
 VARIATION_COLOR = "#FCBE11"
+SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
 
 ROLE_KIND = Qt.ItemDataRole.UserRole
 ROLE_ID = Qt.ItemDataRole.UserRole + 1
@@ -106,8 +108,16 @@ class RnDPlotWidget(QWidget):
         _configure_plot(self.top_plot)
         _configure_plot(self.bottom_plot)
         layout.addWidget(self.top_plot, 1)
+        self._between_plots_widget: QWidget | None = None
         layout.addWidget(self.bottom_plot, 1)
         self._items: list[object] = []
+
+    def set_between_plots_widget(self, widget: QWidget) -> None:
+        if self._between_plots_widget is not None:
+            self.layout().removeWidget(self._between_plots_widget)
+            self._between_plots_widget.setParent(None)
+        self._between_plots_widget = widget
+        self.layout().insertWidget(1, widget)
 
     def apply_theme(self, theme: str) -> None:
         self._theme = normalize_theme(theme)
@@ -127,6 +137,9 @@ class RnDPlotWidget(QWidget):
         pinned_measurements: list[tuple[RnDMeasurement, np.ndarray]],
         top_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
         bottom_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
+        delta_mode_active: bool = False,
+        delta_measurements: list[tuple[RnDMeasurement, np.ndarray, np.ndarray]] | None = None,
+        delta_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] | None = None,
         preference_bounds: PreferenceBounds | None = None,
         target_curve: tuple[str, np.ndarray, np.ndarray] | None = None,
     ) -> None:
@@ -148,31 +161,48 @@ class RnDPlotWidget(QWidget):
             )
             self._items.append(item)
             top_curves.append((measurement.freqs, mag_db))
-        for measurement, mag_db in pinned_measurements:
-            item = self.bottom_plot.plot(
-                measurement.freqs,
-                mag_db,
-                pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.5),
-            )
-            self._items.append(item)
-            bottom_curves.append((measurement.freqs, mag_db))
+        delta_measurements = delta_measurements or []
+        delta_group_variations = delta_group_variations or []
+        if delta_mode_active:
+            for measurement, freqs, mag_db in delta_measurements:
+                item = self.bottom_plot.plot(
+                    freqs,
+                    mag_db,
+                    pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.5),
+                )
+                self._items.append(item)
+                bottom_curves.append((freqs, mag_db))
+            for group, variation in delta_group_variations:
+                bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
+        else:
+            for measurement, mag_db in pinned_measurements:
+                item = self.bottom_plot.plot(
+                    measurement.freqs,
+                    mag_db,
+                    pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.5),
+                )
+                self._items.append(item)
+                bottom_curves.append((measurement.freqs, mag_db))
 
         for group, variation in top_group_variations:
             top_curves.extend(self._draw_variation(self.top_plot, group, variation))
 
-        for group, variation in bottom_group_variations:
-            bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
+        if not delta_mode_active:
+            for group, variation in bottom_group_variations:
+                bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
 
         if preference_bounds is not None and preference_bounds.enabled:
             bounds_curves = self._draw_preference_bounds(self.top_plot, preference_bounds)
             top_curves.extend(bounds_curves)
-            bounds_curves = self._draw_preference_bounds(self.bottom_plot, preference_bounds)
-            bottom_curves.extend(bounds_curves)
+            if not delta_mode_active:
+                bounds_curves = self._draw_preference_bounds(self.bottom_plot, preference_bounds)
+                bottom_curves.extend(bounds_curves)
 
         if target_curve is not None:
             _name, freqs, mag_db = target_curve
             top_curves.extend(self._draw_target(self.top_plot, freqs, mag_db))
-            bottom_curves.extend(self._draw_target(self.bottom_plot, freqs, mag_db))
+            if not delta_mode_active:
+                bottom_curves.extend(self._draw_target(self.bottom_plot, freqs, mag_db))
 
         self._auto_center(self.top_plot, top_curves)
         self._auto_center(self.bottom_plot, bottom_curves)
@@ -309,6 +339,8 @@ class RnDWidget(QWidget):
         self._tree.setEnabled(not busy)
         self._notes_edit.setEnabled(not busy)
         self._bounds_enabled.setEnabled(not busy)
+        self._smoothing_combo.setEnabled(not busy)
+        self._delta_mode_toggle.setEnabled(not busy)
         self._target_enabled.setEnabled(not busy)
         self._target_import_btn.setEnabled(not busy)
         self._target_offset_spin.setEnabled(not busy and len(self.session.target_freqs) >= 2)
@@ -369,11 +401,12 @@ class RnDWidget(QWidget):
         return group_variation([
             self._with_mag(measurement, self._display_mag(measurement, group))
             for measurement in measurements
-        ])
+        ], smoothing_fraction=int(self.session.smoothing_fraction or 48))
 
     def replace_session(self, session: RnDSession) -> None:
         self.session = session
         self._sync_bounds_control()
+        self._sync_view_controls()
         self._sync_target_controls()
         self._sync_default_hrtf_control()
         self._sync_tree()
@@ -410,6 +443,7 @@ class RnDWidget(QWidget):
         )
         self.session.repair_ordering()
         self._sync_bounds_control()
+        self._sync_view_controls()
         self._sync_target_controls()
         self._sync_default_hrtf_control()
         self._sync_tree()
@@ -462,6 +496,7 @@ class RnDWidget(QWidget):
         view_controls.addWidget(self._target_label, 1)
         viewport_layout.addLayout(view_controls)
         self._plots = RnDPlotWidget()
+        self._plots.set_between_plots_widget(self._build_interplot_controls())
         viewport_layout.addWidget(self._plots, 1)
         splitter.addWidget(viewport_panel)
 
@@ -522,10 +557,16 @@ class RnDWidget(QWidget):
         self._tree.setColumnWidth(5, 96)
         self._tree.setColumnWidth(6, 100)
         self._tree.setColumnWidth(7, 112)
-        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._tree.setStyleSheet(
+            "QTreeWidget QScrollBar:vertical { width: 16px; background: rgba(120, 120, 120, 45); }"
+            "QTreeWidget QScrollBar::handle:vertical { min-height: 32px; background: #FCBE11; border-radius: 6px; }"
+            "QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }"
+        )
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         self._tree.structure_changed.connect(self._on_tree_structure_changed)
@@ -594,6 +635,31 @@ class RnDWidget(QWidget):
             self._save_btn,
             self._load_btn,
         ]
+
+    def _build_interplot_controls(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("rnd_interplot_controls")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(8)
+        layout.addStretch(1)
+        layout.addWidget(QLabel("Smoothing"))
+        self._smoothing_combo = QComboBox()
+        for fraction in SMOOTHING_OPTIONS:
+            self._smoothing_combo.addItem(f"1/{fraction}", fraction)
+        index = self._smoothing_combo.findData(self.session.smoothing_fraction)
+        self._smoothing_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._smoothing_combo.currentIndexChanged.connect(self._on_smoothing_changed)
+        layout.addWidget(self._smoothing_combo)
+        layout.addSpacing(14)
+        layout.addWidget(QLabel("Delta Mode"))
+        self._delta_mode_toggle = ToggleSwitch()
+        self._delta_mode_toggle.setToolTip("Show bottom viewport curves as deltas from the first bottom item")
+        self._delta_mode_toggle.setChecked(self.session.delta_mode_enabled)
+        self._delta_mode_toggle.stateChanged.connect(self._on_delta_mode_changed)
+        layout.addWidget(self._delta_mode_toggle)
+        layout.addStretch(1)
+        return panel
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -667,7 +733,6 @@ class RnDWidget(QWidget):
             item.flags()
             | Qt.ItemFlag.ItemIsEditable
             | Qt.ItemFlag.ItemIsDropEnabled
-            | Qt.ItemFlag.ItemIsDragEnabled
         )
         item.setText(1, "")
         item.setText(2, "")
@@ -979,6 +1044,20 @@ class RnDWidget(QWidget):
         self._redraw()
         self.state_changed.emit()
 
+    def _on_smoothing_changed(self, _index: int) -> None:
+        if self._syncing:
+            return
+        self.session.smoothing_fraction = int(self._smoothing_combo.currentData() or 48)
+        self._redraw()
+        self.state_changed.emit()
+
+    def _on_delta_mode_changed(self, _state: int) -> None:
+        if self._syncing:
+            return
+        self.session.delta_mode_enabled = self._delta_mode_toggle.isChecked()
+        self._redraw()
+        self.state_changed.emit()
+
     def _on_target_enabled_changed(self, _state: int) -> None:
         if self._syncing:
             return
@@ -1033,6 +1112,15 @@ class RnDWidget(QWidget):
         finally:
             self._syncing = False
 
+    def _sync_view_controls(self) -> None:
+        self._syncing = True
+        try:
+            index = self._smoothing_combo.findData(int(self.session.smoothing_fraction or 48))
+            self._smoothing_combo.setCurrentIndex(index if index >= 0 else 0)
+            self._delta_mode_toggle.setChecked(bool(self.session.delta_mode_enabled))
+        finally:
+            self._syncing = False
+
     def _sync_target_controls(self) -> None:
         self._syncing = True
         try:
@@ -1064,10 +1152,16 @@ class RnDWidget(QWidget):
         name = self._unique_name("New Group", names)
         group = RnDGroup(name=name)
         group.color = DEFAULT_COLORS[len(self.session.groups) % len(DEFAULT_COLORS)]
+        selected_ids = self._selected_measurement_ids()
+        if selected_ids:
+            self._remove_measurement_ids_from_orders(selected_ids)
+            group.measurement_ids = selected_ids
         self.session.groups.append(group)
         self.session.selected_id = group.id
+        self.session.repair_ordering()
         self._sync_tree()
         self._select_id(group.id)
+        self._redraw()
         self.state_changed.emit()
 
     def _remove_selected(self) -> None:
@@ -1155,6 +1249,39 @@ class RnDWidget(QWidget):
         self._redraw()
         self.state_changed.emit()
 
+    def _selected_measurement_ids(self) -> list[str]:
+        selected = {
+            item.data(0, ROLE_ID)
+            for item in self._tree.selectedItems()
+            if item.data(0, ROLE_KIND) == KIND_MEASUREMENT
+        }
+        if not selected:
+            return []
+        return [item_id for item_id in self._visual_measurement_order() if item_id in selected]
+
+    def _visual_measurement_order(self) -> list[str]:
+        ordered: list[str] = []
+        for i in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(i)
+            if item.data(0, ROLE_KIND) == KIND_MEASUREMENT:
+                ordered.append(item.data(0, ROLE_ID))
+            elif item.data(0, ROLE_KIND) == KIND_GROUP:
+                for child_index in range(item.childCount()):
+                    child = item.child(child_index)
+                    if child.data(0, ROLE_KIND) == KIND_MEASUREMENT:
+                        ordered.append(child.data(0, ROLE_ID))
+        return ordered
+
+    def _remove_measurement_ids_from_orders(self, measurement_ids: list[str]) -> None:
+        selected = set(measurement_ids)
+        self.session.ungrouped_order = [
+            item_id for item_id in self.session.ungrouped_order if item_id not in selected
+        ]
+        for group in self.session.groups:
+            group.measurement_ids = [
+                item_id for item_id in group.measurement_ids if item_id not in selected
+            ]
+
     def _visible_measurements_for_group(self, group_id: str | None, *, top: bool) -> list[tuple[RnDMeasurement, np.ndarray]]:
         if group_id is None:
             ids = self.session.ungrouped_order
@@ -1173,12 +1300,27 @@ class RnDWidget(QWidget):
             if measurement is None:
                 continue
             group = self.session.group_by_id(group_id) if group_id is not None else None
-            displayed = self._display_mag(measurement, group)
+            _freqs, displayed = self.displayed_measurement_curve(measurement, group=group)
             if top and measurement.top_visible:
                 measurements.append((measurement, displayed))
             if not top and (measurement.pinned or group_id is not None):
                 measurements.append((measurement, displayed))
         return measurements
+
+    def _measurements_for_group_view(self, group: RnDGroup, *, top: bool) -> list[RnDMeasurement]:
+        if top and not group.visible:
+            return []
+        if not top and not group.pinned:
+            return []
+        result = []
+        for measurement_id in group.measurement_ids:
+            measurement = self.session.measurement_by_id(measurement_id)
+            if measurement is None:
+                continue
+            if top and not measurement.top_visible:
+                continue
+            result.append(measurement)
+        return result
 
     def _redraw(self) -> None:
         self._missing_hrtf_names.clear()
@@ -1188,6 +1330,10 @@ class RnDWidget(QWidget):
         pinned = self._visible_measurements_for_group(None, top=False)
         top_variations = []
         bottom_variations = []
+        bottom_items: list[tuple[str, object, object]] = [
+            ("measurement", measurement, (measurement.freqs, mag))
+            for measurement, mag in pinned
+        ]
         for group in self.session.groups:
             group_top = self._visible_measurements_for_group(group.id, top=True)
             group_pinned = self._visible_measurements_for_group(group.id, top=False)
@@ -1195,27 +1341,38 @@ class RnDWidget(QWidget):
             bottom_variation = None
             if group.visible and group.variation_enabled:
                 measurements = [
-                    self._with_mag(measurement, mag)
-                    for measurement, mag in group_top
+                    self._with_mag(measurement, self._display_mag(measurement, group))
+                    for measurement in self._measurements_for_group_view(group, top=True)
                 ]
-                top_variation = group_variation(measurements)
+                top_variation = group_variation(
+                    measurements,
+                    smoothing_fraction=int(self.session.smoothing_fraction or 48),
+                )
                 if top_variation is not None:
                     top_variations.append((group, top_variation))
                 elif len(measurements) < 2:
                     variation_needs_more.add(group.name)
             if group.pinned and group.variation_enabled:
                 measurements = [
-                    self._with_mag(measurement, mag)
-                    for measurement, mag in group_pinned
+                    self._with_mag(measurement, self._display_mag(measurement, group))
+                    for measurement in self._measurements_for_group_view(group, top=False)
                 ]
-                bottom_variation = group_variation(measurements)
+                bottom_variation = group_variation(
+                    measurements,
+                    smoothing_fraction=int(self.session.smoothing_fraction or 48),
+                )
                 if bottom_variation is not None:
                     bottom_variations.append((group, bottom_variation))
+                    bottom_items.append(("variation", group, bottom_variation))
                 elif len(measurements) < 2:
                     variation_needs_more.add(group.name)
             if not group.variation_enabled:
                 top.extend(group_top)
                 pinned.extend(group_pinned)
+                bottom_items.extend(
+                    ("measurement", measurement, (measurement.freqs, mag))
+                    for measurement, mag in group_pinned
+                )
         target_curve = None
         if self.session.target_visible and len(self.session.target_freqs) >= 2 and len(self.session.target_mag_db) >= 2:
             target_curve = (
@@ -1223,25 +1380,42 @@ class RnDWidget(QWidget):
                 self.session.target_freqs,
                 self.session.target_mag_db + float(self.session.target_offset_db),
             )
+        delta_measurements = []
+        delta_variations = []
+        delta_needs_more = False
+        if self.session.delta_mode_enabled:
+            delta_measurements, delta_variations, delta_needs_more = self._bottom_delta_items(bottom_items)
         self._plots.redraw(
             top_measurements=top,
             pinned_measurements=pinned,
             top_group_variations=top_variations,
             bottom_group_variations=bottom_variations,
+            delta_mode_active=bool(self.session.delta_mode_enabled),
+            delta_measurements=delta_measurements,
+            delta_group_variations=delta_variations,
             preference_bounds=self._preference_bounds if self.session.preference_bounds_enabled else None,
             target_curve=target_curve,
         )
         if self._missing_hrtf_names:
             missing = ", ".join(sorted(self._missing_hrtf_names))
             self.set_status(f"Ready - missing HRTF: {missing}")
+        elif delta_needs_more:
+            self.set_status("Ready - Delta Mode needs at least 2 bottom items")
         elif variation_needs_more:
             groups = ", ".join(sorted(variation_needs_more))
             self.set_status(f"Ready - Var needs 2 measurements: {groups}")
         elif self._status_label.text().startswith("Ready - "):
             self.set_status("Ready")
 
-    def displayed_measurement_curve(self, measurement: RnDMeasurement) -> tuple[np.ndarray, np.ndarray]:
-        return measurement.freqs, self._display_mag(measurement)
+    def displayed_measurement_curve(
+        self,
+        measurement: RnDMeasurement,
+        *,
+        group: RnDGroup | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        freqs = np.array(measurement.freqs, dtype=float, copy=True)
+        mag = self._display_mag(measurement, group)
+        return self._smooth_curve(freqs, mag)
 
     def displayed_group_measurements(self, group: RnDGroup) -> list[RnDMeasurement]:
         measurements = self.selected_group_measurements() if self.selected_group() is group else [
@@ -1249,7 +1423,55 @@ class RnDWidget(QWidget):
             for measurement_id in group.measurement_ids
             if (measurement := self.session.measurement_by_id(measurement_id)) is not None
         ]
-        return [self._with_mag(measurement, self._display_mag(measurement, group)) for measurement in measurements]
+        return [
+            self._with_mag(
+                measurement,
+                self._display_mag(measurement, group),
+            )
+            for measurement in measurements
+        ]
+
+    def _bottom_delta_items(
+        self,
+        items: list[tuple[str, object, object]],
+    ) -> tuple[
+        list[tuple[RnDMeasurement, np.ndarray, np.ndarray]],
+        list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
+        bool,
+    ]:
+        if len(items) < 2:
+            return [], [], True
+        _ref_kind, _ref_owner, ref_curve = items[0]
+        ref_freqs, ref_mag = self._delta_reference_curve(ref_curve)
+        measurement_deltas: list[tuple[RnDMeasurement, np.ndarray, np.ndarray]] = []
+        variation_deltas: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = []
+        for kind, owner, curve in items[1:]:
+            if kind == "measurement":
+                freqs, mag = curve
+                ref = np.interp(freqs, ref_freqs, ref_mag)
+                measurement_deltas.append((owner, freqs, mag - ref))
+            else:
+                freqs, p10, p25, p75, p90, median = curve
+                ref = np.interp(freqs, ref_freqs, ref_mag)
+                variation_deltas.append((
+                    owner,
+                    (freqs, p10 - ref, p25 - ref, p75 - ref, p90 - ref, median - ref),
+                ))
+        return measurement_deltas, variation_deltas, False
+
+    @staticmethod
+    def _delta_reference_curve(curve: object) -> tuple[np.ndarray, np.ndarray]:
+        if len(curve) == 2:
+            freqs, mag = curve
+            return freqs, mag
+        freqs, _p10, _p25, _p75, _p90, median = curve
+        return freqs, median
+
+    def _smooth_curve(self, freqs: np.ndarray, mag_db: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        fraction = int(self.session.smoothing_fraction or 48)
+        if fraction <= 0:
+            return freqs, mag_db
+        return smooth_fractional_octave(freqs, mag_db, fraction=fraction)
 
     def _display_mag(self, measurement: RnDMeasurement, group: RnDGroup | None = None) -> np.ndarray:
         mag = np.array(measurement.mag_db, dtype=float, copy=True)

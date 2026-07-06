@@ -159,6 +159,8 @@ class RnDSession:
     target_freqs: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     target_mag_db: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     target_offset_db: float = 0.0
+    smoothing_fraction: int = 48
+    delta_mode_enabled: bool = False
     schema_version: int = SCHEMA_VERSION
     saved_app_version: str = ""
 
@@ -180,6 +182,8 @@ class RnDSession:
             "target_freqs": self.target_freqs.astype(float).tolist(),
             "target_mag_db": self.target_mag_db.astype(float).tolist(),
             "target_offset_db": float(self.target_offset_db),
+            "smoothing_fraction": int(self.smoothing_fraction),
+            "delta_mode_enabled": bool(self.delta_mode_enabled),
         }
 
     @classmethod
@@ -207,6 +211,8 @@ class RnDSession:
             target_freqs=np.array(data.get("target_freqs") or [], dtype=float),
             target_mag_db=np.array(data.get("target_mag_db") or [], dtype=float),
             target_offset_db=float(data.get("target_offset_db") or 0.0),
+            smoothing_fraction=int(data.get("smoothing_fraction") or 48),
+            delta_mode_enabled=bool(data.get("delta_mode_enabled", False)),
         )
         session.repair_ordering()
         return session

@@ -10,7 +10,45 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.3.3`
+Current beta version: `0.3.5`
+
+## What's New in 0.3.5
+
+The former **Console** tab is now **Automation**. It keeps the diagnostic
+console on the left and adds an Events builder on the right for local,
+Blockland-style workflow automation.
+
+Automations are saved as individual `.fastgraph-automation.json` files in a
+local folder, defaulting to `Documents/Fastgraph Automations`. The Events panel
+loads that folder as a library and lets users build rows from typed dropdown
+actions, conditions, prompts, variables, tab navigation, input device/channel
+selection, measurement actions, R&D actions, Curator actions, and export
+actions. Risky hardware, file, and review actions ask for confirmation unless a
+step explicitly skips that confirmation.
+
+The Automation tab also includes a **Guide** button. Opening it temporarily
+replaces the console pane with a cheat-sheet, action reference, and example
+automations while leaving the Events editor visible on the right.
+
+Fastgraph now has customizable keyboard shortcuts. Defaults include `Enter` to
+start a measurement in the active Measure or R&D workspace, `F` to fail/redo a
+reviewed sweep, and `Shift+1` through `Shift+5` to switch between the main tabs.
+Shortcut bindings can be edited or reset from the right side of Settings.
+
+## What's New in 0.3.4
+
+The R&D tab now includes a between-viewport smoothing control with `1/48`,
+`1/24`, `1/12`, `1/6`, and `1/3` options. The selected smoothing applies to R&D
+plotting, TXT export, and Send to Curator while leaving saved raw session curves
+unchanged.
+
+R&D also adds bottom-viewport Delta Mode. When enabled, the first bottom item is
+used as the reference and later bottom-visible measurements or Var bands are
+shown as deltas from that reference. The top viewport remains normal.
+
+The R&D measurement list now has a more obvious vertical scrollbar and supports
+measurement multi-select. Ctrl/shift selection can be used to pick measurements,
+and New Group moves the selected measurements into a new group in visual order.
 
 ## What's New in 0.3.3
 
@@ -69,8 +107,8 @@ measurements or group variations can be sent directly to Curator.
 Fastgraph now includes **Curator**, a graph image generation tool for comparing
 headphone frequency-response and variation-band measurements and turning them
 into presentation-ready graph images. Curator lives between the Measure and
-Console tabs, shares Fastgraph's HRTF library and theme, and reports its actions
-to the same diagnostic console.
+Automation tabs, shares Fastgraph's HRTF library and theme, and reports its
+actions to the same diagnostic console.
 
 The Measure tab can send its current average or variation view directly to
 Curator. The transferred layer receives an editable 1 kHz offset so it sits at
@@ -113,7 +151,7 @@ them as kept curves without live fixture hardware. Files should contain two
 columns: frequency in Hz and magnitude in dB. Whitespace- or comma-delimited
 REW-style text is accepted; comments/header rows are skipped when possible.
 
-## Measure, R&D, Curator, Console, and Settings Tabs
+## Measure, R&D, Curator, Automation, and Settings Tabs
 
 The **Measure** tab contains the normal measurement interface. Input level,
 bottom-view controls, Undo, and the guarded Clear All action sit between its two
@@ -125,8 +163,8 @@ frequency-response shape, and its HRTF selection remains editable.
 
 The tab header keeps the current headphone and rig visible alongside Headphone
 Metadata, Clear Metadata, and Bluetooth mode controls. These application-wide
-controls remain available while moving between Measure, R&D, Curator, Console,
-and Settings.
+controls remain available while moving between Measure, R&D, Curator,
+Automation, and Settings.
 
 The **R&D** tab is a single-sweep exploratory measurement workspace. New kept
 measurements default to the top viewport, can be shown in the bottom viewport,
@@ -144,11 +182,14 @@ supports combined variation layers, optional preference bounds, fixed graph
 presentation controls, and composed 1920x1080 PNG export. Curator state is kept
 only for the current application launch.
 
-The **Console** tab shows live application, device, sweep, processing, Curator,
-and timing diagnostics. It supports filtering, search, copy, and explicit log
-export; console history is kept in memory only for the current launch.
+The **Automation** tab shows live application, device, sweep, processing,
+Curator, automation, and timing diagnostics in the left console pane. The right
+Events pane manages local automation JSON files, row-based workflow steps, and
+manual/app-event triggered runs. The Guide button swaps the console pane for an
+in-app cheat-sheet and examples until it is closed. Console history is kept in
+memory only for the current launch.
 
-Type `help` in the Console for safe Fastgraph commands. Available commands can
+Type `help` in the Automation console for safe Fastgraph commands. Available commands can
 inspect status, devices, settings, and the latest diagnostics; apply temporary
 measurement-setting overrides; start/cancel a queue; pass or fail a pending
 measurement; export average/variation TXT files; and launch Squiglink upload.
@@ -158,8 +199,10 @@ The **Settings** tab saves sweep and timing changes immediately and contains
 SPL Calibration, Test Level, and options to restore the measurement and
 metadata clearing warnings. Its controls are grouped in a compact left-aligned
 column and remain visible but disabled while a measurement queue or R&D sweep is
-active. Settings also includes the default folder for R&D session save/load
-dialogs.
+active. Settings also includes default folders for R&D session save/load dialogs
+and Automation event libraries. Keyboard shortcut mapping lives in a separate
+right-side Settings column so it does not add more vertical scrolling to the
+measurement settings.
 
 Type `curator help` for the built-in command reference. Curator commands include:
 
@@ -331,8 +374,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.3.3",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.3",
-  "summary": "Improves R&D HRTF portability and variation display behavior"
+  "version": "0.3.5",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.5",
+  "summary": "Adds Automation tab event builder"
 }
 ```

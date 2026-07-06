@@ -39,7 +39,7 @@ def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
 def test_curator_is_middle_tab(qapp, monkeypatch, tmp_path: Path) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "R&&D", "Curator", "Console", "Settings"
+        "Measure", "R&&D", "Curator", "Automation", "Settings"
     ]
     assert window._queue_level_persist_toggle.minimumSizeHint().width() >= 54
     window.close()
@@ -265,7 +265,10 @@ def test_send_variation_offsets_display_with_editable_hrtf(qapp, monkeypatch, tm
         expected,
     ):
         assert np.allclose(actual, wanted + median_offset)
-    QTest.qWait(250)
+    for _ in range(20):
+        if window._curator_widget._graph.wipeProgress >= 0.98:
+            break
+        QTest.qWait(50)
     assert window._curator_widget._graph.wipeProgress >= 0.98
     assert len(window._curator_widget._graph._items) > 3
     window.close()

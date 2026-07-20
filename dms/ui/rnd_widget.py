@@ -6,12 +6,14 @@ from typing import Iterable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
@@ -21,9 +23,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QScrollArea,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,9 +43,11 @@ from dms.rnd.models import (
     RnDSession,
     group_variation,
 )
+from dms.rnd.photos import RnDPhotoStore
 from dms.hrtf import HRTFCurve
 from dms.theme import LIGHT, normalize_theme, theme_colors
 from dms.ui.toggle_switch import ToggleSwitch
+from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
 
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 HRTF_DIR = ROOT_DIR / "HRTFs"
@@ -315,12 +321,17 @@ class RnDWidget(QWidget):
     load_requested = pyqtSignal()
     selection_changed = pyqtSignal()
     state_changed = pyqtSignal()
+    input_channel_changed = pyqtSignal(int)
+    notes_expanded_changed = pyqtSignal(bool)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, notes_expanded: bool = True) -> None:
         super().__init__(parent)
         self.session = RnDSession()
+        self.photo_store = RnDPhotoStore()
         self._theme = "dark"
         self._syncing = False
+        self._busy = False
+        self._notes_expanded = bool(notes_expanded)
         self._hrtf_options = self._load_hrtf_options()
         self._preference_bounds = self._load_preference_bounds()
         self._missing_hrtf_names: set[str] = set()
@@ -334,6 +345,7 @@ class RnDWidget(QWidget):
         self._redraw()
 
     def set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self._measure_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._tree.setEnabled(not busy)
@@ -345,8 +357,10 @@ class RnDWidget(QWidget):
         self._target_import_btn.setEnabled(not busy)
         self._target_offset_spin.setEnabled(not busy and len(self.session.target_freqs) >= 2)
         self._default_hrtf_combo.setEnabled(not busy)
+        self._input_channel_combo.setEnabled(not busy and self._input_channel_combo.count() > 0)
         for button in self._editing_buttons:
             button.setEnabled(not busy)
+        self._sync_photo_panel()
 
     def add_measurement(self, measurement: RnDMeasurement) -> None:
         measurement.color = DEFAULT_COLORS[len(self.session.measurements) % len(DEFAULT_COLORS)]
@@ -465,7 +479,52 @@ class RnDWidget(QWidget):
         viewport_layout = QVBoxLayout(viewport_panel)
         viewport_layout.setContentsMargins(0, 0, 0, 0)
         viewport_layout.setSpacing(6)
-        view_controls = QHBoxLayout()
+        toolbar = QWidget()
+        toolbar.setObjectName("rnd_top_toolbar")
+        self._top_toolbar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, toolbar)
+        self._top_toolbar_layout.setContentsMargins(4, 2, 4, 2)
+        self._top_toolbar_layout.setSpacing(10)
+
+        measure_controls = QWidget()
+        measure_row = QHBoxLayout(measure_controls)
+        measure_row.setContentsMargins(0, 0, 0, 0)
+        measure_row.setSpacing(6)
+        self._status_label = QLabel("Ready")
+        self._status_label.setProperty("tone", "muted")
+        measure_row.addWidget(self._status_label, 1)
+        self._measure_btn = QPushButton("Measure")
+        self._measure_btn.setObjectName("btn_start")
+        self._measure_btn.clicked.connect(self.measure_requested)
+        measure_row.addWidget(self._measure_btn)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setObjectName("btn_cancel")
+        self._cancel_btn.clicked.connect(self.cancel_requested)
+        self._cancel_btn.setEnabled(False)
+        measure_row.addWidget(self._cancel_btn)
+        measure_row.addWidget(QLabel("Input Channel"))
+        self._input_channel_combo = QComboBox()
+        self._input_channel_combo.setMinimumWidth(78)
+        self._input_channel_combo.currentIndexChanged.connect(self._emit_input_channel_changed)
+        measure_row.addWidget(self._input_channel_combo)
+        measure_row.addWidget(QLabel("HRTF"))
+        self._default_hrtf_combo = QComboBox()
+        self._default_hrtf_combo.setToolTip("Default HRTF for newly kept R&D measurements")
+        self._default_hrtf_combo.setMinimumWidth(132)
+        for label, value in self._hrtf_options:
+            self._default_hrtf_combo.addItem(label, value)
+        self._ensure_hrtf_combo_option(
+            self._default_hrtf_combo,
+            self.session.hrtf_path or "",
+            self.session.hrtf_name,
+        )
+        hrtf_index = self._default_hrtf_combo.findData(self.session.hrtf_path or "")
+        self._default_hrtf_combo.setCurrentIndex(hrtf_index if hrtf_index >= 0 else 0)
+        self._default_hrtf_combo.currentIndexChanged.connect(self._on_default_hrtf_changed)
+        measure_row.addWidget(self._default_hrtf_combo)
+
+        target_controls = QWidget()
+        view_controls = QHBoxLayout(target_controls)
+        view_controls.setContentsMargins(0, 0, 0, 0)
         view_controls.addWidget(QLabel("Preference Bounds"))
         self._bounds_enabled = ToggleSwitch()
         self._bounds_enabled.setToolTip("Show preference bounds in both R&D viewports")
@@ -494,10 +553,14 @@ class RnDWidget(QWidget):
         self._target_label = QLabel("No target")
         self._target_label.setProperty("tone", "muted")
         view_controls.addWidget(self._target_label, 1)
-        viewport_layout.addLayout(view_controls)
+        self._top_toolbar_layout.addWidget(measure_controls, 1)
+        self._top_toolbar_layout.addWidget(target_controls, 1)
+        viewport_layout.addWidget(toolbar)
+        self._top_toolbar = toolbar
         self._plots = RnDPlotWidget()
         self._plots.set_between_plots_widget(self._build_interplot_controls())
         viewport_layout.addWidget(self._plots, 1)
+        viewport_layout.addWidget(self._build_footer_controls())
         splitter.addWidget(viewport_panel)
 
         panel = QWidget()
@@ -509,41 +572,6 @@ class RnDWidget(QWidget):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         QTimer.singleShot(0, self._apply_default_splitter_sizes)
-
-        measure_box = QGroupBox("R&D Measurement")
-        measure_layout = QVBoxLayout(measure_box)
-        self._status_label = QLabel("Ready")
-        self._status_label.setProperty("tone", "muted")
-        measure_layout.addWidget(self._status_label)
-        button_row = QHBoxLayout()
-        self._measure_btn = QPushButton("Measure")
-        self._measure_btn.setObjectName("btn_start")
-        self._measure_btn.clicked.connect(self.measure_requested)
-        button_row.addWidget(self._measure_btn)
-        self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.setObjectName("btn_cancel")
-        self._cancel_btn.clicked.connect(self.cancel_requested)
-        self._cancel_btn.setEnabled(False)
-        button_row.addWidget(self._cancel_btn)
-        measure_layout.addLayout(button_row)
-        hrtf_row = QHBoxLayout()
-        hrtf_row.addWidget(QLabel("HRTF"))
-        self._default_hrtf_combo = QComboBox()
-        self._default_hrtf_combo.setToolTip("Default HRTF for newly kept R&D measurements")
-        self._default_hrtf_combo.setMinimumWidth(132)
-        for label, value in self._hrtf_options:
-            self._default_hrtf_combo.addItem(label, value)
-        self._ensure_hrtf_combo_option(
-            self._default_hrtf_combo,
-            self.session.hrtf_path or "",
-            self.session.hrtf_name,
-        )
-        hrtf_index = self._default_hrtf_combo.findData(self.session.hrtf_path or "")
-        self._default_hrtf_combo.setCurrentIndex(hrtf_index if hrtf_index >= 0 else 0)
-        self._default_hrtf_combo.currentIndexChanged.connect(self._on_default_hrtf_changed)
-        hrtf_row.addWidget(self._default_hrtf_combo, 1)
-        measure_layout.addLayout(hrtf_row)
-        panel_layout.addWidget(measure_box)
 
         data_box = QGroupBox("Measurements")
         data_layout = QVBoxLayout(data_box)
@@ -588,8 +616,19 @@ class RnDWidget(QWidget):
         data_layout.addLayout(edit_row)
         panel_layout.addWidget(data_box, 1)
 
-        detail_box = QGroupBox("Selected Item")
-        detail_layout = QVBoxLayout(detail_box)
+        notes_panel = QWidget()
+        notes_layout = QVBoxLayout(notes_panel)
+        notes_layout.setContentsMargins(0, 0, 0, 0)
+        notes_layout.setSpacing(4)
+        self._notes_toggle = QToolButton()
+        self._notes_toggle.setText("Notes")
+        self._notes_toggle.setCheckable(True)
+        self._notes_toggle.setChecked(self._notes_expanded)
+        self._notes_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._notes_toggle.clicked.connect(self._on_notes_toggled)
+        notes_layout.addWidget(self._notes_toggle)
+        self._notes_content = QGroupBox()
+        detail_layout = QVBoxLayout(self._notes_content)
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("Name")
         self._name_edit.editingFinished.connect(self._save_selected_name)
@@ -599,32 +638,34 @@ class RnDWidget(QWidget):
         self._notes_edit.setMaximumHeight(110)
         self._notes_edit.textChanged.connect(self._save_selected_notes)
         detail_layout.addWidget(self._notes_edit)
-        panel_layout.addWidget(detail_box)
-
-        action_box = QGroupBox("Session and Export")
-        action_layout = QVBoxLayout(action_box)
-        row = QHBoxLayout()
-        self._export_btn = QPushButton("Export Selected...")
-        self._export_btn.setStyleSheet(
-            "QPushButton { background-color: #FCBE11; color: #101217; font-weight: 700; }"
-        )
-        self._export_btn.clicked.connect(self.export_requested)
-        row.addWidget(self._export_btn)
-        self._curator_btn = QPushButton("Send to Curator")
-        self._curator_btn.clicked.connect(self.send_to_curator_requested)
-        row.addWidget(self._curator_btn)
-        action_layout.addLayout(row)
-        row = QHBoxLayout()
-        self._save_btn = QPushButton("Save Session...")
-        self._save_btn.setObjectName("btn_upload")
-        self._save_btn.clicked.connect(self.save_requested)
-        row.addWidget(self._save_btn)
-        self._load_btn = QPushButton("Load Session...")
-        self._load_btn.clicked.connect(self.load_requested)
-        row.addWidget(self._load_btn)
-        action_layout.addLayout(row)
-        panel_layout.addWidget(action_box)
-
+        photo_header = QHBoxLayout()
+        self._photo_count = QLabel("Photos (0)")
+        photo_header.addWidget(self._photo_count)
+        photo_header.addStretch(1)
+        self._capture_photo_btn = QPushButton("Capture...")
+        self._capture_photo_btn.setToolTip("Capture a photo from a webcam for the selected item")
+        self._capture_photo_btn.clicked.connect(self._capture_photo)
+        photo_header.addWidget(self._capture_photo_btn)
+        self._import_photo_btn = QPushButton("Import...")
+        self._import_photo_btn.setToolTip("Attach an existing image file to the selected item")
+        self._import_photo_btn.clicked.connect(self._import_photo)
+        photo_header.addWidget(self._import_photo_btn)
+        detail_layout.addLayout(photo_header)
+        photo_scroll = QScrollArea()
+        photo_scroll.setWidgetResizable(True)
+        photo_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        photo_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        photo_scroll.setMaximumHeight(92)
+        self._photo_strip = QWidget()
+        self._photo_strip_layout = QHBoxLayout(self._photo_strip)
+        self._photo_strip_layout.setContentsMargins(2, 2, 2, 2)
+        self._photo_strip_layout.setSpacing(5)
+        self._photo_strip_layout.addStretch(1)
+        photo_scroll.setWidget(self._photo_strip)
+        detail_layout.addWidget(photo_scroll)
+        notes_layout.addWidget(self._notes_content)
+        panel_layout.addWidget(notes_panel)
+        self._sync_notes_expanded()
         self._editing_buttons = [
             self._new_group_btn,
             self._remove_btn,
@@ -635,6 +676,64 @@ class RnDWidget(QWidget):
             self._save_btn,
             self._load_btn,
         ]
+
+    def _build_footer_controls(self) -> QWidget:
+        footer = QWidget()
+        footer.setObjectName("rnd_footer_controls")
+        row = QHBoxLayout(footer)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(8)
+        row.addStretch(1)
+        self._export_btn = QPushButton("Export Selected...")
+        self._export_btn.setStyleSheet(
+            "QPushButton { background-color: #FCBE11; color: #101217; font-weight: 700; }"
+        )
+        self._export_btn.clicked.connect(self.export_requested)
+        row.addWidget(self._export_btn)
+        self._curator_btn = QPushButton("Send to Curator")
+        self._curator_btn.clicked.connect(self.send_to_curator_requested)
+        row.addWidget(self._curator_btn)
+        self._save_btn = QPushButton("Save Session...")
+        self._save_btn.setObjectName("btn_upload")
+        self._save_btn.clicked.connect(self.save_requested)
+        row.addWidget(self._save_btn)
+        self._load_btn = QPushButton("Load Session...")
+        self._load_btn.clicked.connect(self.load_requested)
+        row.addWidget(self._load_btn)
+        return footer
+
+    def _on_notes_toggled(self, checked: bool) -> None:
+        self._notes_expanded = bool(checked)
+        self._sync_notes_expanded()
+        self.notes_expanded_changed.emit(self._notes_expanded)
+
+    def _sync_notes_expanded(self) -> None:
+        self._notes_content.setVisible(self._notes_expanded)
+        self._notes_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if self._notes_expanded else Qt.ArrowType.RightArrow
+        )
+
+    def set_input_channels(self, channels: list[tuple[str, int]], selected: int) -> None:
+        self._input_channel_combo.blockSignals(True)
+        self._input_channel_combo.clear()
+        for label, value in channels:
+            self._input_channel_combo.addItem(label, value)
+        index = self._input_channel_combo.findData(selected)
+        self._input_channel_combo.setCurrentIndex(index if index >= 0 else -1)
+        self._input_channel_combo.blockSignals(False)
+        self._input_channel_combo.setEnabled(not self._busy and bool(channels))
+
+    def set_input_channel(self, selected: int) -> None:
+        index = self._input_channel_combo.findData(selected)
+        if index < 0:
+            return
+        self._input_channel_combo.blockSignals(True)
+        self._input_channel_combo.setCurrentIndex(index)
+        self._input_channel_combo.blockSignals(False)
+
+    def _emit_input_channel_changed(self, index: int) -> None:
+        if index >= 0:
+            self.input_channel_changed.emit(int(self._input_channel_combo.itemData(index)))
 
     def _build_interplot_controls(self) -> QWidget:
         panel = QWidget()
@@ -664,6 +763,15 @@ class RnDWidget(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_default_splitter_sizes)
+
+    def resizeEvent(self, event) -> None:
+        direction = (
+            QBoxLayout.Direction.LeftToRight
+            if event.size().width() >= 1500
+            else QBoxLayout.Direction.TopToBottom
+        )
+        self._top_toolbar_layout.setDirection(direction)
+        super().resizeEvent(event)
 
     def _apply_default_splitter_sizes(self) -> None:
         if self._splitter_initialized:
@@ -1008,8 +1116,102 @@ class RnDWidget(QWidget):
                 self._notes_edit.clear()
                 self._name_edit.setEnabled(False)
                 self._notes_edit.setEnabled(False)
+            self._sync_photo_panel()
         finally:
             self._syncing = False
+
+    def _selected_photos(self):
+        if measurement := self.selected_measurement():
+            return measurement.photos
+        if group := self.selected_group():
+            return group.photos
+        return None
+
+    def _sync_photo_panel(self) -> None:
+        if not hasattr(self, "_photo_strip_layout"):
+            return
+        photos = self._selected_photos()
+        enabled = photos is not None and not self._busy
+        self._capture_photo_btn.setEnabled(enabled)
+        self._import_photo_btn.setEnabled(enabled)
+        self._photo_count.setText(f"Photos ({len(photos or [])})")
+        while self._photo_strip_layout.count():
+            item = self._photo_strip_layout.takeAt(0)
+            if widget := item.widget():
+                widget.deleteLater()
+        if not photos:
+            empty = QLabel("Select an item and add a photo, or no photos attached")
+            empty.setProperty("tone", "muted")
+            self._photo_strip_layout.addWidget(empty)
+        else:
+            for photo in photos:
+                button = QPushButton()
+                button.setFixedSize(76, 76)
+                image = QImage(photo.runtime_path) if photo.runtime_path else QImage()
+                if image.isNull():
+                    button.setText("Missing\nphoto")
+                else:
+                    button.setIcon(QIcon(QPixmap.fromImage(image).scaled(
+                        68, 68, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )))
+                    button.setIconSize(QSize(68, 68))
+                button.setToolTip(photo.caption or photo.display_name)
+                button.setEnabled(not self._busy)
+                button.clicked.connect(lambda _checked=False, selected=photo: self._open_photo(selected))
+                self._photo_strip_layout.addWidget(button)
+        self._photo_strip_layout.addStretch(1)
+
+    def _capture_photo(self) -> None:
+        photos = self._selected_photos()
+        if photos is None:
+            return
+        dialog = CameraCaptureDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.image is None:
+            return
+        try:
+            photos.append(self.photo_store.add_image(dialog.image, display_name="Webcam photo", caption=dialog.caption))
+        except Exception as exc:
+            QMessageBox.warning(self, "Photo Capture Failed", str(exc))
+            return
+        self._sync_photo_panel()
+        self.state_changed.emit()
+
+    def _import_photo(self) -> None:
+        photos = self._selected_photos()
+        if photos is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import R&D Photo", "", "Image Files (*.jpg *.jpeg *.png *.bmp *.webp);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            photos.append(self.photo_store.import_file(path))
+        except Exception as exc:
+            QMessageBox.warning(self, "Photo Import Failed", str(exc))
+            return
+        self._sync_photo_panel()
+        self.state_changed.emit()
+
+    def _open_photo(self, photo) -> None:
+        photos = self._selected_photos()
+        if photos is None:
+            return
+        index = photos.index(photo)
+        entries = [
+            (QImage(item.runtime_path) if item.runtime_path else None, item.caption, item.display_name)
+            for item in photos
+        ]
+        dialog = PhotoViewerDialog(entries, index, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.remove_requested and dialog.remove_index is not None:
+            photos.pop(dialog.remove_index)
+        else:
+            for item, caption in zip(photos, dialog.captions):
+                item.caption = caption
+        self._sync_photo_panel()
+        self.state_changed.emit()
 
     def _save_selected_name(self) -> None:
         if self._syncing:

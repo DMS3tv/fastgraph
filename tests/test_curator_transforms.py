@@ -106,6 +106,23 @@ def test_hidden_layers_are_excluded_from_visible_display_layers() -> None:
     assert [layer.name for layer, _curve in result] == ["visible"]
 
 
+def test_visible_layers_apply_selected_smoothing_without_mutating_source() -> None:
+    freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 200)
+    values = np.zeros(200)
+    values[100] = 12.0
+    layer = LayerState(
+        curve=CurveData(kind="fr", freqs=freqs, mag_db=values.copy()),
+        source_path=Path("spike.txt"),
+        name="spike",
+    )
+
+    displayed = visible_display_layers([layer], smoothing_fraction=3)[0][1]
+
+    assert displayed.mag_db is not None
+    assert displayed.mag_db[100] < 12.0
+    assert np.array_equal(layer.curve.mag_db, values)
+
+
 def _variation_layer(
     *,
     name: str,

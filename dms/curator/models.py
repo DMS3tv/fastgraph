@@ -76,6 +76,8 @@ class GraphState:
     y_max: float = 20.0
     background: str = "#101217"
     aspect_locked_25db: bool = True
+    smoothing_fraction: int = 48
+    show_layer_names: bool = True
     export_text: ExportText = field(default_factory=ExportText)
 
 

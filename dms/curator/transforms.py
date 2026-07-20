@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from dms.curator.models import CurveData, LayerState
+from dms.processing import smooth_fractional_octave
 
 
 def normalization_offset_at_1khz(curve: CurveData) -> float:
@@ -33,8 +34,32 @@ def apply_layer_transform(layer: LayerState) -> CurveData:
     return curve.shifted(layer.vertical_offset_db)
 
 
-def visible_display_layers(layers: list[LayerState]) -> list[tuple[LayerState, CurveData]]:
-    return [(layer, apply_layer_transform(layer)) for layer in layers if layer.visible]
+def smooth_curve(curve: CurveData, fraction: int) -> CurveData:
+    """Return a smoothed display copy without changing the stored source curve."""
+    def smooth(values: np.ndarray | None) -> np.ndarray | None:
+        if values is None:
+            return None
+        return smooth_fractional_octave(curve.freqs, values, fraction=fraction)[1]
+
+    return replace(
+        curve,
+        mag_db=smooth(curve.mag_db),
+        p10_db=smooth(curve.p10_db),
+        p25_db=smooth(curve.p25_db),
+        median_db=smooth(curve.median_db),
+        p75_db=smooth(curve.p75_db),
+        p90_db=smooth(curve.p90_db),
+    )
+
+
+def visible_display_layers(
+    layers: list[LayerState], smoothing_fraction: int = 48
+) -> list[tuple[LayerState, CurveData]]:
+    return [
+        (layer, smooth_curve(apply_layer_transform(layer), smoothing_fraction))
+        for layer in layers
+        if layer.visible
+    ]
 
 
 def can_combine_layers(layers: list[LayerState]) -> bool:

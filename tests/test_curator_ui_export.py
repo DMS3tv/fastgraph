@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QApplication, QGroupBox, QPushButton
+from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox, QPushButton, QWidget
 
-from dms.curator.export_image import ACCENT_COLOR, FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS, export_graph_image
+from dms.curator.export_image import ACCENT_COLOR, FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS, export_graph_image, fit_title
 from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 import dms.ui.curator_widget as main_window_module
 from dms.ui.curator_widget import CuratorWidget
@@ -77,9 +77,18 @@ def test_data_rows_expose_inline_layer_controls(qapp, tmp_path: Path) -> None:
     assert row.color_btn is not None
     assert row.offset_spin is not None
     assert row.hrtf_combo is not None
+    assert row.name_edit is not None
 
     row.offset_spin.setValue(-7.5)
     assert window.graph_state.layers[0].vertical_offset_db == -7.5
+
+    row.name_edit.setText("Renamed Layer")
+    row.name_edit.editingFinished.emit()
+    assert window.graph_state.layers[0].name == "Renamed Layer"
+    row.name_edit.setText("   ")
+    row.name_edit.editingFinished.emit()
+    assert window.graph_state.layers[0].name == "Renamed Layer"
+    assert row.name_edit.text() == "Renamed Layer"
 
 
 def test_create_combined_variation_hides_sources_and_disables_hrtf(qapp, tmp_path: Path) -> None:
@@ -196,6 +205,8 @@ def test_view_aspect_toggle_and_reset(qapp) -> None:
     assert window._aspect_lock_enabled.minimumSizeHint().width() >= 54
     assert window.graph_state.aspect_locked_25db is True
     window._aspect_lock_enabled.setChecked(False)
+    window._smoothing_combo.setCurrentIndex(window._smoothing_combo.findData(3))
+    window._show_names_enabled.setChecked(False)
     assert window.graph_state.aspect_locked_25db is False
 
     window.set_y_limits(-40.0, 12.0)
@@ -205,6 +216,51 @@ def test_view_aspect_toggle_and_reset(qapp) -> None:
     assert window._aspect_lock_enabled.isChecked()
     assert window.graph_state.y_min == -20.0
     assert window.graph_state.y_max == 20.0
+    assert window.graph_state.smoothing_fraction == 48
+    assert window.graph_state.show_layer_names is True
+
+
+def test_curator_uses_right_sidebar_and_drop_import(qapp, tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "drop.txt"
+    source.write_text("100 1\n1000 2\n", encoding="utf-8")
+    unsupported = tmp_path / "ignore.csv"
+    unsupported.write_text("100,1\n", encoding="utf-8")
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
+    window = CuratorWidget(ConsoleEventStore())
+
+    class _Mime:
+        def urls(self):
+            from PyQt6.QtCore import QUrl
+            return [QUrl.fromLocalFile(str(source)), QUrl.fromLocalFile(str(unsupported))]
+
+    class _Drop:
+        accepted = False
+        def mimeData(self):
+            return _Mime()
+        def acceptProposedAction(self):
+            self.accepted = True
+        def ignore(self):
+            self.accepted = False
+
+    event = _Drop()
+    window.dropEvent(event)
+
+    assert event.accepted
+    assert len(window.graph_state.layers) == 1
+    assert warnings and "unsupported file type" in warnings[0]
+    assert window._data_box.parent() is window.findChild(QWidget, "controlPanel")
+    assert window._view_box.parent() is window.findChild(QWidget, "controlPanel")
+
+
+def test_export_title_shrinks_then_elides(qapp) -> None:
+    short, short_font = fit_title("Short title", 1200)
+    long, long_font = fit_title("Very long title " * 40, 500)
+
+    assert short == "Short title"
+    assert short_font.pointSize() == 42
+    assert long_font.pointSize() == 24
+    assert long.endswith("…")
 
 
 def test_viewport_text_inputs_update_export_text(qapp) -> None:

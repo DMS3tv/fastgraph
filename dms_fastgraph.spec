@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[("HRTFs", "HRTFs"), ("Bounds", "Bounds")],
-    hiddenimports=[],
+    hiddenimports=["PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -57,6 +57,9 @@ app = BUNDLE(
         "CFBundleVersion": __version__,
         "NSMicrophoneUsageDescription": (
             "DMS Fastgraph needs microphone access to record headphone measurements."
+        ),
+        "NSCameraUsageDescription": (
+            "DMS Fastgraph needs camera access to attach R&D documentation photos."
         ),
     },
 )

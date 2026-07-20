@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen
 
 from dms.curator.models import CurveData, GraphState
 from dms.curator.transforms import visible_display_layers
@@ -72,8 +72,14 @@ def _draw_poster(painter: QPainter, state: GraphState, size: tuple[int, int]) ->
     painter.drawRect(QRectF(0, 0, width, 96))
 
     painter.setPen(fg)
-    painter.setFont(QFont("Arial", 42, QFont.Weight.Black))
-    painter.drawText(QRectF(72, 16, width - 260, 58), text.title.strip() or "Curator")
+    title_rect = QRectF(72, 16, width - 260, 58)
+    title, title_font = fit_title(text.title.strip() or "Curator", title_rect.width())
+    painter.setFont(title_font)
+    painter.drawText(
+        title_rect,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+        title,
+    )
     painter.setFont(QFont("Arial", 20, QFont.Weight.DemiBold))
     painter.setPen(accent)
     painter.drawText(QRectF(74, 74, width - 320, 34), text.fixture.strip())
@@ -92,14 +98,65 @@ def _draw_poster(painter: QPainter, state: GraphState, size: tuple[int, int]) ->
     painter.save()
     painter.setClipRect(plot_rect)
     _draw_bounds(painter, plot_rect, state)
-    for layer, curve in visible_display_layers(state.layers):
+    visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
+    for layer, curve in visible_layers:
         _draw_curve_data(painter, plot_rect, curve, QColor(layer.color), state.y_min, state.y_max)
     painter.restore()
+    if state.show_layer_names:
+        _draw_legend(painter, plot_rect, visible_layers, light_background)
 
     painter.setFont(QFont("Arial", 18, QFont.Weight.DemiBold))
     painter.setPen(QColor("#3f4854" if light_background else "#cfd6df"))
     footer = "    ".join(item for item in (text.hrtf_note.strip(), text.notes.strip()) if item)
     painter.drawText(QRectF(72, height - 82, width - 144, 52), footer)
+
+
+def fit_title(text: str, max_width: float) -> tuple[str, QFont]:
+    """Fit a single-line poster title, shrinking before eliding."""
+    font = QFont("Arial", 42, QFont.Weight.Black)
+    for size in range(42, 23, -1):
+        font.setPointSize(size)
+        if QFontMetrics(font).horizontalAdvance(text) <= max_width:
+            return text, QFont(font)
+    metrics = QFontMetrics(font)
+    return metrics.elidedText(text, Qt.TextElideMode.ElideRight, int(max_width)), QFont(font)
+
+
+def _draw_legend(painter: QPainter, rect: QRectF, layers, light_background: bool) -> None:
+    if not layers:
+        return
+    shown = layers[:16]
+    columns = 2 if len(shown) > 8 else 1
+    rows = min(8, len(shown))
+    column_width = 270.0
+    row_height = 26.0
+    box_width = columns * column_width + 20.0
+    box_height = rows * row_height + 20.0 + (row_height if len(layers) > 16 else 0.0)
+    box = QRectF(rect.right() - box_width - 14, rect.top() + 14, box_width, box_height)
+    painter.setPen(QPen(QColor(95, 105, 120, 170), 1))
+    painter.setBrush(QColor(245, 247, 250, 225) if light_background else QColor(20, 23, 29, 220))
+    painter.drawRoundedRect(box, 6, 6)
+    font = QFont("Arial", 15, QFont.Weight.DemiBold)
+    painter.setFont(font)
+    metrics = QFontMetrics(font)
+    text_color = QColor("#20252d" if light_background else "#f2f5f4")
+    for index, (layer, _curve) in enumerate(shown):
+        column = index // 8
+        row = index % 8
+        x = box.left() + 12 + column * column_width
+        y = box.top() + 12 + row * row_height
+        painter.setPen(QPen(QColor(layer.color), 4))
+        painter.drawLine(QPointF(x, y + 10), QPointF(x + 28, y + 10))
+        painter.setPen(text_color)
+        label = metrics.elidedText(layer.name, Qt.TextElideMode.ElideRight, int(column_width - 52))
+        painter.drawText(QRectF(x + 38, y, column_width - 50, row_height), Qt.AlignmentFlag.AlignVCenter, label)
+    if len(layers) > 16:
+        painter.setPen(QColor("#5f6977" if light_background else "#8f98a8"))
+        painter.drawText(
+            QRectF(box.left() + 12, box.bottom() - row_height - 5, box.width() - 24, row_height),
+            Qt.AlignmentFlag.AlignVCenter,
+            f"+{len(layers) - 16} more",
+        )
 
 
 def _draw_grid(painter: QPainter, rect: QRectF, y_min: float, y_max: float, color: QColor) -> None:

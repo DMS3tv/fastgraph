@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import QAbstractItemView, QApplication
 
 import dms.settings_manager as settings_module
@@ -63,6 +64,26 @@ def test_rnd_tab_and_settings_folder_control(qapp, monkeypatch, tmp_path: Path) 
     window.close()
 
 
+def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    assert window._rnd_widget._top_toolbar.objectName() == "rnd_top_toolbar"
+    assert window._rnd_widget._export_btn.parent().objectName() == "rnd_footer_controls"
+    assert window._rnd_widget._notes_toggle.text() == "Notes"
+    window._rnd_widget._notes_toggle.setChecked(False)
+    window._rnd_widget._notes_toggle.clicked.emit(False)
+    assert window._settings.get("rnd_notes_expanded") is False
+
+    window._ch_combo.addItem("Ch 1", 0)
+    window._ch_combo.addItem("Ch 2", 1)
+    window._rnd_widget.set_input_channels([("Ch 1", 0), ("Ch 2", 1)], 0)
+    window._rnd_widget._input_channel_combo.setCurrentIndex(1)
+    assert window._current_input_channel() == 1
+    window._ch_combo.setCurrentIndex(0)
+    assert window._rnd_widget._input_channel_combo.currentData() == 0
+    window.close()
+
+
 def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_path: Path) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
     window._state = AppState.PASS_FAIL
@@ -82,6 +103,23 @@ def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_pat
     assert measurement.metadata["brand"] == "DMS"
     assert measurement.top_visible is True
     assert measurement.pinned is False
+    window.close()
+
+
+def test_rnd_selected_item_photo_panel_tracks_measurement_photos(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measurement = _measurement()
+    window._rnd_widget.add_measurement(measurement)
+
+    photo = window._rnd_widget.photo_store.add_image(
+        QImage(100, 100, QImage.Format.Format_RGB32), display_name="Pads", caption="New pads"
+    )
+    measurement.photos.append(photo)
+    window._rnd_widget._sync_photo_panel()
+
+    assert window._rnd_widget._photo_count.text() == "Photos (1)"
+    assert window._rnd_widget._capture_photo_btn.isEnabled()
+    assert window._rnd_widget._photo_strip_layout.count() == 2  # thumbnail + stretch
     window.close()
 
 

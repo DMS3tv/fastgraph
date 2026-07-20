@@ -378,6 +378,23 @@ Notes:
 - Packaged apps include the shared HRTF library and Curator preference bounds.
 - If Gatekeeper warns about the app because it is unsigned, right-click the app and choose `Open`.
 
+## Publishing a GitHub Release
+
+GitHub Actions builds release packages for Apple Silicon macOS, Windows x64, and
+Linux x64. Update `dms/version.py` and `CHANGELOG.md`, push the release commit
+to `main`, then choose one of these release paths:
+
+- Push a tag such as `v0.3.5`; the workflow builds all three packages and
+  publishes a GitHub release automatically.
+- In **Actions → Release builds → Run workflow**, choose the source ref, enable
+  **Create or update a GitHub release**, and enter a release tag such as
+  `v0.3.5`. This creates the tag at the selected ref and publishes the release.
+
+Leaving **Create or update a GitHub release** disabled runs a build-only job.
+Its downloadable artifacts are useful for testing before publishing. Release
+notes are taken from the matching version section in `CHANGELOG.md`; if no
+section exists, GitHub generates notes automatically.
+
 ## Quiet Update Indicator
 
 The app supports a non-intrusive update badge in the bottom-right status area.

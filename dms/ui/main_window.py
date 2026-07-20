@@ -815,13 +815,20 @@ class MainWindow(QMainWindow):
         controls_scroll.setWidget(self._build_control_panel())
         root.addWidget(controls_scroll, 0)
 
-        self._rnd_widget = RnDWidget(parent=self)
+        self._rnd_widget = RnDWidget(
+            parent=self,
+            notes_expanded=bool(self._settings.get("rnd_notes_expanded")),
+        )
         self._rnd_widget.measure_requested.connect(self._start_rnd_measurement)
         self._rnd_widget.cancel_requested.connect(self._cancel_rnd_measurement)
         self._rnd_widget.export_requested.connect(self._export_rnd_selected)
         self._rnd_widget.send_to_curator_requested.connect(self._send_rnd_to_curator)
         self._rnd_widget.save_requested.connect(self._save_rnd_session)
         self._rnd_widget.load_requested.connect(self._load_rnd_session)
+        self._rnd_widget.input_channel_changed.connect(self._on_rnd_input_channel_changed)
+        self._rnd_widget.notes_expanded_changed.connect(
+            lambda expanded: self._settings.set("rnd_notes_expanded", bool(expanded))
+        )
         self._tabs.addTab(self._rnd_widget, "R&&D")
 
         self._curator_widget = CuratorWidget(
@@ -2331,6 +2338,14 @@ class MainWindow(QMainWindow):
             )
         else:
             self._active_ch_label.setText("Active input channel: —")
+        if hasattr(self, "_rnd_widget"):
+            self._rnd_widget.set_input_channels(
+                [
+                    (self._ch_combo.itemText(index), int(self._ch_combo.itemData(index)))
+                    for index in range(self._ch_combo.count())
+                ],
+                self._current_input_channel(),
+            )
 
     def _check_devices(self) -> None:
         current_out = [
@@ -2443,7 +2458,14 @@ class MainWindow(QMainWindow):
         self._active_ch_label.setText(
             f"Active input channel: Ch {self._current_input_channel() + 1}"
         )
+        if hasattr(self, "_rnd_widget"):
+            self._rnd_widget.set_input_channel(self._current_input_channel())
         self._start_level_monitor()
+
+    def _on_rnd_input_channel_changed(self, channel: int) -> None:
+        index = self._ch_combo.findData(int(channel))
+        if index >= 0 and index != self._ch_combo.currentIndex():
+            self._ch_combo.setCurrentIndex(index)
 
     def _on_level_update(self, dbfs: float) -> None:
         self._last_level_dbfs = float(dbfs)
@@ -4044,11 +4066,16 @@ class MainWindow(QMainWindow):
         elif path.suffix == "":
             path = path.with_suffix(".fastgraph-rnd.json")
         self._rnd_widget.session.saved_app_version = __version__
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self._rnd_widget.session.to_dict(), indent=2),
-            encoding="utf-8",
-        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._rnd_widget.photo_store.save_session(self._rnd_widget.session, path)
+            path.write_text(
+                json.dumps(self._rnd_widget.session.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Save Failed", f"Could not save the R&D session.\n\n{exc}")
+            return False
         self._settings.set("rnd_session_directory", str(path.parent))
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Saved R&D session: {path}")
@@ -4066,7 +4093,9 @@ class MainWindow(QMainWindow):
         if not path_str:
             return
         try:
-            incoming = RnDSession.from_dict(json.loads(Path(path_str).read_text(encoding="utf-8")))
+            session_path = Path(path_str)
+            incoming = RnDSession.from_dict(json.loads(session_path.read_text(encoding="utf-8")))
+            missing_photos = self._rnd_widget.photo_store.hydrate_session(incoming, session_path)
         except Exception as exc:
             QMessageBox.warning(self, "Load Failed", f"Could not load R&D session.\n\n{exc}")
             return
@@ -4096,6 +4125,13 @@ class MainWindow(QMainWindow):
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Loaded R&D session: {path_str}")
         self._log_event("INFO", "rnd", "R&D session loaded", path=path_str, mode=mode)
+        if missing_photos:
+            QMessageBox.warning(
+                self,
+                "Missing R&D Photos",
+                f"{len(missing_photos)} photo attachment(s) could not be found beside this session. "
+                "They will remain listed as unavailable.",
+            )
 
     def _choose_rnd_load_mode(self) -> str:
         dialog = QMessageBox(self)

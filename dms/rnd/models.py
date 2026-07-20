@@ -46,6 +46,7 @@ class RnDMeasurement:
     hrtf_path: str = ""
     hrtf_name: str = ""
     vertical_offset_db: float = 0.0
+    photos: list["RnDPhoto"] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +70,7 @@ class RnDMeasurement:
             "hrtf_path": self.hrtf_path,
             "hrtf_name": self.hrtf_name,
             "vertical_offset_db": float(self.vertical_offset_db),
+            "photos": [photo.to_dict() for photo in self.photos],
         }
 
     @classmethod
@@ -94,6 +96,44 @@ class RnDMeasurement:
             hrtf_path=str(data.get("hrtf_path") or ""),
             hrtf_name=str(data.get("hrtf_name") or ""),
             vertical_offset_db=float(data.get("vertical_offset_db") or 0.0),
+            photos=[RnDPhoto.from_dict(item) for item in data.get("photos") or []],
+        )
+
+
+@dataclass
+class RnDPhoto:
+    """A compact, session-serializable reference to a managed JPEG attachment."""
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    display_name: str = "Photo"
+    caption: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    file_name: str = ""
+    # Runtime-only location in Fastgraph's staging directory. It is intentionally
+    # not written to session JSON so sessions stay portable.
+    runtime_path: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.file_name:
+            self.file_name = f"{self.id}.jpg"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "display_name": self.display_name,
+            "caption": self.caption,
+            "timestamp": self.timestamp,
+            "file_name": self.file_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RnDPhoto":
+        return cls(
+            id=str(data.get("id") or uuid4().hex),
+            display_name=str(data.get("display_name") or "Photo"),
+            caption=str(data.get("caption") or ""),
+            timestamp=str(data.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+            file_name=str(data.get("file_name") or ""),
         )
 
 
@@ -110,6 +150,7 @@ class RnDGroup:
     vertical_offset_db: float = 0.0
     color: str = DEFAULT_COLORS[0]
     measurement_ids: list[str] = field(default_factory=list)
+    photos: list[RnDPhoto] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +165,7 @@ class RnDGroup:
             "vertical_offset_db": float(self.vertical_offset_db),
             "color": self.color,
             "measurement_ids": list(self.measurement_ids),
+            "photos": [photo.to_dict() for photo in self.photos],
         }
 
     @classmethod
@@ -140,6 +182,7 @@ class RnDGroup:
             vertical_offset_db=float(data.get("vertical_offset_db") or 0.0),
             color=str(data.get("color") or DEFAULT_COLORS[0]),
             measurement_ids=[str(item) for item in data.get("measurement_ids") or []],
+            photos=[RnDPhoto.from_dict(item) for item in data.get("photos") or []],
         )
 
 

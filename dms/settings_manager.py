@@ -24,6 +24,7 @@ _DEFAULTS: dict[str, Any] = {
     "confirm_clear_metadata": True,
     "export_directory": "",
     "rnd_session_directory": "",
+    "rnd_notes_expanded": True,
     "automation_directory": "",
     "shortcut_bindings": dict(DEFAULT_SHORTCUT_BINDINGS),
     "hrtf_path": None,

@@ -162,7 +162,9 @@ class GraphWidget(LockedPlotWidget):
     def snapshot_visible_layer(self, layer_id: str) -> LayerSnapshot | None:
         if self._state is None:
             return None
-        for layer, curve in visible_display_layers(self._state.layers):
+        for layer, curve in visible_display_layers(
+            self._state.layers, self._state.smoothing_fraction
+        ):
             if layer.id == layer_id:
                 return LayerSnapshot(layer=layer, curve=curve)
         return None
@@ -196,9 +198,48 @@ class GraphWidget(LockedPlotWidget):
         self._draw_bounds(state, bounds_progress)
         for snapshot in self._exiting_layers:
             self._draw_curve(snapshot.curve, snapshot.layer.color, 1.0 - self._wipe_progress)
-        for layer, curve in visible_display_layers(state.layers):
+        visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
+        for layer, curve in visible_layers:
             progress = self._wipe_progress if layer.id in self._entering_layer_ids else 1.0
             self._draw_curve(curve, layer.color, progress)
+        if state.show_layer_names:
+            self._draw_legend(visible_layers)
+
+    def _draw_legend(self, layers: list[tuple[LayerState, CurveData]]) -> None:
+        if not layers:
+            return
+        shown = layers[:16]
+        state = self._state
+        if state is None:
+            return
+        y_step = max(1.0, (state.y_max - state.y_min) * 0.055)
+        for index, (layer, _curve) in enumerate(shown):
+            column = index // 8
+            row = index % 8
+            item = pg.TextItem(
+                text=f"━ {layer.name}",
+                color=layer.color,
+                fill=pg.mkBrush(20, 23, 29, 220),
+                border=pg.mkPen(95, 105, 120, 150),
+                anchor=(1, 0),
+            )
+            item.setPos(
+                np.log10(18500.0 if column == 0 else 3500.0),
+                state.y_max - row * y_step,
+            )
+            self.addItem(item)
+            self._items.append(item)
+        if len(layers) > len(shown):
+            overflow = pg.TextItem(
+                text=f"+{len(layers) - len(shown)} more",
+                color="#8f98a8",
+                fill=pg.mkBrush(20, 23, 29, 220),
+                border=pg.mkPen(95, 105, 120, 150),
+                anchor=(1, 0),
+            )
+            overflow.setPos(np.log10(3500.0), state.y_max - 8 * y_step)
+            self.addItem(overflow)
+            self._items.append(overflow)
 
     def _apply_x_range(self) -> None:
         span = np.log10(FREQ_MAX) - np.log10(FREQ_MIN)

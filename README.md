@@ -98,6 +98,12 @@ group visibility, and **Var** adds the variation band only to those active
 group viewports. R&D sessions can be saved and loaded as `.fastgraph-rnd.json`
 files; Settings includes a default folder for those session files.
 
+Selected R&D measurements and groups can also keep photo notes. Use **Capture**
+to take a webcam photo or **Import** to attach an existing image, then click a
+thumbnail to view, caption, or remove it. Photos are saved as compact JPEGs in
+a sibling `<session-name>.attachments` folder, so move or copy that folder with
+the `.fastgraph-rnd.json` file when sharing a session.
+
 R&D exports operate on the selected measurement or group. Measurements export as
 TXT, groups with variation enabled export as variation TXT, and selected
 measurements or group variations can be sent directly to Curator.
@@ -175,12 +181,22 @@ choose its own HRTF from the shared HRTF library and can be shifted with its own
 dB offset. R&D sessions save processed measurement curves and workspace state to
 JSON; raw recordings are not saved.
 
+R&D measurement, input-channel, HRTF, target, and bounds controls share a
+responsive toolbar above the plots. Session and export actions sit below the
+bottom viewport, and the Notes panel can be collapsed to give the measurement
+list more room. The R&D and Measure input-channel selectors stay synchronized.
+
 The **Curator** tab is a graph image generation tool. It imports and compares
 two-column frequency-response TXT files and six-column Fastgraph variation
 exports, with per-layer visibility, color, offset, and HRTF controls. It also
 supports combined variation layers, optional preference bounds, fixed graph
 presentation controls, and composed 1920x1080 PNG export. Curator state is kept
 only for the current application launch.
+
+TXT files can also be dropped directly onto Curator. Its right-side layer list
+supports editable measurement names, while View provides fractional-octave
+smoothing and an optional color-keyed name legend shared by the preview and PNG
+export. Long export titles automatically shrink and elide to stay in frame.
 
 The **Automation** tab shows live application, device, sweep, processing,
 Curator, automation, and timing diagnostics in the left console pane. The right

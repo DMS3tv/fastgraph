@@ -4,12 +4,15 @@ import numpy as np
 import pytest
 
 from dms.rnd.models import (
+    RnDPhoto,
     RnDGroup,
     RnDMeasurement,
     RnDSession,
     generate_measurement_name,
     group_variation,
 )
+from dms.rnd.photos import RnDPhotoStore, attachment_directory
+from PyQt6.QtGui import QImage
 from dms.session import SessionData
 
 
@@ -111,6 +114,50 @@ def test_rnd_session_old_offset_and_bounds_fields_default_to_zero_and_off() -> N
 def test_rnd_session_rejects_unknown_schema() -> None:
     with pytest.raises(ValueError, match="Unsupported R&D session schema"):
         RnDSession.from_dict({"schema_version": 999})
+
+
+def test_rnd_photo_round_trip_and_legacy_default() -> None:
+    measurement = _measurement("a", "A")
+    measurement.photos.append(RnDPhoto(id="p", display_name="Pad", caption="New pads"))
+    group = RnDGroup(id="g", name="Group", photos=[RnDPhoto(id="q", display_name="Fixture")])
+    session = RnDSession(measurements=[measurement], groups=[group], ungrouped_order=["a"])
+
+    loaded = RnDSession.from_dict(session.to_dict())
+
+    assert loaded.measurements[0].photos[0].caption == "New pads"
+    assert loaded.groups[0].photos[0].file_name == "q.jpg"
+    legacy = session.to_dict()
+    legacy["measurements"][0].pop("photos")
+    legacy["groups"][0].pop("photos")
+    assert RnDSession.from_dict(legacy).measurements[0].photos == []
+
+
+def test_rnd_photo_store_saves_sidecar_hydrates_and_preserves_unrelated_files(tmp_path: Path) -> None:
+    store = RnDPhotoStore()
+    image = QImage(1800, 900, QImage.Format.Format_RGB32)
+    photo = store.add_image(image, display_name="Webcam")
+    measurement = _measurement("a", "A")
+    measurement.photos.append(photo)
+    session = RnDSession(measurements=[measurement], ungrouped_order=["a"])
+    path = tmp_path / "demo.fastgraph-rnd.json"
+
+    store.save_session(session, path)
+    sidecar = attachment_directory(path)
+    assert (sidecar / photo.file_name).is_file()
+    assert QImage(str(sidecar / photo.file_name)).width() == 1600
+    unrelated = sidecar / "keep.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+    measurement.photos.clear()
+    store.save_session(session, path)
+    assert unrelated.is_file()
+    assert not (sidecar / photo.file_name).exists()
+
+    measurement.photos.append(photo)
+    store.save_session(session, path)
+    loaded = RnDSession.from_dict(session.to_dict())
+    loaded_store = RnDPhotoStore()
+    assert loaded_store.hydrate_session(loaded, path) == []
+    assert Path(loaded.measurements[0].photos[0].runtime_path).is_file()
 
 
 def test_generate_measurement_name_uses_metadata_and_channel_with_suffix() -> None:

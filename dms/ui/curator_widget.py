@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +58,7 @@ UPPER_BOUNDS_PATH = BOUNDS_DIR / "- Upper Bounds.txt"
 LOWER_BOUNDS_PATH = BOUNDS_DIR / "- Lower Bounds.txt"
 DEFAULT_Y_MIN = -20.0
 DEFAULT_Y_MAX = 20.0
+SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
 
 
 class LayerListRow(QWidget):
@@ -66,20 +68,23 @@ class LayerListRow(QWidget):
         hrtf_options: list[tuple[str, str]],
         on_visible_changed,
         on_color_clicked,
+        on_name_changed,
         on_offset_changed,
         on_hrtf_changed,
     ) -> None:
         super().__init__()
         self.layer_id = layer.id
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(7)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 3, 4, 3)
+        layout.setSpacing(3)
+        top = QHBoxLayout()
+        top.setSpacing(6)
         self.visible_check = ToggleSwitch()
         self.visible_check.setChecked(layer.visible)
         self.visible_check.stateChanged.connect(
             lambda _state, layer_id=layer.id: on_visible_changed(layer_id, self.visible_check.isChecked())
         )
-        layout.addWidget(self.visible_check)
+        top.addWidget(self.visible_check)
 
         self.color_btn = QPushButton()
         self.color_btn.setObjectName("colorSwatch")
@@ -89,19 +94,28 @@ class LayerListRow(QWidget):
             f"background-color: {layer.color}; border: 1px solid #242a35; border-radius: 4px;"
         )
         self.color_btn.clicked.connect(lambda _checked=False, layer_id=layer.id: on_color_clicked(layer_id))
-        layout.addWidget(self.color_btn)
+        top.addWidget(self.color_btn)
 
-        name = QLabel(layer.name)
-        name.setStyleSheet("font-weight: 600;")
-        layout.addWidget(name, 1)
+        self.name_edit = QLineEdit(layer.name)
+        self.name_edit.setStyleSheet("font-weight: 600;")
+        self.name_edit.setToolTip("Rename this graph layer")
+        self.name_edit.editingFinished.connect(
+            lambda layer_id=layer.id: on_name_changed(layer_id, self.name_edit.text(), self.name_edit)
+        )
+        top.addWidget(self.name_edit, 1)
 
         kind = QLabel("VAR" if layer.curve.kind == "variation" else "FR")
         kind.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: 700;")
-        layout.addWidget(kind)
+        top.addWidget(kind)
         if layer.is_combined:
             derived = QLabel("COMBO")
             derived.setStyleSheet("color: #aeb7c7; font-weight: 700;")
-            layout.addWidget(derived)
+            top.addWidget(derived)
+        layout.addLayout(top)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(5)
+        controls.addWidget(QLabel("Offset"))
 
         self.offset_spin = QDoubleSpinBox()
         self.offset_spin.setRange(-120.0, 120.0)
@@ -115,10 +129,11 @@ class LayerListRow(QWidget):
         self.offset_spin.valueChanged.connect(
             lambda value, layer_id=layer.id: on_offset_changed(layer_id, float(value))
         )
-        layout.addWidget(self.offset_spin)
+        controls.addWidget(self.offset_spin)
 
+        controls.addWidget(QLabel("HRTF"))
         self.hrtf_combo = QComboBox()
-        self.hrtf_combo.setFixedWidth(168)
+        self.hrtf_combo.setMinimumWidth(120)
         self.hrtf_combo.blockSignals(True)
         for label, value in hrtf_options:
             if value == "__combined__" and not layer.is_combined:
@@ -136,7 +151,8 @@ class LayerListRow(QWidget):
         self.hrtf_combo.currentIndexChanged.connect(
             lambda _index, layer_id=layer.id: on_hrtf_changed(layer_id, self.hrtf_combo.currentData())
         )
-        layout.addWidget(self.hrtf_combo)
+        controls.addWidget(self.hrtf_combo, 1)
+        layout.addLayout(controls)
 
 
 class GraphStage(QWidget):
@@ -207,6 +223,7 @@ class CuratorWidget(QWidget):
         self._state.background = theme_colors(theme)["plot_bg"]
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
+        self.setAcceptDrops(True)
         self._build_ui()
         self._refresh_hrtf_options()
         self._load_default_bounds()
@@ -455,24 +472,32 @@ class CuratorWidget(QWidget):
         self._log("INFO", "Graph limits changed", y_min=self._state.y_min, y_max=self._state.y_max)
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        root.addWidget(splitter, 1)
+        self._splitter = splitter
 
         self._graph = GraphWidget()
         self._graph_stage = GraphStage(self._graph, self._state, self._on_export_text_changed)
         self._graph_frame = self._graph_stage.graph_frame
         self._graph_frame.setMinimumHeight(430)
         self._graph_stage.setMinimumHeight(540)
-        root.addWidget(self._graph_stage, 1)
-
-        root.addWidget(self._build_panel(), 0)
+        splitter.addWidget(self._graph_stage)
+        splitter.addWidget(self._build_panel())
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([1100, 500])
 
 
     def _build_panel(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("controlPanel")
-        layout = QHBoxLayout(panel)
+        panel.setMinimumWidth(390)
+        layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
@@ -485,8 +510,6 @@ class CuratorWidget(QWidget):
         add_btn.clicked.connect(self._choose_import_files)
         import_layout.addWidget(add_btn)
         self._layer_list = QListWidget()
-        self._layer_list.setMinimumWidth(660)
-        self._layer_list.setMaximumHeight(150)
         self._layer_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._layer_list.currentItemChanged.connect(self._on_layer_selected)
         self._layer_list.itemSelectionChanged.connect(self._sync_combine_button)
@@ -502,7 +525,7 @@ class CuratorWidget(QWidget):
         row.addWidget(remove_btn)
         row.addWidget(clear_btn)
         import_layout.addLayout(row)
-        layout.addWidget(import_box, 2)
+        layout.addWidget(import_box, 1)
 
         self._view_box = QGroupBox("View")
         view_box = self._view_box
@@ -528,6 +551,14 @@ class CuratorWidget(QWidget):
         self._aspect_lock_enabled = ToggleSwitch()
         self._aspect_lock_enabled.stateChanged.connect(self._on_aspect_lock_changed)
         view_form.addRow("25 dB/decade", self._aspect_lock_enabled)
+        self._smoothing_combo = QComboBox()
+        for fraction in SMOOTHING_OPTIONS:
+            self._smoothing_combo.addItem(f"1/{fraction}", fraction)
+        self._smoothing_combo.currentIndexChanged.connect(self._on_smoothing_changed)
+        view_form.addRow("Smoothing", self._smoothing_combo)
+        self._show_names_enabled = ToggleSwitch()
+        self._show_names_enabled.stateChanged.connect(self._on_show_names_changed)
+        view_form.addRow("Show Names", self._show_names_enabled)
         reset_btn = QPushButton("Reset View")
         reset_btn.clicked.connect(self._reset_view)
         view_form.addRow("Reset", reset_btn)
@@ -535,7 +566,7 @@ class CuratorWidget(QWidget):
         self._export_btn.setObjectName("exportButton")
         self._export_btn.clicked.connect(self._choose_export_path)
         view_form.addRow("Export", self._export_btn)
-        layout.addWidget(view_box)
+        layout.addWidget(view_box, 0)
         return panel
 
     def _sync_ui(self) -> None:
@@ -550,6 +581,7 @@ class CuratorWidget(QWidget):
                 self._hrtf_options,
                 self._set_layer_visible,
                 self._choose_layer_color,
+                self._set_layer_name,
                 self._set_layer_offset,
                 self._set_layer_hrtf,
             )
@@ -571,6 +603,14 @@ class CuratorWidget(QWidget):
 
         self._sync_bounds_controls()
         self._sync_aspect_lock_controls()
+        self._smoothing_combo.blockSignals(True)
+        self._smoothing_combo.setCurrentIndex(
+            max(0, self._smoothing_combo.findData(self._state.smoothing_fraction))
+        )
+        self._smoothing_combo.blockSignals(False)
+        self._show_names_enabled.blockSignals(True)
+        self._show_names_enabled.setChecked(self._state.show_layer_names)
+        self._show_names_enabled.blockSignals(False)
         self._sync_combine_button()
 
     def _sync_bounds_controls(self) -> None:
@@ -771,6 +811,21 @@ class CuratorWidget(QWidget):
             layer=self._layer_number(layer), color=layer.color,
         )
 
+    def _set_layer_name(self, layer_id: str, value: str, editor: QLineEdit | None = None) -> None:
+        layer = self._layer_by_id(layer_id)
+        if layer is None:
+            return
+        name = value.strip()
+        if not name:
+            if editor is not None:
+                editor.setText(layer.name)
+            return
+        if name == layer.name:
+            return
+        layer.name = name
+        self._redraw()
+        self._log("INFO", "Layer renamed", layer=self._layer_number(layer), name=name)
+
     def _set_layer_offset(self, layer_id: str, value: float) -> None:
         layer = self._layer_by_id(layer_id)
         if layer is None:
@@ -865,12 +920,45 @@ class CuratorWidget(QWidget):
         self._redraw()
         self._log("INFO", "25 dB/decade aspect changed", enabled=self._state.aspect_locked_25db)
 
+    def _on_smoothing_changed(self, _index: int) -> None:
+        self._state.smoothing_fraction = int(self._smoothing_combo.currentData() or 48)
+        self._redraw()
+        self._log("INFO", "Curator smoothing changed", fraction=self._state.smoothing_fraction)
+
+    def _on_show_names_changed(self, _state: int) -> None:
+        self._state.show_layer_names = self._show_names_enabled.isChecked()
+        self._redraw()
+        self._log("INFO", "Layer names changed", visible=self._state.show_layer_names)
+
     def _reset_view(self) -> None:
         self._state.aspect_locked_25db = True
+        self._state.smoothing_fraction = 48
+        self._state.show_layer_names = True
         self.set_y_limits(DEFAULT_Y_MIN, DEFAULT_Y_MAX)
         self.reset_background_to_theme()
         self._sync_aspect_lock_controls()
+        self._sync_ui()
         self._log("INFO", "View reset")
+
+    def dragEnterEvent(self, event) -> None:
+        mime = event.mimeData()
+        if mime.hasUrls() and any(url.isLocalFile() for url in mime.urls()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        local_paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
+        txt_paths = [path for path in local_paths if path.suffix.lower() == ".txt"]
+        unsupported = [path.name for path in local_paths if path.suffix.lower() != ".txt"]
+        loaded, failures = self.import_files(txt_paths, show_errors=False) if txt_paths else (0, [])
+        messages = [f"{name}: unsupported file type" for name in unsupported] + failures
+        if messages:
+            QMessageBox.warning(self, "Import Warnings", "\n".join(messages[:8]))
+        if loaded or local_paths:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def _on_export_text_changed(self) -> None:
         self._state.export_text = ExportText(

@@ -97,7 +97,7 @@ def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_pat
     window._keep_rnd_measurement(change_status="changed", notes="Pad revision")
 
     measurement = window._rnd_widget.session.measurements[0]
-    assert measurement.name == "DMS Demo - Rig - Input A - Ch 1"
+    assert measurement.name == "DMS Demo - Rig - Input A - Channel 1"
     assert measurement.notes == "Pad revision"
     assert measurement.change_status == "changed"
     assert measurement.metadata["brand"] == "DMS"

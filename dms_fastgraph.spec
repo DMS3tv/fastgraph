@@ -48,7 +48,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="FastGraph Beta.app",
-    icon="fastgraph icon.png",
+    icon="build/FastGraph.icns",
     bundle_identifier="com.dms.fastgraph",
     info_plist={
         "CFBundleName": "FastGraph Beta",

@@ -1,0 +1,151 @@
+name: Release builds
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit to build"
+        required: true
+        default: "main"
+        type: string
+      publish_release:
+        description: "Create or update a GitHub release after building"
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: "Release tag when publishing manually (for example, v0.3.5)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-14
+            artifact_name: FastGraph-Beta-macos-arm64
+            artifact_path: dist/FastGraph-Beta-macos-arm64.zip
+          - name: Windows x64
+            os: windows-latest
+            artifact_name: FastGraph-Beta-windows-x64
+            artifact_path: dist/FastGraph Beta-windows-x64.zip
+          - name: Linux x64
+            os: ubuntu-22.04
+            artifact_name: FastGraph-Beta-linux-x64
+            artifact_path: dist/FastGraph-Beta-linux-x64.tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2 \
+            libegl1 \
+            libgl1 \
+            libportaudio2 \
+            libpulse0 \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: |
+          ./build_macos.sh
+          ditto -c -k --sequesterRsrc --keepParent "dist/FastGraph Beta.app" "${{ matrix.artifact_path }}"
+
+      - name: Build Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build_windows.ps1
+
+      - name: Build Linux app
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ./build_linux.sh --test
+          tar -czf "dist/FastGraph-Beta-linux-x64.tar.gz" -C dist "FastGraph Beta"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+      TARGET_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -z "$TAG_NAME" ]]; then
+            echo "A release tag is required when publishing from a manual run."
+            exit 1
+          fi
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            notes_file="$(mktemp)"
+            awk -v version="${TAG_NAME#v}" '
+              $0 ~ "^## [[]" version "[]]" { printing = 1; next }
+              printing && /^## [[]/ { exit }
+              printing { print }
+            ' CHANGELOG.md > "$notes_file"
+            if [[ -s "$notes_file" ]]; then
+              gh release create "$TAG_NAME" --target "$TARGET_REF" --notes-file "$notes_file" --title "$TAG_NAME"
+            else
+              gh release create "$TAG_NAME" --target "$TARGET_REF" --generate-notes --title "$TAG_NAME"
+            fi
+          fi
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG_NAME" release-assets/* --clobber

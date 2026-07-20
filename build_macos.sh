@@ -22,6 +22,28 @@ fi
 
 rm -rf build dist
 
+ICON_SOURCE="$ROOT_DIR/fastgraph icon.png"
+ICONSET="$ROOT_DIR/build/FastGraph.iconset"
+MACOS_ICON="$ROOT_DIR/build/FastGraph.icns"
+
+if [[ ! -f "$ICON_SOURCE" ]]; then
+  echo "Missing icon source: $ICON_SOURCE"
+  exit 1
+fi
+
+mkdir -p "$ICONSET"
+sips -z 16 16 "$ICON_SOURCE" --out "$ICONSET/icon_16x16.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET/icon_32x32.png" >/dev/null
+sips -z 64 64 "$ICON_SOURCE" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+sips -z 128 128 "$ICON_SOURCE" --out "$ICONSET/icon_128x128.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET/icon_256x256.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET/icon_512x512.png" >/dev/null
+sips -z 1024 1024 "$ICON_SOURCE" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+iconutil -c icns "$ICONSET" -o "$MACOS_ICON"
+
 .venv/bin/python -m PyInstaller --noconfirm dms_fastgraph.spec
 
 echo

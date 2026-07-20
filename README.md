@@ -366,6 +366,12 @@ The finished app bundle will be created at:
 dist/FastGraph Beta.app
 ```
 
+Both macOS and Windows builds use the tracked `fastgraph icon.png` as their
+shared icon source. The macOS build converts it to an `.icns` bundle icon
+automatically, while the Windows build converts it to `fastgraph.ico` before
+running PyInstaller. Replace the PNG and rerun the platform build script to
+package a new icon.
+
 Notes:
 
 - The app bundle includes a microphone usage description for macOS permission prompts.

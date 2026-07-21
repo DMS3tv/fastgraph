@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 import numpy as np
@@ -12,6 +12,12 @@ from dms.session import SessionData
 
 
 SCHEMA_VERSION = 1
+
+# Per-version upgrade functions for the R&D session schema. `_MIGRATIONS[n]`
+# takes a raw session dict at schema version n and returns an equivalent dict
+# at version n + 1. Add an entry here whenever SCHEMA_VERSION is bumped so
+# sessions saved by older Fastgraph builds keep loading instead of hard-failing.
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 
 DEFAULT_COLORS = [
@@ -269,8 +275,21 @@ class RnDSession:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RnDSession":
         version = int(data.get("schema_version") or 0)
-        if version != SCHEMA_VERSION:
-            raise ValueError(f"Unsupported R&D session schema version: {version}")
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported R&D session schema version: {version} "
+                "(this session was created by a newer version of Fastgraph "
+                "— update the app to open it)"
+            )
+        while version < SCHEMA_VERSION:
+            migrate = _MIGRATIONS.get(version)
+            if migrate is None:
+                raise ValueError(
+                    f"Unsupported R&D session schema version: {version} "
+                    f"(no upgrade path from version {version})"
+                )
+            data = migrate(data)
+            version += 1
 
         load_warnings: list[str] = []
 

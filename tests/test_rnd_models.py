@@ -116,6 +116,30 @@ def test_rnd_session_rejects_unknown_schema() -> None:
         RnDSession.from_dict({"schema_version": 999})
 
 
+def test_rnd_session_newer_schema_message_is_distinct() -> None:
+    with pytest.raises(ValueError, match="newer version of Fastgraph"):
+        RnDSession.from_dict({"schema_version": 99})
+
+
+def test_rnd_session_no_upgrade_path_for_old_schema() -> None:
+    with pytest.raises(ValueError, match="no upgrade path from version 0"):
+        RnDSession.from_dict({"schema_version": 0})
+
+
+def test_rnd_session_current_schema_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dms.rnd import models as rnd_models_module
+
+    # Migrations dict is empty today; ensure it is never consulted for the
+    # current schema version and current-version sessions load unchanged.
+    monkeypatch.setattr(rnd_models_module, "_MIGRATIONS", {})
+    session = RnDSession(measurements=[_measurement("a", "A")], ungrouped_order=["a"])
+
+    loaded = RnDSession.from_dict(session.to_dict())
+
+    assert loaded.schema_version == 1
+    assert loaded.measurements[0].name == "A"
+
+
 def test_rnd_photo_round_trip_and_legacy_default() -> None:
     measurement = _measurement("a", "A")
     measurement.photos.append(RnDPhoto(id="p", display_name="Pad", caption="New pads"))

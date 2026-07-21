@@ -865,6 +865,7 @@ class CuratorWidget(QWidget):
             QMessageBox.warning(self, "HRTF Error", str(exc))
             layer.hrtf = None
             self._sync_ui()
+            self._redraw()
             return
         self._sync_ui()
         self._redraw()

@@ -74,6 +74,7 @@ from dms.export import (
     build_variation_filename,
     export_curve,
     export_variation,
+    safe_filename,
 )
 from dms.file_io import atomic_write_text
 from dms.hrtf import HRTFCurve
@@ -293,6 +294,7 @@ class PassFailDialog(QDialog):
         self._choice = self.CANCEL
         self.setModal(False)
         self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Review Measurement")
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -458,6 +460,7 @@ class RnDReviewDialog(QDialog):
         self._choice = self.CANCEL
         self.setModal(False)
         self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Review R&D Measurement")
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -3065,8 +3068,12 @@ class MainWindow(QMainWindow):
             return
         dlg = self._pass_fail_dialog
         self._pass_fail_dialog = None
-        dlg.blockSignals(True)
-        dlg.close()
+        try:
+            dlg.blockSignals(True)
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:
+            pass
 
     def _start_rnd_measurement(self) -> None:
         if self._state != AppState.IDLE:
@@ -3338,8 +3345,12 @@ class MainWindow(QMainWindow):
             return
         dlg = self._rnd_review_dialog
         self._rnd_review_dialog = None
-        dlg.blockSignals(True)
-        dlg.close()
+        try:
+            dlg.blockSignals(True)
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:
+            pass
 
     def _recompute_average(self) -> None:
         if not self._kept_curves:
@@ -3970,7 +3981,7 @@ class MainWindow(QMainWindow):
         if not self._ensure_rnd_hrtfs_available([measurement]):
             return
         compensated = bool(hrtf_path)
-        filename = f"{self._safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
+        filename = f"{safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
         path = self._resolve_export_path(requested_path, filename, "Export R&D Measurement")
         if path is None:
             return
@@ -4032,7 +4043,7 @@ class MainWindow(QMainWindow):
             bool(self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name))
             for measurement in measurements
         )
-        filename = f"{self._safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
+        filename = f"{safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
         path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
         if path is None:
             return
@@ -4078,7 +4089,7 @@ class MainWindow(QMainWindow):
         if not directory:
             return
         for measurement in measurements:
-            path = Path(directory) / f"{self._safe_filename(measurement.name)}.txt"
+            path = Path(directory) / f"{safe_filename(measurement.name)}.txt"
             self._export_rnd_measurement(measurement, str(path))
         self._statusbar.showMessage(f"Exported {len(measurements)} R&D measurements.")
 
@@ -4236,11 +4247,6 @@ class MainWindow(QMainWindow):
             return "add"
         return "cancel"
 
-    @staticmethod
-    def _safe_filename(value: str) -> str:
-        safe = "".join(ch if ch.isalnum() or ch in " ._-()" else "_" for ch in value).strip()
-        return safe or "R&D Measurement"
-
     def _resolve_export_path(
         self,
         requested_path: Optional[str],
@@ -4251,7 +4257,7 @@ class MainWindow(QMainWindow):
         if requested_path:
             path = Path(requested_path).expanduser()
             if path.exists() and path.is_dir():
-                path = path / filename
+                path = path / safe_filename(filename)
             if not path.parent.exists():
                 raise ValueError(f"Export directory does not exist: {path.parent}")
             if path.exists():

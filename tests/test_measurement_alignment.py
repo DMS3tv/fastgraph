@@ -72,7 +72,10 @@ def test_standard_mode_has_no_timing_marker_failure_when_markers_are_absent() ->
         sweep,
         layout,
         AlignmentSettings(
-            start_alignment_confidence_min=30.0,
+            # start_alignment_confidence_min left at the production default (9.0):
+            # standard mode now enforces this gate too (see H4 fix), so 30.0 would
+            # reject this clean synthetic recording. end_marker/timing thresholds
+            # stay unreachable to prove standard mode ignores them.
             end_marker_confidence_min=30.0,
             timing_drift_max_ms=5.0,
         ),
@@ -961,3 +964,63 @@ def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
     assert result.start.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.end.timing_error_ms <= 120.0
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_standard_mode_clean_recording_still_aligns_at_default_start_confidence() -> None:
+    # H4: standard mode now enforces start_alignment_confidence_min too. A clean
+    # recording must still align successfully at the production default (9.0).
+    sweep, layout = _layout()
+    delay = 137
+    rec = _recording_from_layout(layout, delay_samples=delay)
+
+    result = align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert result.diagnostics.failure_reason is None
+    assert result.start.start_confidence >= 9.0
+    assert result.start.selected_sweep_start == layout.sweep_start_sample + delay
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_standard_mode_rejects_silent_recording() -> None:
+    # H4: an all-zeros recording must no longer silently argmax-align to noise.
+    sweep, layout = _layout()
+    rec = np.zeros(layout.total_samples, dtype=np.float32)
+
+    with pytest.raises(MeasurementAlignmentError, match="Low start-alignment confidence") as exc:
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert exc.value.reason == MeasurementFailureReason.LOW_START_CONFIDENCE
+    assert exc.value.diagnostics.start_confidence is not None
+    assert exc.value.diagnostics.start_confidence < 9.0
+
+
+def test_standard_mode_rejects_pure_noise_recording() -> None:
+    # H4: a recording with no sweep content at all (e.g. wrong input channel)
+    # must be rejected rather than aligning to whatever correlates best with noise.
+    sweep, layout = _layout()
+    rng = np.random.default_rng(42)
+    rec = rng.normal(0.0, 0.05, layout.total_samples).astype(np.float32)
+
+    with pytest.raises(MeasurementAlignmentError, match="Low start-alignment confidence") as exc:
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert exc.value.reason == MeasurementFailureReason.LOW_START_CONFIDENCE
+    assert exc.value.diagnostics.start_confidence is not None
+    assert exc.value.diagnostics.start_confidence < 9.0
+
+
+def test_standard_mode_rejects_dropout_recording() -> None:
+    # H4: simulate a dropout where the recording is clean up to the sweep onset
+    # but goes silent partway through (zero-padded tail, same total length).
+    # The start gate looks only at the sweep onset region, so this case is not
+    # guaranteed to be caught by start_conf alone -- assert failure broadly
+    # rather than pinning the exact failure reason.
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+    mid = layout.excitation_start_sample + len(layout.excitation) // 2
+    rec[mid:] = 0.0
+
+    with pytest.raises(MeasurementAlignmentError) as exc:
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert exc.value.reason is not None

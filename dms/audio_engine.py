@@ -3,6 +3,7 @@ Audio engine: device enumeration, level monitoring, sweep play/record.
 Thread-safe; all callbacks communicate via Qt signals.
 """
 
+import logging
 import time
 import threading
 import os
@@ -19,6 +20,8 @@ from dms.measurement_alignment import (
     align_recording_to_layout,
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -489,9 +492,11 @@ class SweepWorker(QObject):
             time.sleep(0.05)
 
         try:
-            sd.wait()
-        except Exception:
-            pass
+            status = sd.wait()
+            if status:
+                logger.warning("sd.wait() reported stream status: %s", status)
+        except Exception as e:
+            logger.warning("sd.wait() raised: %s", e)
 
         self.progress.emit(1.0)
 

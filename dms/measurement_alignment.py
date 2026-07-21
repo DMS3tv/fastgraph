@@ -671,7 +671,7 @@ def find_start_alignment(
                     marker_locked_candidate = int(marker_locked_start)
                 start_conf = max(start_conf, min_start_conf)
 
-    if bluetooth_mode and start_conf < min_start_conf:
+    if start_conf < min_start_conf:
         start_result = StartAlignmentResult(
             selected_sweep_start=int(start_idx),
             sweep_correlation_candidate=int(sweep_start_candidate),
@@ -679,9 +679,18 @@ def find_start_alignment(
             start_confidence=float(start_conf),
             start_marker_confidence=float(start_marker_conf),
         )
+        if bluetooth_mode:
+            message = (
+                f"Low start-alignment confidence ({start_conf:.1f}; marker {start_marker_conf:.1f}). "
+                "Please reduce noise, increase playback level, or use higher latency."
+            )
+        else:
+            message = (
+                f"Low start-alignment confidence ({start_conf:.1f}). "
+                "Please reduce noise, increase playback level, or use higher latency."
+            )
         _raise_alignment_error(
-            f"Low start-alignment confidence ({start_conf:.1f}; marker {start_marker_conf:.1f}). "
-            "Please reduce noise, increase playback level, or use higher latency.",
+            message,
             MeasurementFailureReason.LOW_START_CONFIDENCE,
             layout,
             settings,

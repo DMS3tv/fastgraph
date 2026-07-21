@@ -8,11 +8,11 @@ import sys
 import shlex
 import tempfile
 import json
+import copy
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
-import paramiko
 import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -108,16 +109,8 @@ from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
 from dms.squiglink import (
-    PHONE_BOOK_REMOTE_PATH,
-    RemotePhoneBookInvalidError,
-    RemotePhoneBookMissingError,
-    RemotePhoneBookReadError,
     build_phone_book_name_stem,
     build_upload_name_stem,
-    merge_phone_book_entry,
-    read_remote_phone_book,
-    upload_export_sftp,
-    write_remote_phone_book,
 )
 from dms.theme import DARK, LIGHT, ThemeController
 from dms.update_checker import UpdateCheckWorker
@@ -131,6 +124,7 @@ from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionDialog
 from dms.ui.settings_dialog import SettingsWidget
+from dms.ui.squiglink_worker import SquiglinkUploadConfig, SquiglinkUploadWorker
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
 
@@ -737,6 +731,16 @@ class MainWindow(QMainWindow):
         self._active_sweep_worker: Optional[SweepWorker] = None
         self._pass_fail_dialog: Optional[PassFailDialog] = None
         self._rnd_review_dialog: Optional[RnDReviewDialog] = None
+
+        self._squiglink_thread: Optional[QThread] = None
+        self._squiglink_worker: Optional[SquiglinkUploadWorker] = None
+        self._squiglink_progress: Optional[QProgressDialog] = None
+        self._squiglink_config: Optional[SquiglinkUploadConfig] = None
+        self._squiglink_busy = False
+        self._squiglink_tmp_path: Optional[Path] = None
+        self._squiglink_pending_username = ""
+        self._squiglink_pending_password = ""
+        self._squiglink_pending_remember = False
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
@@ -4374,7 +4378,7 @@ class MainWindow(QMainWindow):
                 "Export averaged FR as a REW-style TXT file."
             )
             export_enabled = idle and self._average is not None
-        upload_enabled = idle and self._average is not None
+        upload_enabled = idle and self._average is not None and not self._squiglink_busy
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
@@ -4392,6 +4396,10 @@ class MainWindow(QMainWindow):
         return host, port
 
     def _upload_to_squiglink(self) -> None:
+        if self._squiglink_thread is not None:
+            self._statusbar.showMessage("A Squiglink upload is already in progress.")
+            return
+
         curve = self._bottom_curve_for_display_and_export()
         if curve is None:
             QMessageBox.information(
@@ -4426,14 +4434,13 @@ class MainWindow(QMainWindow):
         username = auth.username()
         password = auth.password()
         remember = auth.remember_credentials()
-        self._settings.set("squiglink_remember_credentials", remember)
-        if remember:
-            self._settings.set(
-                "squiglink_credentials_encrypted",
-                encrypt_credentials(username, password),
-            )
-        else:
-            self._settings.set("squiglink_credentials_encrypted", None)
+        # M9: credentials are NOT persisted here. They're stashed on self and
+        # only written to settings from _on_squiglink_succeeded, once the
+        # upload has actually succeeded - a failed/incorrect password must
+        # never get written to disk as "remembered".
+        self._squiglink_pending_username = username
+        self._squiglink_pending_password = password
+        self._squiglink_pending_remember = remember
 
         compensated = self._is_hrtf_active()
         if not self._ensure_upload_metadata():
@@ -4464,38 +4471,206 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=len(self._kept_curves),
             )
-            upload_export_sftp(
-                local_path=tmp_path,
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                remote_filename=filename,
-            )
-            phone_book_status = self._sync_remote_phone_book(
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                phone_book_stem=phone_book_stem,
-            )
-            self._statusbar.showMessage("Upload to Squiglink completed successfully.")
-            self._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
-            QMessageBox.information(
-                self,
-                "Upload Complete",
-                f"Upload to Squiglink completed successfully.\n\n{phone_book_status}",
-            )
         except Exception as exc:
-            self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
-            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
-            QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
-        finally:
             if tmp_path is not None:
                 try:
                     tmp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+            self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
+            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
+            QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
+            return
+
+        # The temp file now lives until the whole (possibly multi-phase, due
+        # to host-key trust / phone-book fallback round-trips) operation
+        # concludes - see _finish_squiglink_operation.
+        self._squiglink_tmp_path = tmp_path
+
+        host_keys = dict(self._settings.get("squiglink_host_keys") or {})
+        known_key = host_keys.get(f"{host}:{port}")
+
+        config = SquiglinkUploadConfig(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            known_key=known_key,
+            local_path=str(tmp_path),
+            remote_filename=filename,
+            # Snapshot brand/model rather than sharing self._session with the
+            # worker thread - the worker only ever reads .brand/.model, and a
+            # snapshot avoids any cross-thread mutation race if the user
+            # somehow edits session metadata while the upload is in flight.
+            session=copy.copy(self._session),
+            phone_book_stem=phone_book_stem,
+            fallback_mode=None,
+            skip_upload=False,
+        )
+        self._start_squiglink_worker(config)
+
+    def _start_squiglink_worker(self, config: SquiglinkUploadConfig) -> None:
+        self._squiglink_config = config
+        self._squiglink_busy = True
+        self._sync_export_button()
+
+        progress = QProgressDialog(
+            "Uploading to Squiglink…", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("Squiglink Upload")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        worker = SquiglinkUploadWorker(config)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._on_squiglink_succeeded)
+        worker.failed.connect(self._on_squiglink_failed)
+        worker.host_key_needed.connect(self._on_squiglink_host_key_needed)
+        worker.phone_book_decision_needed.connect(self._on_squiglink_phone_book_decision)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # NOT progress.canceled.connect(worker.cancel): `worker` lives on the
+        # background thread, so a Qt signal/slot connection to a method on it
+        # would auto-resolve to a queued cross-thread call that only gets
+        # delivered once that thread's event loop starts - i.e. after run()
+        # already returned. Route through a same-thread (main-thread) slot
+        # that calls worker.cancel() as a plain, immediate method call
+        # instead, exactly like _abort_active_sweep() -> SweepWorker.abort().
+        progress.canceled.connect(self._cancel_squiglink_upload)
+
+        self._squiglink_thread = thread
+        self._squiglink_worker = worker
+        self._squiglink_progress = progress
+        progress.show()
+        thread.start()
+
+    def _cancel_squiglink_upload(self) -> None:
+        # Called synchronously on the main thread in response to the
+        # progress dialog's Cancel button; calls worker.cancel() as a plain
+        # method call (not a queued signal) so it takes effect immediately.
+        if self._squiglink_worker is not None:
+            self._squiglink_worker.cancel()
+
+    def _close_squiglink_progress(self) -> None:
+        if self._squiglink_progress is not None:
+            self._squiglink_progress.close()
+            self._squiglink_progress = None
+
+    def _finish_squiglink_operation(self) -> None:
+        """Called once the whole (possibly multi-phase) upload concludes,
+        successfully or not. Must NOT be called from the host-key/phone-book
+        decision slots when a relaunch is pending - only when there's
+        nothing left to retry."""
+        self._close_squiglink_progress()
+        # The thread deletes itself via its finished -> deleteLater wiring
+        # (mirroring _start_update_check); calling deleteLater here would
+        # queue a deferred delete that can run before the queued quit() is
+        # processed, destroying a still-running QThread.
+        self._squiglink_thread = None
+        self._squiglink_worker = None
+        self._squiglink_config = None
+        self._squiglink_busy = False
+        self._sync_export_button()
+        if self._squiglink_tmp_path is not None:
+            try:
+                self._squiglink_tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._squiglink_tmp_path = None
+
+    def _on_squiglink_succeeded(self, summary: str) -> None:
+        # M9: only persist credentials once the upload has actually
+        # succeeded end to end.
+        self._settings.set(
+            "squiglink_remember_credentials", self._squiglink_pending_remember
+        )
+        if self._squiglink_pending_remember:
+            self._settings.set(
+                "squiglink_credentials_encrypted",
+                encrypt_credentials(
+                    self._squiglink_pending_username, self._squiglink_pending_password
+                ),
+            )
+        else:
+            self._settings.set("squiglink_credentials_encrypted", None)
+
+        filename = self._squiglink_config.remote_filename if self._squiglink_config else ""
+        self._statusbar.showMessage("Upload to Squiglink completed successfully.")
+        self._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
+        self._finish_squiglink_operation()
+        QMessageBox.information(
+            self,
+            "Upload Complete",
+            f"Upload to Squiglink completed successfully.\n\n{summary}",
+        )
+
+    def _on_squiglink_failed(self, message: str) -> None:
+        # M9: a failed attempt (bad password, network error, canceled host
+        # key, etc.) must never touch squiglink_remember_credentials /
+        # squiglink_credentials_encrypted - any previously-saved credentials
+        # are left exactly as they were.
+        self._statusbar.showMessage(f"Upload to Squiglink failed: {message}")
+        self._log_event("ERROR", "upload", f"Squiglink upload failed: {message}")
+        self._finish_squiglink_operation()
+        QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{message}")
+
+    def _on_squiglink_host_key_needed(self, key_str: str, fingerprint: str) -> None:
+        self._close_squiglink_progress()
+        config = self._squiglink_config
+        if config is None:
+            return
+
+        choice = QMessageBox.question(
+            self,
+            "Verify Squiglink Server",
+            (
+                f"This is the first connection to {config.host}:{config.port}.\n\n"
+                f"Server host key fingerprint:\n{fingerprint}\n\n"
+                "Only continue if you trust this server. If you were not "
+                "expecting to see this prompt, do not proceed."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._on_squiglink_failed(
+                "Upload canceled: the server's host key was not trusted."
+            )
+            return
+
+        host_keys = dict(self._settings.get("squiglink_host_keys") or {})
+        host_keys[f"{config.host}:{config.port}"] = key_str
+        self._settings.set("squiglink_host_keys", host_keys)
+
+        config.known_key = key_str
+        self._start_squiglink_worker(config)
+
+    def _on_squiglink_phone_book_decision(self, kind: str, detail: str) -> None:
+        self._close_squiglink_progress()
+        config = self._squiglink_config
+        if config is None:
+            return
+
+        mode = self._ask_phone_book_fallback_mode(detail)
+        if mode == "fail":
+            self._on_squiglink_failed(
+                f"Upload canceled because phone book could not be loaded: {detail}"
+            )
+            return
+
+        # The measurement file upload already succeeded in phase 1 - the
+        # worker only reaches this decision point after a successful upload
+        # (run() uploads before ever touching the phone book, and any upload
+        # failure returns via the `failed` signal before the phone-book step
+        # runs at all) - so the relaunch must not repeat it.
+        config.fallback_mode = mode
+        config.skip_upload = True
+        self._start_squiglink_worker(config)
 
     def _ensure_upload_metadata(self) -> bool:
         side = (getattr(self._session, "channel_side", "") or "").strip().upper()
@@ -4547,52 +4722,6 @@ class MainWindow(QMainWindow):
             return "skip"
         return "fail"
 
-    def _sync_remote_phone_book(
-        self,
-        host: str,
-        port: int,
-        username: str,
-        password: str,
-        phone_book_stem: str,
-    ) -> str:
-        transport = paramiko.Transport((host, int(port)))
-        try:
-            transport.connect(username=username, password=password)
-            sftp = paramiko.SFTPClient.from_transport(transport)
-            try:
-                try:
-                    phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
-                except RemotePhoneBookReadError as exc:
-                    # A transient/read failure is not an invitation to overwrite the
-                    # shared phone book with a fresh one - abort without offering
-                    # "Create Fresh Phone Book". The measurement itself may already
-                    # be uploaded; only the phone book update is aborted here.
-                    raise RuntimeError(
-                        f"Phone book update aborted because the remote phone book "
-                        f"could not be read: {exc}"
-                    ) from exc
-                except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
-                    if isinstance(exc, RemotePhoneBookInvalidError):
-                        detail = f"The remote phone book exists but is structurally invalid: {exc}"
-                    else:
-                        detail = str(exc)
-                    mode = self._ask_phone_book_fallback_mode(detail)
-                    if mode == "fail":
-                        raise RuntimeError(
-                            f"Upload canceled because phone book could not be loaded: {exc}"
-                        ) from exc
-                    if mode == "skip":
-                        return "Measurement uploaded. Phone book update was skipped."
-                    phone_book = []
-
-                merge_phone_book_entry(phone_book, self._session, phone_book_stem)
-                write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
-                return "Phone book updated successfully."
-            finally:
-                sftp.close()
-        finally:
-            transport.close()
-
     def closeEvent(self, event) -> None:
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
@@ -4621,6 +4750,19 @@ class MainWindow(QMainWindow):
             if self._update_check_thread is not None and self._update_check_thread.isRunning():
                 self._update_check_thread.quit()
                 self._update_check_thread.wait(4500)
+        except Exception:
+            pass
+
+        try:
+            if self._squiglink_worker is not None:
+                self._squiglink_worker.cancel()
+        except Exception:
+            pass
+
+        try:
+            if self._squiglink_thread is not None and self._squiglink_thread.isRunning():
+                self._squiglink_thread.quit()
+                self._squiglink_thread.wait(12000)
         except Exception:
             pass
 

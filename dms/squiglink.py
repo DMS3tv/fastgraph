@@ -1,8 +1,11 @@
+import base64
 import errno
 import json
 import os
 import re
+import socket
 import uuid
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,36 @@ from dms.session import SessionData
 
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
 DATA_UPLOAD_DIR = "data"
+DEFAULT_SFTP_TIMEOUT = 10.0
+
+
+class HostKeyUnverifiedError(Exception):
+    """Raised when connecting to a host whose SSH host key has never been
+    trusted before (TOFU - trust on first use). The caller must show the
+    fingerprint to the user and get explicit confirmation before retrying
+    with `known_key` set."""
+
+    def __init__(self, key_str: str, fingerprint: str) -> None:
+        super().__init__(
+            f"Host key is not yet trusted (fingerprint {fingerprint})."
+        )
+        self.key_str = key_str
+        self.fingerprint = fingerprint
+
+
+class HostKeyMismatchError(Exception):
+    """Raised when the server's presented host key does not match the key
+    previously trusted for this host. This is a strong signal of a
+    man-in-the-middle attack (or a legitimate server key rotation) and must
+    never be silently accepted."""
+
+    def __init__(self, expected_fingerprint: str, actual_fingerprint: str) -> None:
+        super().__init__(
+            "Host key mismatch: expected fingerprint "
+            f"{expected_fingerprint}, received {actual_fingerprint}."
+        )
+        self.expected_fingerprint = expected_fingerprint
+        self.actual_fingerprint = actual_fingerprint
 
 
 class RemotePhoneBookError(Exception):
@@ -62,6 +95,107 @@ def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
     return f"{base} {modifier}".strip()
 
 
+def _fingerprint_from_key_bytes(key_bytes: bytes) -> str:
+    """Format a SHA256 fingerprint the same way OpenSSH does:
+    "SHA256:" followed by the unpadded base64 of the digest."""
+    digest = hashlib.sha256(key_bytes).digest()
+    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _fingerprint_from_known_key_str(known_key: str) -> str:
+    """Compute the fingerprint of a previously-stored "name base64" host key
+    string (the same format `open_verified_transport` builds as `key_str`).
+    Falls back to hashing the raw string if it can't be parsed as a normal
+    key line, so a malformed stored value still produces *some* stable
+    fingerprint rather than raising."""
+    parts = known_key.strip().split(None, 1)
+    if len(parts) == 2:
+        try:
+            key_bytes = base64.b64decode(parts[1], validate=True)
+        except (ValueError, TypeError):
+            key_bytes = None
+        if key_bytes is not None:
+            return _fingerprint_from_key_bytes(key_bytes)
+    return _fingerprint_from_key_bytes(known_key.encode("utf-8"))
+
+
+def _close_quietly(closeable: Any) -> None:
+    try:
+        closeable.close()
+    except Exception:
+        pass
+
+
+def open_verified_transport(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    known_key: str | None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
+) -> paramiko.Transport:
+    """Open an authenticated paramiko Transport, but only after verifying the
+    server's host key against `known_key` (trust-on-first-use).
+
+    - `known_key` is None: the host has never been trusted before. The
+      transport is closed and `HostKeyUnverifiedError` is raised so the
+      caller can show the fingerprint to the user and decide whether to
+      trust it.
+    - `known_key` doesn't match the presented key: the transport is closed
+      and `HostKeyMismatchError` is raised. This must never be silently
+      bypassed - it typically means either a man-in-the-middle attack or a
+      legitimate server key rotation, and the caller must decide explicitly.
+    - `known_key` matches: password authentication proceeds as normal.
+
+    The underlying socket/transport is closed on every failure path,
+    including authentication failure.
+    """
+    sock = socket.create_connection((host, int(port)), timeout=timeout)
+    transport = paramiko.Transport(sock)
+    try:
+        transport.start_client(timeout=timeout)
+        key = transport.get_remote_server_key()
+        key_str = f"{key.get_name()} {key.get_base64()}"
+        fingerprint = _fingerprint_from_key_bytes(key.asbytes())
+
+        if known_key is None:
+            raise HostKeyUnverifiedError(key_str, fingerprint)
+        if known_key != key_str:
+            raise HostKeyMismatchError(
+                _fingerprint_from_known_key_str(known_key), fingerprint
+            )
+
+        transport.auth_password(username, password)
+    except Exception:
+        _close_quietly(transport)
+        _close_quietly(sock)
+        raise
+    return transport
+
+
+def open_sftp_session(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    known_key: str | None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
+) -> tuple[paramiko.Transport, paramiko.SFTPClient]:
+    """Open a verified transport and an SFTP client on top of it. Callers
+    that need to do more than one SFTP operation per connection (upload plus
+    phone-book sync) should use this instead of `upload_export_sftp` so they
+    only pay for one TOFU host-key check and one connection per attempt."""
+    transport = open_verified_transport(
+        host, port, username, password, known_key, timeout=timeout
+    )
+    try:
+        sftp = paramiko.SFTPClient.from_transport(transport)
+    except Exception:
+        _close_quietly(transport)
+        raise
+    return transport, sftp
+
+
 def upload_export_sftp(
     local_path: Path,
     host: str,
@@ -69,14 +203,18 @@ def upload_export_sftp(
     username: str,
     password: str,
     remote_filename: str | None = None,
+    *,
+    known_key: str | None = None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
 ) -> None:
     """
     Upload exported file to Squiglink endpoint over SFTP.
     Upload exported file to the account-scoped Squiglink data directory.
     """
-    transport = paramiko.Transport((host, int(port)))
+    transport = open_verified_transport(
+        host, port, username, password, known_key, timeout=timeout
+    )
     try:
-        transport.connect(username=username, password=password)
         sftp = paramiko.SFTPClient.from_transport(transport)
         try:
             filename = (remote_filename or local_path.name).strip().split("/")[-1]

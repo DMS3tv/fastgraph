@@ -46,6 +46,7 @@ _DEFAULTS: dict[str, Any] = {
     "squiglink_port": 2022,
     "squiglink_remember_credentials": False,
     "squiglink_credentials_encrypted": None,
+    "squiglink_host_keys": {},
 }
 
 

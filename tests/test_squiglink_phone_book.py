@@ -1,15 +1,20 @@
+import base64
 import errno
+import hashlib
 import json
 
 import pytest
 
 from dms.session import SessionData
 from dms.squiglink import (
+    HostKeyMismatchError,
+    HostKeyUnverifiedError,
     RemotePhoneBookMissingError,
     RemotePhoneBookReadError,
     build_phone_book_name_stem,
     build_upload_name_stem,
     merge_phone_book_entry,
+    open_verified_transport,
     read_remote_phone_book,
     upload_export_sftp,
     write_remote_phone_book,
@@ -147,21 +152,137 @@ def test_merge_matches_brand_and_model_case_and_whitespace_insensitive() -> None
     assert phone["file"] == ["Apple AirPods Pro 2", "Apple AirPods Pro 2 sample 2"]
 
 
+# --- fakes for open_verified_transport / upload_export_sftp ---------------
+
+
+class _FakeSocket:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeServerKey:
+    """Stand-in for a paramiko PKey, with a fixed, arbitrary key payload."""
+
+    def __init__(self, raw: bytes = b"fake-server-host-key-material") -> None:
+        self._raw = raw
+
+    def get_name(self) -> str:
+        return "ssh-ed25519"
+
+    def get_base64(self) -> str:
+        return base64.b64encode(self._raw).decode("ascii")
+
+    def asbytes(self) -> bytes:
+        return self._raw
+
+
+def _expected_fingerprint(raw: bytes) -> str:
+    digest = hashlib.sha256(raw).digest()
+    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+class _FakeVerifyTransport:
+    """Stand-in for paramiko.Transport as used by open_verified_transport:
+    constructed from a socket (not an (host, port) address tuple), driven via
+    start_client()/get_remote_server_key()/auth_password() instead of the
+    old connect(username=, password=)."""
+
+    instances: list["_FakeVerifyTransport"] = []
+
+    def __init__(self, sock) -> None:
+        self.sock = sock
+        self.closed = False
+        self.start_client_called = False
+        self.auth_called_with = None
+        self._server_key = _FakeServerKey()
+        _FakeVerifyTransport.instances.append(self)
+
+    def start_client(self, timeout=None) -> None:
+        self.start_client_called = True
+
+    def get_remote_server_key(self) -> _FakeServerKey:
+        return self._server_key
+
+    def auth_password(self, username: str, password: str) -> None:
+        self.auth_called_with = (username, password)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def _clear_fake_transport_instances():
+    _FakeVerifyTransport.instances = []
+    yield
+    _FakeVerifyTransport.instances = []
+
+
+def _patch_verified_transport(monkeypatch) -> _FakeSocket:
+    sock = _FakeSocket()
+    monkeypatch.setattr(
+        "dms.squiglink.socket.create_connection", lambda *_a, **_k: sock
+    )
+    monkeypatch.setattr("dms.squiglink.paramiko.Transport", _FakeVerifyTransport)
+    return sock
+
+
+def test_open_verified_transport_unknown_key_raises_and_closes(monkeypatch) -> None:
+    _patch_verified_transport(monkeypatch)
+
+    with pytest.raises(HostKeyUnverifiedError) as excinfo:
+        open_verified_transport("h", 2022, "u", "p", known_key=None)
+
+    key = _FakeServerKey()
+    assert excinfo.value.key_str == f"{key.get_name()} {key.get_base64()}"
+    assert excinfo.value.fingerprint == _expected_fingerprint(key.asbytes())
+
+    transport = _FakeVerifyTransport.instances[-1]
+    assert transport.start_client_called is True
+    assert transport.auth_called_with is None
+    assert transport.closed is True
+
+
+def test_open_verified_transport_matching_key_authenticates(monkeypatch) -> None:
+    _patch_verified_transport(monkeypatch)
+    key = _FakeServerKey()
+    known_key = f"{key.get_name()} {key.get_base64()}"
+
+    transport = open_verified_transport("h", 2022, "u", "p", known_key=known_key)
+
+    assert transport.auth_called_with == ("u", "p")
+    assert transport.closed is False
+
+
+def test_open_verified_transport_mismatched_key_raises_and_closes(monkeypatch) -> None:
+    _patch_verified_transport(monkeypatch)
+    wrong_b64 = base64.b64encode(b"totally-different-key-material").decode("ascii")
+    known_key = f"ssh-rsa {wrong_b64}"
+
+    with pytest.raises(HostKeyMismatchError) as excinfo:
+        open_verified_transport("h", 2022, "u", "p", known_key=known_key)
+
+    transport = _FakeVerifyTransport.instances[-1]
+    assert transport.auth_called_with is None
+    assert transport.closed is True
+
+    key = _FakeServerKey()
+    assert excinfo.value.actual_fingerprint == _expected_fingerprint(key.asbytes())
+    assert excinfo.value.expected_fingerprint == _expected_fingerprint(
+        base64.b64decode(wrong_b64)
+    )
+
+
 def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> None:
     local = tmp_path / "local.txt"
     local.write_text("x", encoding="utf-8")
     calls = {}
 
-    class _FakeTransport:
-        def __init__(self, _addr):
-            pass
-
-        def connect(self, username: str, password: str) -> None:
-            assert username == "u"
-            assert password == "p"
-
-        def close(self) -> None:
-            pass
+    _patch_verified_transport(monkeypatch)
+    key = _FakeServerKey()
+    known_key = f"{key.get_name()} {key.get_base64()}"
 
     class _FakeSFTP:
         def put(self, local_path: str, remote_path: str) -> None:
@@ -171,7 +292,6 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr("dms.squiglink.paramiko.Transport", _FakeTransport)
     monkeypatch.setattr(
         "dms.squiglink.paramiko.SFTPClient.from_transport",
         lambda _transport: _FakeSFTP(),
@@ -184,9 +304,51 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
         username="u",
         password="p",
         remote_filename="Apple AirPods Pro 2 L0.txt",
+        known_key=known_key,
     )
     assert calls["local"] == str(local)
     assert calls["remote"] == "data/Apple AirPods Pro 2 L0.txt"
+
+
+def test_upload_export_sftp_passes_known_key_through(monkeypatch, tmp_path) -> None:
+    """A known_key that doesn't match the server's presented key must abort
+    the upload with HostKeyMismatchError rather than silently uploading -
+    proof that `known_key` actually reaches the verification step."""
+    local = tmp_path / "local.txt"
+    local.write_text("x", encoding="utf-8")
+
+    _patch_verified_transport(monkeypatch)
+    wrong_b64 = base64.b64encode(b"some-other-key-bytes").decode("ascii")
+
+    put_calls = []
+
+    class _FakeSFTP:
+        def put(self, local_path: str, remote_path: str) -> None:
+            put_calls.append((local_path, remote_path))
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "dms.squiglink.paramiko.SFTPClient.from_transport",
+        lambda _transport: _FakeSFTP(),
+    )
+
+    with pytest.raises(HostKeyMismatchError):
+        upload_export_sftp(
+            local_path=local,
+            host="h",
+            port=2022,
+            username="u",
+            password="p",
+            remote_filename="Apple AirPods Pro 2 L0.txt",
+            known_key=f"ssh-rsa {wrong_b64}",
+        )
+
+    assert put_calls == []
+    transport = _FakeVerifyTransport.instances[-1]
+    assert transport.closed is True
+    assert transport.auth_called_with is None
 
 
 # --- fakes for write_remote_phone_book / read_remote_phone_book -----------

@@ -135,15 +135,18 @@ class CameraCaptureDialog(QDialog):
 class PhotoViewerDialog(QDialog):
     """Browse an item's photos and edit captions or request removal."""
 
-    def __init__(self, entries: list[tuple[QImage | None, str, str]], index: int, parent=None) -> None:
+    _IMAGE_CACHE_SIZE = 3
+
+    def __init__(self, entries: list[tuple[str | None, str, str]], index: int, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("R&D Photo")
         self.resize(760, 650)
         self.remove_requested = False
         self.remove_index: int | None = None
         self._entries = entries
-        self._captions = [caption for _image, caption, _title in entries]
+        self._captions = [caption for _path, caption, _title in entries]
         self._index = max(0, min(index, len(entries) - 1))
+        self._image_cache: dict[int, QImage] = {}
         layout = QVBoxLayout(self)
         self._image_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
         self._image_label.setMinimumHeight(460)
@@ -184,8 +187,21 @@ class PhotoViewerDialog(QDialog):
         self._index = max(0, min(self._index + delta, len(self._entries) - 1))
         self._render()
 
+    def _image_for_index(self, index: int) -> QImage | None:
+        if index in self._image_cache:
+            return self._image_cache[index]
+        path, _caption, _title = self._entries[index]
+        image = QImage(path) if path else None
+        if image is not None:
+            self._image_cache[index] = image
+            while len(self._image_cache) > self._IMAGE_CACHE_SIZE:
+                oldest_key = next(iter(self._image_cache))
+                del self._image_cache[oldest_key]
+        return image
+
     def _render(self) -> None:
-        image, _caption, title = self._entries[self._index]
+        _path, _caption, title = self._entries[self._index]
+        image = self._image_for_index(self._index)
         self.setWindowTitle(f"R&D Photo — {title} ({self._index + 1}/{len(self._entries)})")
         self.caption_edit.setPlainText(self._captions[self._index])
         self._previous.setEnabled(self._index > 0)

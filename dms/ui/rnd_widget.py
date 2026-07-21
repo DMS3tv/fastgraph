@@ -1201,7 +1201,7 @@ class RnDWidget(QWidget):
             return
         index = photos.index(photo)
         entries = [
-            (QImage(item.runtime_path) if item.runtime_path else None, item.caption, item.display_name)
+            (item.runtime_path or None, item.caption, item.display_name)
             for item in photos
         ]
         dialog = PhotoViewerDialog(entries, index, self)

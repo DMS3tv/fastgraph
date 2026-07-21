@@ -253,3 +253,122 @@ def test_level_monitor_passes_numeric_portaudio_index(monkeypatch) -> None:
 
     assert stream_calls
     assert stream_calls[0]["device"] == 43
+
+
+def _fake_indata(n_frames: int = 32, n_channels: int = 2, value: float = 0.5) -> np.ndarray:
+    return np.full((n_frames, n_channels), value, dtype=np.float32)
+
+
+def test_level_monitor_callback_throttles_level_updated(monkeypatch) -> None:
+    monitor = audio_engine.LevelMonitor()
+    monitor._cb_running = True
+    monitor._cb_channel = 0
+
+    fake_now = [0.0]
+    monkeypatch.setattr(audio_engine.time, "monotonic", lambda: fake_now[0])
+
+    emitted = []
+    monitor.level_updated.connect(emitted.append)
+
+    indata = _fake_indata()
+
+    # First call always emits (last_emit_time starts at 0.0, well in the past).
+    fake_now[0] = 1.0
+    monitor._callback(indata, indata.shape[0], None, None)
+    assert len(emitted) == 1
+
+    # Calls within the throttle window (< 50ms later) must not emit again.
+    fake_now[0] = 1.01
+    monitor._callback(indata, indata.shape[0], None, None)
+    fake_now[0] = 1.04
+    monitor._callback(indata, indata.shape[0], None, None)
+    assert len(emitted) == 1
+
+    # Once >= 50ms have elapsed, the next callback emits again.
+    fake_now[0] = 1.051
+    monitor._callback(indata, indata.shape[0], None, None)
+    assert len(emitted) == 2
+
+
+def test_level_monitor_callback_takes_no_lock(monkeypatch) -> None:
+    monitor = audio_engine.LevelMonitor()
+    monitor._cb_running = True
+    monitor._cb_channel = 0
+    monkeypatch.setattr(audio_engine.time, "monotonic", lambda: 1.0)
+
+    class _ExplodingLock:
+        def acquire(self, *args, **kwargs):
+            raise AssertionError("audio callback must not take the lock")
+
+        def release(self, *args, **kwargs):
+            raise AssertionError("audio callback must not take the lock")
+
+        def __enter__(self):
+            raise AssertionError("audio callback must not take the lock")
+
+        def __exit__(self, *args):
+            raise AssertionError("audio callback must not take the lock")
+
+    monitor._lock = _ExplodingLock()
+
+    emitted = []
+    monitor.level_updated.connect(emitted.append)
+
+    # Must not raise even though self._lock would blow up if touched.
+    monitor._callback(_fake_indata(), 32, None, None)
+    assert len(emitted) == 1
+
+    # A monitor that isn't "running" must also return before touching the lock.
+    monitor._cb_running = False
+    monitor._callback(_fake_indata(), 32, None, None)
+    assert len(emitted) == 1
+
+
+def test_level_monitor_stopped_unexpectedly_only_without_stop() -> None:
+    monitor = audio_engine.LevelMonitor()
+    monitor._stream = None  # avoid touching a real InputStream in stop()
+
+    signals = []
+    monitor.stopped_unexpectedly.connect(signals.append)
+
+    # Simulate the InputStream's finished_callback firing without stop()
+    # ever being requested (e.g. device unplugged).
+    monitor._on_finished()
+    assert len(signals) == 1
+
+    # After an explicit stop(), the same callback firing must NOT re-signal.
+    monitor._stop_requested = False  # reset as if a fresh start() happened
+    monitor.stop()
+    monitor._on_finished()
+    assert len(signals) == 1
+
+
+def test_device_poll_worker_emits_only_on_change(monkeypatch) -> None:
+    devices_v1 = [
+        {"index": 0, "name": "Speakers", "hostapi": 0, "max_output_channels": 2, "max_input_channels": 0},
+    ]
+    devices_v2 = devices_v1 + [
+        {"index": 1, "name": "USB Mic", "hostapi": 0, "max_output_channels": 0, "max_input_channels": 1},
+    ]
+
+    current = {"out": devices_v1, "in": []}
+    monkeypatch.setattr(audio_engine, "get_output_devices", lambda: current["out"])
+    monkeypatch.setattr(audio_engine, "get_input_devices", lambda: current["in"])
+
+    worker = audio_engine.DevicePollWorker(interval_ms=1500)
+    emissions = []
+    worker.devices_changed.connect(lambda out, inp: emissions.append((out, inp)))
+
+    worker.poll_once()
+    assert len(emissions) == 1
+
+    # Same devices again -> no emission.
+    worker.poll_once()
+    worker.poll_once()
+    assert len(emissions) == 1
+
+    # Device list actually changes -> emits again.
+    current["out"] = devices_v2
+    worker.poll_once()
+    assert len(emissions) == 2
+    assert emissions[1][0] == devices_v2

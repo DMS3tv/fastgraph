@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.audio_engine import (
+    DevicePollWorker,
     LevelMonitor,
     SweepWorker,
     device_channel_count,
@@ -763,6 +764,7 @@ class MainWindow(QMainWindow):
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
         self._level_monitor.error_occurred.connect(self._on_level_error)
+        self._level_monitor.stopped_unexpectedly.connect(self._on_level_stopped_unexpectedly)
 
         self._refresh_window_title()
         self.setMinimumSize(1280, 700)
@@ -788,9 +790,16 @@ class MainWindow(QMainWindow):
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
         self._meter_ui_timer.start(_METER_UPDATE_MS)
 
-        self._device_check_timer = QTimer(self)
-        self._device_check_timer.timeout.connect(self._check_devices)
-        self._device_check_timer.start(1500)
+        # Device enumeration polls sd.query_devices() (blocking PortAudio call)
+        # every 1.5s. Run it on a persistent worker thread instead of the UI
+        # thread (mirrors the moveToThread/started wiring used for
+        # UpdateCheckWorker below), so the UI never stalls on enumeration.
+        self._device_poll_thread = QThread(self)
+        self._device_poll_worker = DevicePollWorker(interval_ms=1500)
+        self._device_poll_worker.moveToThread(self._device_poll_thread)
+        self._device_poll_thread.started.connect(self._device_poll_worker.start)
+        self._device_poll_worker.devices_changed.connect(self._on_devices_changed)
+        self._device_poll_thread.start()
 
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
@@ -2382,20 +2391,22 @@ class MainWindow(QMainWindow):
                 self._current_input_channel(),
             )
 
-    def _check_devices(self) -> None:
+    def _on_devices_changed(
+        self,
+        out_devices: list[dict],
+        in_devices: list[dict],
+    ) -> None:
+        # Enumeration + change-detection happen on the DevicePollWorker
+        # thread; this slot only runs the handling logic for a change the
+        # worker already confirmed is real.
         current_out = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_output_devices()
+            for d in out_devices
         ]
         current_in = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_input_devices()
+            for d in in_devices
         ]
-
-        if current_out == self._last_output_devices and current_in == (
-            self._last_input_devices
-        ):
-            return
 
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
@@ -2409,18 +2420,30 @@ class MainWindow(QMainWindow):
         ):
             self._abort_active_sweep()
             self._state = AppState.IDLE
+            self._sweep_progress.setValue(0)
+            self._rnd_widget.set_status("Ready")
             self._statusbar.showMessage(
                 "Audio device change detected. Active sweep aborted safely."
             )
 
         self._refresh_devices()
 
-    def _abort_active_sweep(self) -> None:
+    def _abort_active_sweep(self) -> bool:
+        """Abort the active sweep thread, if any is still running.
+
+        Returns True if a running thread was actually signaled to abort. When
+        True, `_on_sweep_thread_finished` will fire shortly (the QThread's
+        own `finished` signal, emitted once `_SweepThread.run()` returns) and
+        is responsible for restarting the level monitor — callers should not
+        also restart it synchronously in that case, to avoid a double start.
+        """
         if self._sweep_thread is not None and self._sweep_thread.isRunning():
             try:
                 self._sweep_thread.abort()
             except Exception:
                 pass
+            return True
+        return False
 
     def _cleanup_sweep_thread(self) -> None:
         if self._sweep_thread is not None:
@@ -2516,6 +2539,19 @@ class MainWindow(QMainWindow):
         self._level_meter.set_level(self._displayed_level_dbfs)
 
     def _on_level_error(self, message: str) -> None:
+        self._statusbar.showMessage(message)
+
+    def _on_level_stopped_unexpectedly(self, message: str) -> None:
+        # e.g. the input device was unplugged: the InputStream's
+        # finished_callback fired without us having requested a stop, so the
+        # meter would otherwise freeze at its last value. Log it and drop the
+        # meter back to its idle/no-signal visual state (same as when no
+        # input device is selected, see _start_level_monitor).
+        self._log_event("WARNING", "audio", message)
+        self._last_level_dbfs = -120.0
+        self._displayed_level_dbfs = -60.0
+        self._level_meter.set_level(-60.0)
+        self._level_status_label.setText("No signal")
         self._statusbar.showMessage(message)
 
     def _start_update_check(self) -> None:
@@ -2989,7 +3025,7 @@ class MainWindow(QMainWindow):
         self._start_next_sweep()
 
     def _cancel_queue(self) -> None:
-        self._abort_active_sweep()
+        aborted_running_thread = self._abort_active_sweep()
         self._close_pass_fail_dialog()
         self._pending_curve = None
         self._queue_target = 0
@@ -3000,7 +3036,13 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
-        self._start_level_monitor()
+        if not aborted_running_thread:
+            # No sweep thread was running (e.g. canceled from the pass/fail
+            # dialog after the sweep already finished) — _on_sweep_thread_finished
+            # won't fire again, so restart the monitor here. If a thread WAS
+            # aborted, let that handler restart it once the thread exits, to
+            # avoid starting it twice.
+            self._start_level_monitor()
         self._statusbar.showMessage("Queue canceled.")
 
     def _finish_queue(self) -> None:
@@ -3329,14 +3371,18 @@ class MainWindow(QMainWindow):
         self._run_automation_trigger("rnd_measurement_kept")
 
     def _cancel_rnd_measurement(self) -> None:
-        self._abort_active_sweep()
+        aborted_running_thread = self._abort_active_sweep()
         self._close_rnd_review_dialog()
         self._pending_curve = None
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
-        self._start_level_monitor()
+        if not aborted_running_thread:
+            # See _cancel_queue: only restart here if no thread was aborted;
+            # otherwise _on_sweep_thread_finished restarts it once, avoiding
+            # a double start.
+            self._start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage("R&D measurement canceled.")
 
@@ -3750,7 +3796,14 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dlg.calibration_done.connect(self._on_calibration_done)
-        dlg.exec()
+        # CalibrationDialog opens its own InputStream on the same device; stop
+        # our monitor first so the two don't collide on exclusive-mode
+        # backends, then always restart it once the dialog closes.
+        self._level_monitor.stop()
+        try:
+            dlg.exec()
+        finally:
+            self._start_level_monitor()
 
     def _on_calibration_done(self, device_name: str, sensitivity: float) -> None:
         label = self._current_input_device_label() or device_name
@@ -3779,6 +3832,14 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _play_test_noise(self) -> Optional[str]:
+        if self._state != AppState.IDLE:
+            self._log_event(
+                "WARNING",
+                "test_level",
+                "Test noise ping blocked: app not idle",
+                state=self._state,
+            )
+            return "Test noise is only available while idle."
         output_device = self._current_output_device()
         if output_device is None:
             return "No output device selected."
@@ -4732,7 +4793,9 @@ class MainWindow(QMainWindow):
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
         try:
-            self._device_check_timer.stop()
+            if self._device_poll_thread is not None and self._device_poll_thread.isRunning():
+                self._device_poll_thread.quit()
+                self._device_poll_thread.wait(3000)
         except Exception:
             pass
 

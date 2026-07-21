@@ -138,6 +138,47 @@ def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
         assert "canceled" in str(exc).lower()
 
 
+def test_sync_remote_phone_book_read_error_aborts_without_create_fresh(monkeypatch) -> None:
+    monkeypatch.setattr("dms.ui.main_window.paramiko.Transport", _FakeTransport)
+    monkeypatch.setattr(
+        "dms.ui.main_window.paramiko.SFTPClient.from_transport",
+        lambda _transport: _FakeSFTP(),
+    )
+    monkeypatch.setattr(
+        "dms.ui.main_window.read_remote_phone_book",
+        lambda _sftp, _path: (_ for _ in ()).throw(ConnectionError("dropped connection")),
+    )
+    monkeypatch.setattr(
+        "dms.ui.main_window.RemotePhoneBookReadError",
+        ConnectionError,
+    )
+    called = {"fallback": 0, "write": 0}
+    fake = _fake_self("create")
+    fake._ask_phone_book_fallback_mode = lambda _msg: called.__setitem__(
+        "fallback", called["fallback"] + 1
+    ) or "create"
+    monkeypatch.setattr(
+        "dms.ui.main_window.write_remote_phone_book",
+        lambda *_args, **_kwargs: called.__setitem__("write", called["write"] + 1),
+    )
+
+    try:
+        MainWindow._sync_remote_phone_book(
+            fake,
+            host="sftp.squig.link",
+            port=2022,
+            username="u",
+            password="p",
+            phone_book_stem="Apple AirPods Pro 2 small tips",
+        )
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "could not be read" in str(exc).lower()
+    # A read error must never trigger the "Create Fresh Phone Book" prompt.
+    assert called["fallback"] == 0
+    assert called["write"] == 0
+
+
 def test_ensure_upload_metadata_returns_true_when_already_complete() -> None:
     fake = SimpleNamespace(
         _session=SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L")

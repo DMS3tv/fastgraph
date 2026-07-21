@@ -111,6 +111,7 @@ from dms.squiglink import (
     PHONE_BOOK_REMOTE_PATH,
     RemotePhoneBookInvalidError,
     RemotePhoneBookMissingError,
+    RemotePhoneBookReadError,
     build_phone_book_name_stem,
     build_upload_name_stem,
     merge_phone_book_entry,
@@ -774,6 +775,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_update_check()
         self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
+        self._warn_about_corrupt_config_on_startup()
         QTimer.singleShot(0, lambda: self._run_automation_trigger("app_start"))
 
         self._meter_ui_timer = QTimer(self)
@@ -1051,6 +1053,32 @@ class MainWindow(QMainWindow):
             and not getattr(self, "_automation_running", False)
         ):
             QTimer.singleShot(0, lambda: self._run_automation_trigger("app_error"))
+
+    def _warn_about_corrupt_config_on_startup(self) -> None:
+        messages: list[str] = []
+        if self._settings.load_error:
+            self._log_event("WARNING", "settings", self._settings.load_error)
+            messages.append(self._settings.load_error)
+        if self._cal_store.load_error:
+            self._log_event("WARNING", "calibration", self._cal_store.load_error)
+            messages.append(self._cal_store.load_error)
+        if not messages:
+            return
+        self._startup_config_warning_shown = False
+
+        def _show() -> None:
+            if self._startup_config_warning_shown:
+                return
+            self._startup_config_warning_shown = True
+            QMessageBox.warning(
+                self,
+                "Configuration Reset",
+                "One or more configuration files were corrupt and have been reset "
+                "to defaults (a backup was saved alongside each):\n\n"
+                + "\n\n".join(messages),
+            )
+
+        QTimer.singleShot(0, _show)
 
     def _command_reply(self, message: str, error: bool = False) -> None:
         self._log_event("ERROR" if error else "INFO", "console", message)
@@ -4138,6 +4166,19 @@ class MainWindow(QMainWindow):
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Loaded R&D session: {path_str}")
         self._log_event("INFO", "rnd", "R&D session loaded", path=path_str, mode=mode)
+        if incoming.load_warnings:
+            for warning in incoming.load_warnings:
+                self._log_event("WARNING", "rnd", warning)
+            shown = incoming.load_warnings[:10]
+            remaining = len(incoming.load_warnings) - len(shown)
+            detail = "\n".join(shown)
+            if remaining > 0:
+                detail += f"\n…and {remaining} more"
+            QMessageBox.warning(
+                self,
+                "Some R&D Items Could Not Be Loaded",
+                f"{len(incoming.load_warnings)} item(s) could not be loaded:\n\n{detail}",
+            )
         if missing_photos:
             QMessageBox.warning(
                 self,
@@ -4492,8 +4533,21 @@ class MainWindow(QMainWindow):
             try:
                 try:
                     phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
+                except RemotePhoneBookReadError as exc:
+                    # A transient/read failure is not an invitation to overwrite the
+                    # shared phone book with a fresh one - abort without offering
+                    # "Create Fresh Phone Book". The measurement itself may already
+                    # be uploaded; only the phone book update is aborted here.
+                    raise RuntimeError(
+                        f"Phone book update aborted because the remote phone book "
+                        f"could not be read: {exc}"
+                    ) from exc
                 except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
-                    mode = self._ask_phone_book_fallback_mode(str(exc))
+                    if isinstance(exc, RemotePhoneBookInvalidError):
+                        detail = f"The remote phone book exists but is structurally invalid: {exc}"
+                    else:
+                        detail = str(exc)
+                    mode = self._ask_phone_book_fallback_mode(detail)
                     if mode == "fail":
                         raise RuntimeError(
                             f"Upload canceled because phone book could not be loaded: {exc}"

@@ -244,12 +244,16 @@ class EventsWidget(QWidget):
 
     def reload_library(self) -> None:
         self._library.clear()
-        self._library_items, _skipped = scan_automation_directory(
+        self._library_items, skipped = scan_automation_directory(
             self.automation_directory()
         )
         for path, automation in self._library_items:
             self._library.addItem(f"{automation.name} ({path.name})")
-        self._set_status(f"Loaded {len(self._library_items)} automation file(s).")
+        status = f"Loaded {len(self._library_items)} automation file(s)"
+        if skipped:
+            reasons = "; ".join(f"{path.name} ({reason})" for path, reason in skipped)
+            status += f"; {len(skipped)} failed to load: {reasons}"
+        self._set_status(status + ".")
 
     def new_automation(self) -> None:
         self._load_into_editor(AutomationDefinition(), None)

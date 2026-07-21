@@ -2,6 +2,7 @@ import base64
 import errno
 import hashlib
 import json
+import time as time_module
 
 import pytest
 
@@ -9,13 +10,16 @@ from dms.session import SessionData
 from dms.squiglink import (
     HostKeyMismatchError,
     HostKeyUnverifiedError,
+    PhoneBookLockedError,
     RemotePhoneBookMissingError,
     RemotePhoneBookReadError,
+    acquire_phone_book_lock,
     build_phone_book_name_stem,
     build_upload_name_stem,
     merge_phone_book_entry,
     open_verified_transport,
     read_remote_phone_book,
+    release_phone_book_lock,
     upload_export_sftp,
     write_remote_phone_book,
 )
@@ -56,6 +60,31 @@ def test_build_phone_book_name_stem_omits_side_suffix() -> None:
     assert build_phone_book_name_stem(s, "R1") == "Apple AirPods Pro 2"
     assert build_phone_book_name_stem(s, "small tips L") == "Apple AirPods Pro 2 small tips"
     assert build_phone_book_name_stem(s, "small tips R2.txt") == "Apple AirPods Pro 2 small tips"
+
+
+# --- M14: stems are sanitized via dms.export.safe_filename ------------------
+
+
+def test_build_upload_name_stem_sanitizes_unsafe_characters() -> None:
+    s = _session(brand="Weird/Brand", model="Model:Name*?")
+    stem = build_upload_name_stem(s, "tips<L")
+    # No path separators or other filesystem-unsafe characters may survive -
+    # the stem becomes the remote filename (with .txt appended elsewhere).
+    assert "/" not in stem
+    assert ":" not in stem
+    assert "*" not in stem
+    assert "?" not in stem
+    assert "<" not in stem
+
+
+def test_build_phone_book_name_stem_sanitizes_unsafe_characters() -> None:
+    s = _session(brand="Weird/Brand", model="Model:Name*?", channel_side="L")
+    stem = build_phone_book_name_stem(s, "tips<L")
+    assert "/" not in stem
+    assert ":" not in stem
+    assert "*" not in stem
+    assert "?" not in stem
+    assert "<" not in stem
 
 
 def test_merge_existing_phone_with_string_file_converts_to_list() -> None:
@@ -532,3 +561,124 @@ def test_read_remote_phone_book_invalid_json_raises_read_error() -> None:
     sftp = _FakeReadSFTP(payload=b"not json")
     with pytest.raises(RemotePhoneBookReadError):
         read_remote_phone_book(sftp, remote_path="data/phone_book.json")
+
+
+# --- C1: advisory phone-book lock -------------------------------------------
+
+
+class _FakeLockFile:
+    def __init__(self, store: dict, path: str) -> None:
+        self._store = store
+        self._path = path
+        self._buf = bytearray()
+
+    def __enter__(self) -> "_FakeLockFile":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is None:
+            self._store[self._path] = {
+                "data": bytes(self._buf),
+                "mtime": time_module.time(),
+            }
+        return False
+
+    def write(self, data: bytes) -> None:
+        self._buf.extend(data)
+
+
+class _FakeStat:
+    def __init__(self, st_mtime: float) -> None:
+        self.st_mtime = st_mtime
+
+
+class _FakeLockSFTP:
+    """Fake SFTP client supporting just enough of the paramiko surface for
+    acquire_phone_book_lock/release_phone_book_lock: exclusive-create via
+    file(path, "x"), stat() for mtime inspection, and remove()."""
+
+    def __init__(self) -> None:
+        self.files: dict[str, dict] = {}
+        self.remove_calls: list[str] = []
+        self.file_calls: list[tuple[str, str]] = []
+
+    def file(self, path: str, mode: str) -> _FakeLockFile:
+        self.file_calls.append((path, mode))
+        if mode == "x" and path in self.files:
+            raise OSError(17, "File exists")
+        return _FakeLockFile(self.files, path)
+
+    def stat(self, path: str) -> _FakeStat:
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return _FakeStat(self.files[path]["mtime"])
+
+    def remove(self, path: str) -> None:
+        self.remove_calls.append(path)
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        del self.files[path]
+
+
+_LOCK_PATH = "data/phone_book.json.lock"
+
+
+def test_acquire_phone_book_lock_success_writes_payload_then_release_removes() -> None:
+    sftp = _FakeLockSFTP()
+
+    acquire_phone_book_lock(sftp, _LOCK_PATH)
+
+    assert _LOCK_PATH in sftp.files
+    payload = json.loads(sftp.files[_LOCK_PATH]["data"].decode("utf-8"))
+    assert "username" in payload
+    assert "pid" in payload
+    assert "acquired_at" in payload
+
+    release_phone_book_lock(sftp, _LOCK_PATH)
+    assert _LOCK_PATH not in sftp.files
+
+
+def test_release_phone_book_lock_is_a_no_op_when_already_gone() -> None:
+    sftp = _FakeLockSFTP()
+    # Must not raise even though the lock was never acquired.
+    release_phone_book_lock(sftp, _LOCK_PATH)
+
+
+def test_acquire_phone_book_lock_contention_retries_then_raises(monkeypatch) -> None:
+    sftp = _FakeLockSFTP()
+    # Pre-existing lock with a fresh mtime looks actively held.
+    sftp.files[_LOCK_PATH] = {"data": b"{}", "mtime": time_module.time()}
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        "dms.squiglink.time.sleep", lambda seconds: sleep_calls.append(seconds)
+    )
+
+    with pytest.raises(PhoneBookLockedError):
+        acquire_phone_book_lock(
+            sftp, _LOCK_PATH, retries=3, retry_delay_s=2.0, stale_after_s=120.0
+        )
+
+    assert sleep_calls == [2.0, 2.0, 2.0]
+    # A live (non-stale) lock must never be removed out from under its owner.
+    assert _LOCK_PATH in sftp.files
+    assert _LOCK_PATH not in sftp.remove_calls
+
+
+def test_acquire_phone_book_lock_reclaims_stale_lock(monkeypatch) -> None:
+    sftp = _FakeLockSFTP()
+    sftp.files[_LOCK_PATH] = {"data": b"{}", "mtime": time_module.time() - 500}
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        "dms.squiglink.time.sleep", lambda seconds: sleep_calls.append(seconds)
+    )
+
+    acquire_phone_book_lock(
+        sftp, _LOCK_PATH, retries=3, retry_delay_s=2.0, stale_after_s=120.0
+    )
+
+    # Reclaimed on the first attempt - no sleeping/retrying needed.
+    assert sleep_calls == []
+    assert _LOCK_PATH in sftp.remove_calls
+    assert _LOCK_PATH in sftp.files

@@ -19,12 +19,15 @@ _on_squiglink_succeeded / _on_squiglink_failed, which only write credentials
 in the success slot.
 """
 
+import time as _time
+
 import pytest
 
 from dms.session import SessionData
 from dms.squiglink import (
     HostKeyMismatchError,
     HostKeyUnverifiedError,
+    PhoneBookLockedError,
     RemotePhoneBookInvalidError,
     RemotePhoneBookMissingError,
     RemotePhoneBookReadError,
@@ -40,12 +43,63 @@ class _FakeTransport:
         self.closed = True
 
 
+class _FakeLockFile:
+    """Minimal stand-in for the paramiko SFTPFile handle returned by
+    sftp.file(path, mode) - just enough for acquire_phone_book_lock's
+    write-then-close of the lock payload."""
+
+    def __init__(self, store: dict, path: str) -> None:
+        self._store = store
+        self._path = path
+        self._buf = bytearray()
+
+    def __enter__(self) -> "_FakeLockFile":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is None:
+            self._store[self._path] = {
+                "data": bytes(self._buf),
+                "mtime": _time.time(),
+            }
+        return False
+
+    def write(self, data: bytes) -> None:
+        self._buf.extend(data)
+
+
+class _FakeStat:
+    def __init__(self, st_mtime: float) -> None:
+        self.st_mtime = st_mtime
+
+
 class _FakeSFTP:
     def __init__(self) -> None:
         self.put_calls: list[tuple[str, str]] = []
+        # Backs the advisory phone-book lock (C1): real
+        # acquire_phone_book_lock/release_phone_book_lock run unmocked
+        # against this in most tests below, so it needs just enough of the
+        # paramiko surface (file/stat/remove) to behave like a real lock
+        # file that doesn't exist yet.
+        self.lock_files: dict[str, dict] = {}
 
     def put(self, local_path: str, remote_path: str) -> None:
         self.put_calls.append((local_path, remote_path))
+
+    def file(self, path: str, mode: str) -> _FakeLockFile:
+        if mode == "x" and path in self.lock_files:
+            raise OSError(17, "File exists")
+        return _FakeLockFile(self.lock_files, path)
+
+    def stat(self, path: str) -> _FakeStat:
+        if path not in self.lock_files:
+            raise FileNotFoundError(path)
+        return _FakeStat(self.lock_files[path]["mtime"])
+
+    def remove(self, path: str) -> None:
+        if path not in self.lock_files:
+            raise FileNotFoundError(path)
+        del self.lock_files[path]
 
 
 def _session(brand: str = "Apple", model: str = "AirPods Pro 2") -> SessionData:
@@ -390,3 +444,175 @@ def test_cancel_between_upload_and_phone_book_closes_connection(monkeypatch) -> 
     assert _kinds(events) == ["failed", "finished"]
     assert events[0][1] == "Upload canceled."
     assert transport.closed is True
+
+
+# --- C1: advisory phone-book lock -------------------------------------------
+
+
+def test_sync_phone_book_acquires_lock_before_read_and_releases_after_success(
+    monkeypatch,
+) -> None:
+    transport = _FakeTransport()
+    sftp = _FakeSFTP()
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.open_sftp_session", lambda **_kw: (transport, sftp)
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.acquire_phone_book_lock",
+        lambda _sftp, _path: calls.append("acquire"),
+    )
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.release_phone_book_lock",
+        lambda _sftp, _path: calls.append("release"),
+    )
+
+    def _read(_sftp, _path):
+        calls.append("read")
+        return []
+
+    monkeypatch.setattr("dms.ui.squiglink_worker.read_remote_phone_book", _read)
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.write_remote_phone_book",
+        lambda *_a, **_k: calls.append("write"),
+    )
+
+    worker = SquiglinkUploadWorker(_config(skip_upload=True))
+    events = _collect_signals(worker)
+
+    worker.run()
+
+    # The lock must be held across the whole read-merge-write critical
+    # section: acquired before the read, released only after the write.
+    assert calls == ["acquire", "read", "write", "release"]
+    assert _kinds(events) == ["succeeded", "finished"]
+
+
+def test_phone_book_locked_error_emits_failed_with_its_message(monkeypatch) -> None:
+    transport = _FakeTransport()
+    sftp = _FakeSFTP()
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.open_sftp_session", lambda **_kw: (transport, sftp)
+    )
+
+    def _raise_locked(*_a, **_k):
+        raise PhoneBookLockedError("busy, try again later")
+
+    monkeypatch.setattr("dms.ui.squiglink_worker.acquire_phone_book_lock", _raise_locked)
+    read_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.read_remote_phone_book",
+        lambda *_a, **_k: read_calls.append(1),
+    )
+    release_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.release_phone_book_lock",
+        lambda *_a, **_k: release_calls.append(1),
+    )
+
+    worker = SquiglinkUploadWorker(_config(skip_upload=True))
+    events = _collect_signals(worker)
+
+    worker.run()
+
+    assert _kinds(events) == ["failed", "finished"]
+    assert events[0][1] == "busy, try again later"
+    # Never touched the book, and never attempted to release a lock that was
+    # never actually acquired.
+    assert read_calls == []
+    assert release_calls == []
+
+
+def test_write_failure_mid_way_still_releases_lock(monkeypatch) -> None:
+    transport = _FakeTransport()
+    sftp = _FakeSFTP()
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.open_sftp_session", lambda **_kw: (transport, sftp)
+    )
+    acquire_calls: list[int] = []
+    release_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.acquire_phone_book_lock",
+        lambda *_a, **_k: acquire_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.release_phone_book_lock",
+        lambda *_a, **_k: release_calls.append(1),
+    )
+    monkeypatch.setattr("dms.ui.squiglink_worker.read_remote_phone_book", lambda *_a, **_k: [])
+
+    def _raise_write(*_a, **_k):
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr("dms.ui.squiglink_worker.write_remote_phone_book", _raise_write)
+
+    worker = SquiglinkUploadWorker(_config(skip_upload=True))
+    events = _collect_signals(worker)
+
+    worker.run()
+
+    assert acquire_calls == [1]
+    assert release_calls == [1]  # released even though the write blew up
+    assert _kinds(events) == ["failed", "finished"]
+    assert "phone book update failed" in events[0][1].lower()
+
+
+def test_missing_phone_book_decision_releases_lock_before_closing(monkeypatch) -> None:
+    transport = _FakeTransport()
+    sftp = _FakeSFTP()
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.open_sftp_session", lambda **_kw: (transport, sftp)
+    )
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.acquire_phone_book_lock", lambda *_a, **_k: None
+    )
+    release_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.release_phone_book_lock",
+        lambda *_a, **_k: release_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.read_remote_phone_book",
+        lambda _sftp, _path: (_ for _ in ()).throw(
+            RemotePhoneBookMissingError("missing")
+        ),
+    )
+
+    worker = SquiglinkUploadWorker(_config(skip_upload=True))
+    events = _collect_signals(worker)
+
+    worker.run()
+
+    assert _kinds(events) == ["phone_book_decision_needed", "finished"]
+    # Released at least once on this exit path (explicitly before closing
+    # the transport, and again - harmlessly - via the outer `finally`).
+    assert len(release_calls) >= 1
+    assert transport.closed is True
+
+
+def test_skip_mode_takes_no_lock(monkeypatch) -> None:
+    transport = _FakeTransport()
+    sftp = _FakeSFTP()
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.open_sftp_session", lambda **_kw: (transport, sftp)
+    )
+    acquire_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.acquire_phone_book_lock",
+        lambda *_a, **_k: acquire_calls.append(1),
+    )
+    read_calls: list[int] = []
+    monkeypatch.setattr(
+        "dms.ui.squiglink_worker.read_remote_phone_book",
+        lambda *_a, **_k: read_calls.append(1),
+    )
+
+    worker = SquiglinkUploadWorker(_config(fallback_mode="skip", skip_upload=True))
+    events = _collect_signals(worker)
+
+    worker.run()
+
+    assert acquire_calls == []
+    assert read_calls == []
+    assert _kinds(events) == ["succeeded", "finished"]
+    assert "skipped" in events[0][1].lower()

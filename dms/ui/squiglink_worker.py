@@ -21,15 +21,19 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from dms.session import SessionData
 from dms.squiglink import (
     DATA_UPLOAD_DIR,
+    PHONE_BOOK_LOCK_PATH,
     PHONE_BOOK_REMOTE_PATH,
     HostKeyMismatchError,
     HostKeyUnverifiedError,
+    PhoneBookLockedError,
     RemotePhoneBookInvalidError,
     RemotePhoneBookMissingError,
     RemotePhoneBookReadError,
+    acquire_phone_book_lock,
     merge_phone_book_entry,
     open_sftp_session,
     read_remote_phone_book,
+    release_phone_book_lock,
     write_remote_phone_book,
 )
 
@@ -167,51 +171,80 @@ class SquiglinkUploadWorker(QObject):
         connection and emits `phone_book_decision_needed` so the UI can ask
         the user and relaunch us with `fallback_mode` set and
         `skip_upload=True` (the measurement file upload above already
-        succeeded; it must not be repeated)."""
-        try:
-            phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
-        except RemotePhoneBookReadError as exc:
-            # A transient/read failure is not an invitation to overwrite the
-            # shared phone book with a fresh one - never offer "create
-            # fresh" here, just fail the phone-book step.
-            self.failed.emit(
-                "Phone book update aborted because the remote phone book "
-                f"could not be read: {exc}"
+        succeeded; it must not be repeated).
+
+        The read-merge-write sequence below is a shared-file critical
+        section (concurrent uploads must not interleave their reads and
+        writes), so it is guarded by an advisory remote lock (C1) acquired
+        before the read and released via `finally` on every exit path once
+        acquired. `fallback_mode == "skip"` is the one path that never reads
+        or writes the book at all (a previous attempt already discovered it
+        missing/invalid and the user chose to skip it), so it short-circuits
+        before the lock is even requested.
+        """
+        if cfg.fallback_mode == "skip":
+            self.succeeded.emit(
+                "Measurement uploaded. Phone book update was skipped."
             )
             return
-        except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
-            is_invalid = isinstance(exc, RemotePhoneBookInvalidError)
-            kind = "invalid" if is_invalid else "missing"
-            if cfg.fallback_mode is None:
-                # Close the connection *before* handing control back to the
-                # UI thread, which may leave a modal dialog open for an
-                # indeterminate amount of time while the user decides.
-                self._close_quietly(transport)
-                detail = (
-                    f"The remote phone book exists but is structurally invalid: {exc}"
-                    if is_invalid
-                    else str(exc)
-                )
-                self.phone_book_decision_needed.emit(kind, detail)
-                return
-            if cfg.fallback_mode == "skip":
-                self.succeeded.emit(
-                    "Measurement uploaded. Phone book update was skipped."
-                )
-                return
-            if cfg.fallback_mode == "fail":
-                # Not normally reached - main_window handles "fail" directly
-                # without relaunching the worker - but handled defensively.
-                self.failed.emit(
-                    "Upload canceled because phone book could not be loaded: "
-                    f"{exc}"
-                )
-                return
-            phone_book = []  # fallback_mode == "create"
 
-        merge_phone_book_entry(phone_book, cfg.session, cfg.phone_book_stem)
-        write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
-        self.succeeded.emit("Phone book updated successfully.")
+        try:
+            acquire_phone_book_lock(sftp, PHONE_BOOK_LOCK_PATH)
+        except PhoneBookLockedError as exc:
+            self.failed.emit(str(exc))
+            return
+
+        try:
+            try:
+                phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
+            except RemotePhoneBookReadError as exc:
+                # A transient/read failure is not an invitation to overwrite
+                # the shared phone book with a fresh one - never offer
+                # "create fresh" here, just fail the phone-book step.
+                self.failed.emit(
+                    "Phone book update aborted because the remote phone book "
+                    f"could not be read: {exc}"
+                )
+                return
+            except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
+                is_invalid = isinstance(exc, RemotePhoneBookInvalidError)
+                kind = "invalid" if is_invalid else "missing"
+                if cfg.fallback_mode is None:
+                    # Release the lock while the connection is still live -
+                    # release_phone_book_lock() in the outer `finally` below
+                    # will also fire after the transport is closed, but that
+                    # second attempt is a harmless no-op (the lock is already
+                    # gone). Close the connection *before* handing control
+                    # back to the UI thread, which may leave a modal dialog
+                    # open for an indeterminate amount of time while the user
+                    # decides - the lock must not be held across that wait,
+                    # so if a relaunch is slow to come the stale-lock reclaim
+                    # in acquire_phone_book_lock is the backstop, not this.
+                    release_phone_book_lock(sftp, PHONE_BOOK_LOCK_PATH)
+                    self._close_quietly(transport)
+                    detail = (
+                        f"The remote phone book exists but is structurally invalid: {exc}"
+                        if is_invalid
+                        else str(exc)
+                    )
+                    self.phone_book_decision_needed.emit(kind, detail)
+                    return
+                if cfg.fallback_mode == "fail":
+                    # Not normally reached - main_window handles "fail"
+                    # directly without relaunching the worker - but handled
+                    # defensively.
+                    self.failed.emit(
+                        "Upload canceled because phone book could not be loaded: "
+                        f"{exc}"
+                    )
+                    return
+                phone_book = []  # fallback_mode == "create"
+
+            merge_phone_book_entry(phone_book, cfg.session, cfg.phone_book_stem)
+            write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
+            self.succeeded.emit("Phone book updated successfully.")
+        finally:
+            release_phone_book_lock(sftp, PHONE_BOOK_LOCK_PATH)
 
     @staticmethod
     def _close_quietly(closeable) -> None:

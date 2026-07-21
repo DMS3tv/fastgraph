@@ -1,20 +1,25 @@
 import base64
 import errno
+import getpass
 import json
 import os
 import re
 import socket
+import time
 import uuid
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import paramiko
 
+from dms.export import safe_filename
 from dms.session import SessionData
 
 
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
+PHONE_BOOK_LOCK_PATH = PHONE_BOOK_REMOTE_PATH + ".lock"
 DATA_UPLOAD_DIR = "data"
 DEFAULT_SFTP_TIMEOUT = 10.0
 
@@ -68,6 +73,14 @@ class RemotePhoneBookReadError(Exception):
     pass
 
 
+class PhoneBookLockedError(Exception):
+    """Raised when the shared remote phone book's advisory lock could not be
+    acquired - another upload appears to be in the middle of its own
+    read-merge-write cycle and retrying was exhausted."""
+
+    pass
+
+
 def build_upload_name_stem(session: SessionData, name_modifier: str) -> str:
     base = f"{session.brand.strip()} {session.model.strip()}".strip()
     side = (session.channel_side or "").strip().upper()
@@ -78,7 +91,7 @@ def build_upload_name_stem(session: SessionData, name_modifier: str) -> str:
         modifier = modifier[:-4].strip()
     if not modifier:
         modifier = side
-    return f"{base} {modifier}".strip()
+    return safe_filename(f"{base} {modifier}".strip())
 
 
 def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
@@ -87,12 +100,12 @@ def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
     if modifier.lower().endswith(".txt"):
         modifier = modifier[:-4].strip()
     if not modifier:
-        return base
+        return safe_filename(base)
     # Phone-book entries should not carry terminal side/unit tags such as L, R, L1, R2.
     modifier = re.sub(r"(?:^|\s+)[LR](?:\d+)?$", "", modifier, flags=re.IGNORECASE).strip()
     if not modifier:
-        return base
-    return f"{base} {modifier}".strip()
+        return safe_filename(base)
+    return safe_filename(f"{base} {modifier}".strip())
 
 
 def _fingerprint_from_key_bytes(key_bytes: bytes) -> str:
@@ -223,6 +236,97 @@ def upload_export_sftp(
             sftp.close()
     finally:
         transport.close()
+
+
+def _write_lock_payload(sftp: paramiko.SFTPClient, lock_path: str) -> None:
+    payload = json.dumps(
+        {
+            "username": getpass.getuser(),
+            "pid": os.getpid(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).encode("utf-8")
+    # "x" is SFTP's O_CREAT|O_EXCL - the create only succeeds if the file did
+    # not already exist, which is what makes this usable as a lock.
+    with sftp.file(lock_path, "x") as f:
+        f.write(payload)
+
+
+def acquire_phone_book_lock(
+    sftp: paramiko.SFTPClient,
+    lock_path: str = PHONE_BOOK_LOCK_PATH,
+    *,
+    retries: int = 3,
+    retry_delay_s: float = 2.0,
+    stale_after_s: float = 120.0,
+) -> None:
+    """Acquire an advisory lock on the shared remote phone book by
+    exclusively creating `lock_path`.
+
+    This is advisory only: it depends on every writer going through this same
+    path, but it stops two concurrent Fastgraph uploads from interleaving
+    their read-merge-write cycles and silently dropping one upload's entry.
+
+    On contention (the lock file already exists), a single stale-lock
+    reclaim is attempted first: if the existing lock's mtime is older than
+    `stale_after_s`, it is removed and creation is retried immediately
+    (without consuming a retry). Otherwise, the caller sleeps
+    `retry_delay_s` and retries, up to `retries` times, before raising
+    `PhoneBookLockedError`.
+    """
+    remaining = retries
+    stale_reclaim_used = False
+    while True:
+        try:
+            _write_lock_payload(sftp, lock_path)
+            return
+        except (OSError, paramiko.SSHException):
+            pass  # lock file already exists (or another transient failure)
+
+        if not stale_reclaim_used:
+            try:
+                lock_stat = sftp.stat(lock_path)
+            except (OSError, paramiko.SSHException):
+                # The lock vanished between our failed create and this stat
+                # (the other uploader just released it) - retry right away,
+                # this doesn't count as a "stale" reclaim.
+                continue
+
+            # Server clock skew means st_mtime is not directly comparable to
+            # our local clock with confidence - we only ever treat this as
+            # a conservative *lower bound* on the lock's age (if our clocks
+            # disagree, the lock might really be older or younger than this
+            # says). Erring towards "not stale yet" just costs a retry;
+            # erring towards "stale" could steal a lock that is still live,
+            # so stale reclaim is only attempted once per call and only when
+            # the age comfortably exceeds stale_after_s.
+            age_s = time.time() - lock_stat.st_mtime
+            if age_s > stale_after_s:
+                stale_reclaim_used = True
+                try:
+                    sftp.remove(lock_path)
+                except (OSError, paramiko.SSHException):
+                    pass
+                continue
+
+        if remaining <= 0:
+            raise PhoneBookLockedError(
+                "Another upload is currently updating the shared phone book "
+                "— please try again in a minute."
+            )
+        remaining -= 1
+        time.sleep(retry_delay_s)
+
+
+def release_phone_book_lock(sftp: paramiko.SFTPClient, lock_path: str) -> None:
+    """Best-effort release of a lock acquired via `acquire_phone_book_lock`.
+    Always safe to call, including when the lock is already gone (e.g. it
+    went stale and was reclaimed by someone else) or the connection is no
+    longer usable."""
+    try:
+        sftp.remove(lock_path)
+    except Exception:
+        pass
 
 
 def read_remote_phone_book(

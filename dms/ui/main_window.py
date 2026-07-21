@@ -11,6 +11,7 @@ import json
 import copy
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import numpy as np
 import sounddevice as sd
@@ -106,7 +107,11 @@ from dms.rnd.models import (
     measurement_session_data,
     session_snapshot,
 )
-from dms.secure_store import decrypt_credentials, encrypt_credentials
+from dms.secure_store import (
+    CredentialDecryptionError,
+    decrypt_credentials,
+    encrypt_credentials,
+)
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
@@ -2604,6 +2609,15 @@ class MainWindow(QMainWindow):
     def _open_update_url(self) -> None:
         if not self._pending_update_url:
             return
+        scheme = urlparse(self._pending_update_url).scheme
+        if scheme not in {"http", "https"}:
+            self._log_event(
+                "WARNING",
+                "update",
+                "Refused to open update release URL with disallowed scheme",
+                url=self._pending_update_url,
+            )
+            return
         QDesktopServices.openUrl(QUrl(self._pending_update_url))
 
     def _apply_state_ui(self) -> None:
@@ -4487,7 +4501,16 @@ class MainWindow(QMainWindow):
 
         self._log_event("INFO", "upload", "Squiglink upload requested", host=host, port=port)
 
-        saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
+        try:
+            saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
+        except CredentialDecryptionError:
+            saved = None
+            self._log_event(
+                "WARNING",
+                "upload",
+                "Saved Squiglink credentials could not be decrypted (machine or "
+                "username changed?) — enter them again",
+            )
         remember_saved = bool(self._settings.get("squiglink_remember_credentials"))
         auth = SquiglinkAuthDialog(
             self,

@@ -737,7 +737,6 @@ class MainWindow(QMainWindow):
         self._active_sweep_worker: Optional[SweepWorker] = None
         self._pass_fail_dialog: Optional[PassFailDialog] = None
         self._rnd_review_dialog: Optional[RnDReviewDialog] = None
-        self._rnd_sweep_active = False
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
@@ -2674,6 +2673,11 @@ class MainWindow(QMainWindow):
         self._start_next_sweep()
 
     def _start_next_sweep(self) -> None:
+        if self._sweep_thread is not None:
+            self._log_event(
+                "WARNING", "measurement", "Sweep already running, ignoring start request"
+            )
+            return
         if not self._queue_active():
             self._state = AppState.IDLE
             self._apply_state_ui()
@@ -3099,11 +3103,15 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("R&D measurement canceled due to high ambient level.")
                 return
 
-        self._rnd_sweep_active = True
         self._current_sweep_attempts = 0
         self._start_rnd_sweep()
 
     def _start_rnd_sweep(self) -> None:
+        if self._sweep_thread is not None:
+            self._log_event(
+                "WARNING", "rnd", "Sweep already running, ignoring start request"
+            )
+            return
         self._current_sweep_attempts += 1
         self._state = AppState.SWEEPING
         self._apply_state_ui()
@@ -3220,11 +3228,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if choice == QMessageBox.StandardButton.Yes:
-                self._state = AppState.IDLE
-                self._apply_state_ui()
                 QTimer.singleShot(150, self._start_rnd_sweep)
                 return
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
@@ -3302,7 +3307,6 @@ class MainWindow(QMainWindow):
         )
         self._rnd_widget.add_measurement(measurement)
         self._pending_curve = None
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(100)
@@ -3317,7 +3321,6 @@ class MainWindow(QMainWindow):
         self._abort_active_sweep()
         self._close_rnd_review_dialog()
         self._pending_curve = None
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
@@ -4604,6 +4607,12 @@ class MainWindow(QMainWindow):
             pass
 
         try:
+            if self._sweep_thread is not None and self._sweep_thread.isRunning():
+                self._sweep_thread.wait(3000)
+        except Exception:
+            pass
+
+        try:
             self._level_monitor.stop()
         except Exception:
             pass
@@ -4611,7 +4620,7 @@ class MainWindow(QMainWindow):
         try:
             if self._update_check_thread is not None and self._update_check_thread.isRunning():
                 self._update_check_thread.quit()
-                self._update_check_thread.wait(500)
+                self._update_check_thread.wait(4500)
         except Exception:
             pass
 

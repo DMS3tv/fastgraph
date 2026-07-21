@@ -20,6 +20,9 @@ def parse_update_feed(url: str, timeout: float = 3.5) -> UpdateInfo:
     with urlopen(url, timeout=timeout) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
+    if not isinstance(payload, dict):
+        raise ValueError("Update feed must decode to a JSON object.")
+
     version = str(payload.get("version", "")).strip()
     release_url = str(payload.get("url", "")).strip()
     summary = str(payload.get("summary", "")).strip()

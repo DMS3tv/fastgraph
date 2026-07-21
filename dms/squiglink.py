@@ -1,5 +1,8 @@
+import errno
 import json
+import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,14 @@ class RemotePhoneBookMissingError(RemotePhoneBookError):
 
 
 class RemotePhoneBookInvalidError(RemotePhoneBookError):
+    pass
+
+
+class RemotePhoneBookReadError(Exception):
+    """Raised when the remote phone book could not be read for a reason other
+    than the file genuinely being missing (network/permission errors, or a
+    payload that fails to parse as JSON)."""
+
     pass
 
 
@@ -83,15 +94,20 @@ def read_remote_phone_book(
     try:
         with sftp.file(remote_path, "r") as f:
             payload = f.read().decode("utf-8")
-    except FileNotFoundError as exc:
-        raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
-    except OSError as exc:
-        raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
+    except (OSError, paramiko.SSHException) as exc:
+        # paramiko surfaces a missing SFTP path as FileNotFoundError, or as a
+        # plain OSError/IOError with errno set to ENOENT. Anything else (a
+        # dropped connection, permission denied, etc.) is NOT "missing" and
+        # must not be treated as an invitation to create a fresh phone book.
+        is_missing = isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == errno.ENOENT
+        if is_missing:
+            raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
+        raise RemotePhoneBookReadError(f"Failed to read remote phone book: {exc}") from exc
 
     try:
         parsed = json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise RemotePhoneBookInvalidError("Remote phone book is invalid JSON.") from exc
+        raise RemotePhoneBookReadError(f"Remote phone book is invalid JSON: {exc}") from exc
 
     if not isinstance(parsed, list):
         raise RemotePhoneBookInvalidError("Remote phone book JSON must be a list.")
@@ -167,11 +183,41 @@ def merge_phone_book_entry(
     return phone_book
 
 
+def _remote_temp_path(remote_path: str) -> str:
+    """Build a sibling temp-file name for `remote_path` (POSIX-style remote
+    paths; do not use pathlib.Path, which applies local/Windows semantics)."""
+    suffix = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    return f"{remote_path}.tmp-{suffix}"
+
+
 def write_remote_phone_book(
     sftp: paramiko.SFTPClient,
     phone_book: list[dict[str, Any]],
     remote_path: str = PHONE_BOOK_REMOTE_PATH,
 ) -> None:
+    """Write the shared remote phone book without ever truncating the live
+    file in place. The payload is written to a temp file in the same remote
+    directory and then atomically swapped into place, so a dropped connection
+    or interrupted write can never leave `remote_path` half-written."""
     payload = json.dumps(phone_book, indent=4, ensure_ascii=False) + "\n"
-    with sftp.file(remote_path, "w") as f:
-        f.write(payload.encode("utf-8"))
+    tmp_path = _remote_temp_path(remote_path)
+    try:
+        with sftp.file(tmp_path, "w") as f:
+            f.write(payload.encode("utf-8"))
+
+        try:
+            sftp.posix_rename(tmp_path, remote_path)
+        except (OSError, paramiko.SSHException):
+            # Server doesn't support the POSIX-rename extension (or it failed
+            # for some other reason) - fall back to remove-then-rename.
+            try:
+                sftp.remove(remote_path)
+            except FileNotFoundError:
+                pass
+            sftp.rename(tmp_path, remote_path)
+    except Exception:
+        try:
+            sftp.remove(tmp_path)
+        except OSError:
+            pass
+        raise

@@ -44,7 +44,7 @@ from dms.rnd.models import (
     group_variation,
 )
 from dms.rnd.photos import RnDPhotoStore
-from dms.hrtf import HRTFCurve
+from dms.hrtf import get_hrtf_curve
 from dms.theme import LIGHT, normalize_theme, theme_colors
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
@@ -548,6 +548,7 @@ class RnDWidget(QWidget):
         self._target_offset_spin.setSuffix(" dB")
         self._target_offset_spin.setFixedWidth(92)
         self._target_offset_spin.setValue(self.session.target_offset_db)
+        self._target_offset_spin.setKeyboardTracking(False)
         self._target_offset_spin.valueChanged.connect(self._set_target_offset)
         view_controls.addWidget(self._target_offset_spin)
         self._target_label = QLabel("No target")
@@ -964,6 +965,7 @@ class RnDWidget(QWidget):
         spin.setSuffix(" dB")
         spin.setFixedWidth(88)
         spin.setValue(float(value))
+        spin.setKeyboardTracking(False)
         spin.valueChanged.connect(lambda new_value: callback(float(new_value)))
         layout.addWidget(spin)
         return container
@@ -1680,7 +1682,7 @@ class RnDWidget(QWidget):
         hrtf_path = self.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
         if hrtf_path:
             try:
-                mag = HRTFCurve(hrtf_path).apply(measurement.freqs, mag)
+                mag = get_hrtf_curve(hrtf_path).apply(measurement.freqs, mag)
             except Exception:
                 self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
         elif measurement.hrtf_path or measurement.hrtf_name:

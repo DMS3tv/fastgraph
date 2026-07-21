@@ -3968,7 +3968,29 @@ class MainWindow(QMainWindow):
         if path is None:
             return
         freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
-        hrtf = HRTFCurve(hrtf_path) if compensated else None
+        hrtf = None
+        if compensated:
+            from dms.hrtf import get_hrtf_curve
+
+            try:
+                hrtf = get_hrtf_curve(hrtf_path)
+            except Exception as exc:
+                self._log_event(
+                    "WARNING",
+                    "rnd",
+                    "R&D export HRTF failed to load",
+                    path=hrtf_path,
+                    error=str(exc),
+                )
+                QMessageBox.warning(
+                    self,
+                    "HRTF Load Error",
+                    "Could not load the HRTF file needed to compensate this export "
+                    f"({Path(hrtf_path).name}):\n\n{exc}\n\n"
+                    "Export cancelled rather than writing a file that would be "
+                    "labeled as HRTF-compensated without the correction applied.",
+                )
+                return
         export_curve(
             freqs=freqs,
             mag_db=mag,

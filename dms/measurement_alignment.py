@@ -34,6 +34,7 @@ class MeasurementFailureReason:
     END_MARKER_UNVERIFIED = "end_marker_unverified"
     LOW_SNR = "low_snr"
     INCOMPLETE_SWEEP = "incomplete_sweep"
+    INVALID_RECORDING = "invalid_recording"
 
 
 class MeasurementWarningReason:
@@ -303,6 +304,7 @@ def is_retryable_timing_failure(
             MeasurementFailureReason.END_MARKER_UNVERIFIED,
             MeasurementFailureReason.LOW_SNR,
             MeasurementFailureReason.INCOMPLETE_SWEEP,
+            MeasurementFailureReason.INVALID_RECORDING,
         }
 
     msg = message.lower()
@@ -614,9 +616,9 @@ def find_start_alignment(
 
     max_extra_latency_s = 2.0 if str(settings.latency).lower() == "high" else 1.2
     start_search_radius = int(round(max_extra_latency_s * layout.fs))
-    start_search_lo = max(0, layout.excitation_start_sample - start_search_radius)
+    start_search_lo = max(0, layout.sweep_start_sample - start_search_radius)
     start_search_hi = min(
-        len(corr_valid), layout.excitation_start_sample + start_search_radius
+        len(corr_valid), layout.sweep_start_sample + start_search_radius
     )
     if start_search_hi - start_search_lo < 32:
         start_search_lo = 0
@@ -675,7 +677,7 @@ def find_start_alignment(
                 if marker_locked_start <= max_start_idx:
                     start_idx = marker_locked_start
                     marker_locked_candidate = int(marker_locked_start)
-                start_conf = max(start_conf, min_start_conf)
+                    start_conf = max(start_conf, min_start_conf)
 
     if start_conf < min_start_conf:
         start_result = StartAlignmentResult(
@@ -834,6 +836,7 @@ def _bluetooth_sweep_fallback_result(
         sweep_rec,
         start_idx,
         layout,
+        marker_stretch=fallback_end_result.marker_template_stretch or 1.0,
     )
     if len(sweep_ref) == len(sweep_rec):
         rec_norm = float(np.sqrt(np.sum(np.square(sweep_rec))))
@@ -1129,6 +1132,7 @@ def _estimate_bluetooth_fallback_snr_db(
     aligned_recording: np.ndarray,
     start_idx: int,
     layout: MeasurementSignalLayout,
+    marker_stretch: float = 1.0,
 ) -> float:
     noise_win_n = int(round(0.12 * layout.fs))
     rec = np.asarray(rec_mono)
@@ -1139,13 +1143,16 @@ def _estimate_bluetooth_fallback_snr_db(
         - len(layout.start_marker),
     )
     pre_noise = rec[max(0, pre_noise_stop - noise_win_n):pre_noise_stop]
+    end_marker_2_len = int(
+        round(len(getattr(layout, "end_marker_2", layout.end_marker)) * marker_stretch)
+    )
     post_noise_start = (
         int(start_idx)
         + layout.sweep_samples
         + layout.end_marker_gap_samples
         + len(layout.end_marker)
         + layout.end_marker_pair_gap_samples
-        + len(getattr(layout, "end_marker_2", layout.end_marker))
+        + end_marker_2_len
     )
     post_noise = rec[
         post_noise_start:min(len(rec), post_noise_start + noise_win_n)
@@ -1175,6 +1182,13 @@ def align_recording_to_layout(
         _raise_alignment_error(
             "Recording shorter than expected.",
             MeasurementFailureReason.SHORT_RECORDING,
+            layout,
+            settings,
+        )
+    if not np.isfinite(rec).all():
+        _raise_alignment_error(
+            "Recording contains invalid samples — check the input device.",
+            MeasurementFailureReason.INVALID_RECORDING,
             layout,
             settings,
         )
@@ -1402,10 +1416,16 @@ def align_recording_to_layout(
             marker_template_stretch=end_result.marker_template_stretch,
         )
 
+    marker_2_stretch = end_result.marker_template_stretch
+    if marker_2_stretch is None:
+        marker_2_stretch = 1.0
+    marker_2_len = int(
+        round(len(getattr(layout, "end_marker_2", layout.end_marker)) * marker_2_stretch)
+    )
     snr_db = estimate_snr_db(
         rec,
         sweep_rec,
-        end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
+        end_result.marker_2_start + marker_2_len,
         end_result.selected_sweep_start,
         layout.fs,
     )

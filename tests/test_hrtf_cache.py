@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from dms.hrtf import HRTFCurve, get_hrtf_curve, _hrtf_curve_cache
@@ -96,6 +97,32 @@ def test_repeated_edits_do_not_grow_cache_per_path(tmp_path: Path) -> None:
         get_hrtf_curve(str(path))
 
     assert len(_hrtf_curve_cache) == 1
+
+
+def test_evaluate_below_file_range_holds_low_edge_magnitude(tmp_path: Path) -> None:
+    # M1: out-of-range frequencies below the file's lowest row must hold the
+    # low-edge magnitude (edge-hold) instead of snapping to 0 dB, which would
+    # otherwise create a step discontinuity at the file's coverage boundary.
+    path = tmp_path / "hrtf.txt"
+    _write_hrtf(path)
+    curve = HRTFCurve(str(path))
+
+    below = curve.evaluate(np.array([5.0]))
+
+    assert below[0] == pytest.approx(0.0)  # mags[0], the 20 Hz row
+
+
+def test_evaluate_above_file_range_holds_high_edge_magnitude(tmp_path: Path) -> None:
+    # M1: out-of-range frequencies above the file's highest row must hold the
+    # high-edge magnitude (edge-hold), matching processing.py's
+    # compute_rms_average edge-hold behavior.
+    path = tmp_path / "hrtf.txt"
+    _write_hrtf(path)
+    curve = HRTFCurve(str(path))
+
+    above = curve.evaluate(np.array([30000.0]))
+
+    assert above[0] == pytest.approx(2.0)  # mags[-1], the 20000 Hz row
 
 
 def test_missing_file_raises_like_direct_construction(tmp_path: Path) -> None:

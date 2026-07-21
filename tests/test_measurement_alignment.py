@@ -11,6 +11,7 @@ from dms.measurement_alignment import (
     StartAlignmentResult,
     align_recording_to_layout,
     find_end_markers,
+    find_start_alignment,
     format_diagnostics_summary,
     is_retryable_timing_failure,
 )
@@ -156,6 +157,55 @@ def test_bluetooth_high_latency_recording_can_lock_to_start_marker() -> None:
     assert result.start.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.start.start_marker_confidence >= 3.5
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_start_marker_lock_rejected_by_bounds_check_does_not_boost_confidence() -> None:
+    # M2: `start_conf = max(start_conf, min_start_conf)` must only apply when
+    # the marker lock passes the `marker_locked_start <= max_start_idx` bounds
+    # check. This builds a short BT-mode recording where the start marker is
+    # detected strongly (a valid lock candidate on its own) but sits too close
+    # to the end of the recording to leave room for a full sweep window, so
+    # marker_locked_start > max_start_idx and the lock must be rejected. Before
+    # the fix, the boost applied anyway and let the low raw correlation
+    # confidence slip past the low-confidence gate; after the fix, the gate
+    # fires on the unboosted (low) confidence.
+    fs = 8_000
+    sweep = _test_sweep(2_048)
+    layout = build_measurement_layout(
+        sweep=sweep,
+        fs=fs,
+        pre_silence_s=0.08,
+        post_silence_s=0.16,
+        bluetooth_headphone_mode=True,
+    )
+
+    rng = np.random.default_rng(99)
+    # Shorter than sweep_n + the marker search radius, so the marker search
+    # window covers the whole recording regardless of where the (noise-only)
+    # sweep-correlation candidate lands.
+    total_len = int(round(0.3 * fs))
+    rec = rng.normal(0.0, 0.02, total_len).astype(np.float32)
+    marker_pos = total_len - len(layout.start_marker) - 50
+    _write_at(rec, marker_pos, (4.0 * layout.start_marker).astype(np.float32))
+
+    settings = AlignmentSettings(
+        bluetooth_headphone_mode=True,
+        start_alignment_confidence_min=9.0,
+    )
+
+    with pytest.raises(
+        MeasurementAlignmentError, match="Low start-alignment confidence"
+    ) as exc:
+        find_start_alignment(rec, sweep, layout, settings)
+
+    diagnostics = exc.value.diagnostics
+    # The marker itself matched strongly (a real lock candidate)...
+    assert diagnostics.start_marker_confidence >= 3.5
+    # ...but the bounds check correctly rejected using it as the start...
+    assert diagnostics.marker_locked_candidate is None
+    # ...so the reported confidence must be the raw (unboosted) value, well
+    # below the 3.0 floor the (buggy) boost would have produced.
+    assert diagnostics.start_confidence < 3.0
 
 
 def test_low_start_confidence_raises_existing_message() -> None:
@@ -497,6 +547,26 @@ def test_short_recording_raises_existing_message() -> None:
         )
 
 
+def test_nan_laced_recording_raises_invalid_recording_instead_of_propagating() -> None:
+    # M3: NaN samples make rejection comparisons evaluate False (NaN-comparison
+    # semantics), so without an explicit finite-ness guard a NaN-laced
+    # recording could otherwise slip through as a "successful" NaN-laden
+    # result instead of being rejected outright.
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+    rec[layout.sweep_start_sample + 10] = np.nan
+
+    with pytest.raises(
+        MeasurementAlignmentError, match="invalid samples"
+    ) as exc:
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert exc.value.reason == MeasurementFailureReason.INVALID_RECORDING
+    assert is_retryable_timing_failure(
+        exc.value.message, exc.value.reason
+    ) is True
+
+
 def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
@@ -775,10 +845,20 @@ def test_truncated_sweep_window_still_fails() -> None:
     trunc_at = delay + layout.sweep_end_sample - int(round(0.05 * layout.fs))
     rec = rec[:trunc_at]
 
+    # M2: this recording is deliberately 0.05*fs short of the room a full
+    # sweep window needs past the true onset, which is exactly the
+    # marker-locked-start-exceeds-max_start_idx bounds-rejection geometry.
+    # Before the M2 fix, the confidence boost applied despite that rejection
+    # and let a bogus start position slip past the start gate, so this test
+    # only ever observed the downstream end-marker/timing failures. With the
+    # fix, the (correct, unboosted) low raw confidence is now what's reported
+    # -- also a legitimate "still fails" outcome for a recording that
+    # genuinely cannot support a full sweep window.
     with pytest.raises(
         ValueError,
         match=(
-            "Low end-marker confidence|Unable to verify end marker timing|"
+            "Low start-alignment confidence|Low end-marker confidence|"
+            "Unable to verify end marker timing|"
             "Aligned recording shorter than expected|Timing drift too large"
         ),
     ):

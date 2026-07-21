@@ -13,8 +13,15 @@ class HRTFCurve:
         freqs, mags = _load_hrtf_file(path)
         self.freqs = freqs
         self.mags = mags
+        # freqs/mags are sorted ascending by load_two_column_txt_curve, so
+        # freqs[0]/freqs[-1] and mags[0]/mags[-1] are the low/high edges of the
+        # file's coverage. Edge-hold out-of-range frequencies (matching
+        # processing.py's compute_rms_average) instead of snapping to 0 dB,
+        # which would otherwise create a step discontinuity at the file's
+        # coverage boundary.
         self._interp = interp1d(
-            freqs, mags, kind="linear", bounds_error=False, fill_value=0.0
+            freqs, mags, kind="linear", bounds_error=False,
+            fill_value=(mags[0], mags[-1]),
         )
 
     def evaluate(self, freqs_hz: np.ndarray) -> np.ndarray:

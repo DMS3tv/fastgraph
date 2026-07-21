@@ -3,6 +3,7 @@ Audio engine: device enumeration, level monitoring, sweep play/record.
 Thread-safe; all callbacks communicate via Qt signals.
 """
 
+import logging
 import time
 import threading
 import os
@@ -11,7 +12,7 @@ from typing import Any, Optional, Callable
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from dms.measurement_alignment import (
     AlignmentSettings,
@@ -19,6 +20,8 @@ from dms.measurement_alignment import (
     align_recording_to_layout,
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +291,16 @@ def device_channel_count(device: Any, kind: str = "input") -> int:
 class LevelMonitor(QObject):
     level_updated = pyqtSignal(float)  # RMS in dBFS (-inf … 0)
     error_occurred = pyqtSignal(str)
+    # Emitted when the InputStream's finished_callback fires without a
+    # matching stop() request (e.g. device unplugged mid-stream).
+    stopped_unexpectedly = pyqtSignal(str)
+
+    # Throttle level_updated emission so the real-time PortAudio callback
+    # never blocks on Qt signal delivery more often than this. The UI only
+    # samples _last_level_dbfs every _METER_UPDATE_MS (140ms, see
+    # main_window.py), so a 50ms emission cadence is well under the UI's
+    # sampling rate and produces no visible difference in meter behavior.
+    _EMIT_INTERVAL_S = 0.05
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -295,7 +308,17 @@ class LevelMonitor(QObject):
         self._device: Optional[int] = None
         self._channel: int = 0
         self._running = False
+        self._stop_requested = False
         self._lock = threading.Lock()
+
+        # Config snapshot read by _callback WITHOUT locking. These are only
+        # ever written from start()/stop() (main-thread calls); plain attribute
+        # reads/writes are GIL-atomic, so the audio callback can read them
+        # safely without taking self._lock (which would risk audio glitches/
+        # priority inversion on a real-time callback thread).
+        self._cb_channel: int = 0
+        self._cb_running: bool = False
+        self._last_emit_time: float = 0.0
 
     def start(
         self,
@@ -310,6 +333,9 @@ class LevelMonitor(QObject):
             self._device = device_index
             self._channel = channel_index
             self._running = True
+            self._stop_requested = False
+        self._cb_channel = channel_index
+        self._last_emit_time = 0.0
         try:
             dev = device_by_index(device_index, kind="input")
             if dev is None:
@@ -332,14 +358,18 @@ class LevelMonitor(QObject):
                 finished_callback=self._on_finished,
                 latency="low",
             )
+            self._cb_running = True
             self._stream.start()
         except Exception as e:
             self._running = False
+            self._cb_running = False
             self.error_occurred.emit(f"Level monitor error: {e}")
 
     def stop(self) -> None:
         with self._lock:
             self._running = False
+            self._stop_requested = True
+        self._cb_running = False
         stream = self._stream
         self._stream = None
         if stream is not None:
@@ -351,20 +381,99 @@ class LevelMonitor(QObject):
 
     def _callback(self, indata: np.ndarray, frames: int,
                   time_info, status) -> None:
-        with self._lock:
-            if not self._running:
-                return
-            ch = min(self._channel, indata.shape[1] - 1)
+        # Lock-free: reads only the GIL-atomic snapshot attrs set by start()/
+        # stop(). Do not take self._lock here — this runs on PortAudio's
+        # real-time callback thread.
+        if not self._cb_running:
+            return
+        ch = min(self._cb_channel, indata.shape[1] - 1)
         mono = indata[:, ch]
         rms = float(np.sqrt(np.mean(mono ** 2)))
         if rms > 0:
             db = 20.0 * np.log10(rms)
         else:
             db = -120.0
+
+        now = time.monotonic()
+        if now - self._last_emit_time < self._EMIT_INTERVAL_S:
+            return
+        self._last_emit_time = now
         self.level_updated.emit(db)
 
     def _on_finished(self) -> None:
-        pass
+        self._cb_running = False
+        with self._lock:
+            stop_requested = self._stop_requested
+        if not stop_requested:
+            self.stopped_unexpectedly.emit(
+                "Level monitor stream stopped unexpectedly."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Device poller — persistent background enumeration, off the UI thread
+# ---------------------------------------------------------------------------
+
+class DevicePollWorker(QObject):
+    """Persistent device-enumeration poller.
+
+    Mirrors the moveToThread/started-signal wiring used for
+    ``UpdateCheckWorker`` in ``dms.update_checker``, but instead of running
+    once, it owns its own interval QTimer (created inside ``start()``, which
+    runs on the worker thread via ``QThread.started``) and only emits
+    ``devices_changed`` when the enumerated device list actually differs
+    from the previous poll. This keeps blocking ``sd.query_devices()`` calls
+    (via get_output_devices/get_input_devices) off the UI thread.
+
+    Because this worker is single-threaded (its QTimer fires on its own
+    thread's event loop), a poll can never re-enter while a previous poll is
+    still running: the timer's next timeout is just another event on that
+    same thread's queue and won't be dispatched until poll_once() returns.
+    """
+
+    devices_changed = pyqtSignal(list, list)  # output_devices, input_devices (full descriptors)
+
+    def __init__(self, interval_ms: int = 1500, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._interval_ms = int(interval_ms)
+        self._timer: Optional[QTimer] = None
+        self._last_output_signature: Optional[list] = None
+        self._last_input_signature: Optional[list] = None
+
+    def start(self) -> None:
+        """Start the internal poll timer. Connect to QThread.started."""
+        if self._timer is not None:
+            return
+        self._timer = QTimer()
+        self._timer.setInterval(self._interval_ms)
+        self._timer.timeout.connect(self.poll_once)
+        self._timer.start()
+
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    @staticmethod
+    def _signature(devices: list[dict[str, Any]]) -> list[tuple[int, str, int]]:
+        return [
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
+            for d in devices
+        ]
+
+    def poll_once(self) -> None:
+        out_devices = get_output_devices()
+        in_devices = get_input_devices()
+        out_signature = self._signature(out_devices)
+        in_signature = self._signature(in_devices)
+        if (
+            out_signature == self._last_output_signature
+            and in_signature == self._last_input_signature
+        ):
+            return
+        self._last_output_signature = out_signature
+        self._last_input_signature = in_signature
+        self.devices_changed.emit(out_devices, in_devices)
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +511,8 @@ class SweepWorker(QObject):
         start_alignment_confidence_min: float = 9.0,
         end_marker_confidence_min: float = 7.0,
         timing_drift_max_ms: float = 35.0,
+        snr_min_db: float = 6.0,
+        sweep_coverage_min: float = 0.05,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -412,6 +523,7 @@ class SweepWorker(QObject):
                 output_device_label, input_device_label,
                 bluetooth_headphone_mode,
                 start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+                snr_min_db, sweep_coverage_min,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -423,6 +535,7 @@ class SweepWorker(QObject):
         fs, buffer_size, pre_silence, post_silence, latency,
         output_device_label, input_device_label, bluetooth_headphone_mode,
         start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+        snr_min_db: float = 6.0, sweep_coverage_min: float = 0.05,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)
@@ -489,9 +602,11 @@ class SweepWorker(QObject):
             time.sleep(0.05)
 
         try:
-            sd.wait()
-        except Exception:
-            pass
+            status = sd.wait()
+            if status:
+                logger.warning("sd.wait() reported stream status: %s", status)
+        except Exception as e:
+            logger.warning("sd.wait() raised: %s", e)
 
         self.progress.emit(1.0)
 
@@ -508,6 +623,8 @@ class SweepWorker(QObject):
                     start_alignment_confidence_min=start_alignment_confidence_min,
                     end_marker_confidence_min=end_marker_confidence_min,
                     timing_drift_max_ms=timing_drift_max_ms,
+                    snr_min_db=snr_min_db,
+                    sweep_coverage_min=sweep_coverage_min,
                 ),
             )
         except MeasurementAlignmentError as exc:

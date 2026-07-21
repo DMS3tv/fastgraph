@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dms.file_io import atomic_write_json
 from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
 
 
@@ -37,12 +38,15 @@ _DEFAULTS: dict[str, Any] = {
     "start_alignment_confidence_min": 9.0,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,
+    "snr_min_db": 6.0,
+    "sweep_coverage_min": 0.05,
     "update_check_enabled": True,
     "update_feed_url": "",
     "squiglink_host": "sftp.squig.link",
     "squiglink_port": 2022,
     "squiglink_remember_credentials": False,
     "squiglink_credentials_encrypted": None,
+    "squiglink_host_keys": {},
 }
 
 
@@ -51,6 +55,7 @@ class SettingsManager:
         self._path = _config_dir() / "settings.json"
         self._data: dict[str, Any] = dict(_DEFAULTS)
         self._session_overrides: dict[str, Any] = {}
+        self.load_error: str | None = None
         self._load()
 
     def get(self, key: str) -> Any:
@@ -97,19 +102,27 @@ class SettingsManager:
             self._session_overrides.pop(key, None)
 
     def _load(self) -> None:
-        if self._path.exists():
+        if not self._path.exists():
+            return
+        try:
+            with open(self._path, "r") as f:
+                saved = json.load(f)
+            self._data.update(saved)
+        except Exception:
+            corrupt_path = self._path.with_name(self._path.name + ".corrupt")
             try:
-                with open(self._path, "r") as f:
-                    saved = json.load(f)
-                self._data.update(saved)
-            except Exception:
+                os.replace(self._path, corrupt_path)
+            except OSError:
                 pass
+            self.load_error = (
+                f"{self._path.name} was corrupt and has been reset; "
+                f"backup saved as {corrupt_path.name}"
+            )
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self._path, "w") as f:
-                json.dump(self._data, f, indent=2)
+            atomic_write_json(self._path, self._data)
         except Exception:
             pass
 

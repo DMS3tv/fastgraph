@@ -4,11 +4,20 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
+
+from dms.file_io import atomic_write_text
 
 
 SCHEMA_VERSION = 1
+
+# Per-version upgrade functions for the automation schema. `_MIGRATIONS[n]`
+# takes a raw automation dict at schema version n and returns an equivalent
+# dict at version n + 1. Add an entry here whenever SCHEMA_VERSION is bumped
+# so automations saved by older Fastgraph builds keep loading instead of
+# hard-failing.
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 AUTOMATION_SUFFIX = ".fastgraph-automation.json"
 
 TRIGGERS = [
@@ -162,8 +171,21 @@ class AutomationDefinition:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AutomationDefinition":
         version = int(data.get("schema_version") or 0)
-        if version != SCHEMA_VERSION:
-            raise ValueError(f"Unsupported automation schema version: {version}")
+        if version > SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported automation schema version: {version} "
+                "(this automation was created by a newer version of Fastgraph "
+                "— update the app to open it)"
+            )
+        while version < SCHEMA_VERSION:
+            migrate = _MIGRATIONS.get(version)
+            if migrate is None:
+                raise ValueError(
+                    f"Unsupported automation schema version: {version} "
+                    f"(no upgrade path from version {version})"
+                )
+            data = migrate(data)
+            version += 1
         trigger = str(data.get("trigger") or "manual")
         if trigger not in TRIGGERS:
             raise ValueError(f"Unsupported automation trigger: {trigger}")
@@ -200,16 +222,19 @@ def load_automation(path: Path) -> AutomationDefinition:
 
 def save_automation(path: Path, automation: AutomationDefinition) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(automation.to_dict(), indent=2), encoding="utf-8")
+    atomic_write_text(path, json.dumps(automation.to_dict(), indent=2), encoding="utf-8")
 
 
-def scan_automation_directory(directory: Path) -> list[tuple[Path, AutomationDefinition]]:
+def scan_automation_directory(
+    directory: Path,
+) -> tuple[list[tuple[Path, AutomationDefinition]], list[tuple[Path, str]]]:
     if not directory.exists():
-        return []
+        return [], []
     loaded: list[tuple[Path, AutomationDefinition]] = []
+    skipped: list[tuple[Path, str]] = []
     for path in sorted(directory.glob(f"*{AUTOMATION_SUFFIX}")):
         try:
             loaded.append((path, load_automation(path)))
-        except Exception:
-            continue
-    return loaded
+        except Exception as exc:
+            skipped.append((path, str(exc)))
+    return loaded, skipped

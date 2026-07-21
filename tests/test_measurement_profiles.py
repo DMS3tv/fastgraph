@@ -18,6 +18,8 @@ def test_snapshot_measurement_profile_includes_only_profile_keys() -> None:
         "start_alignment_confidence_min": 8.5,
         "end_marker_confidence_min": 6.5,
         "timing_drift_max_ms": 42.0,
+        "snr_min_db": 5.5,
+        "sweep_coverage_min": 0.3,
         "output_device": "not part of profile",
         "squiglink_host": "not part of profile",
     }
@@ -46,6 +48,8 @@ def test_restore_standard_profile_uses_custom_snapshot() -> None:
         "start_alignment_confidence_min": 5.5,
         "end_marker_confidence_min": 4.5,
         "timing_drift_max_ms": 88.0,
+        "snr_min_db": 4.0,
+        "sweep_coverage_min": 0.2,
     }
 
     updates, used_fallback = restore_standard_profile_updates(custom_snapshot)

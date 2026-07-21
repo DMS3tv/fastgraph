@@ -9,20 +9,35 @@ from dms.session import SessionData
 from dms.hrtf import HRTFCurve
 
 
+def safe_filename(value: str) -> str:
+    """Sanitize a string for safe use as a filename or filename component.
+
+    Keeps alphanumerics and a small set of harmless punctuation (space,
+    period, underscore, hyphen, parentheses); everything else (including
+    path separators like ``/`` and ``\\``) is replaced with ``_`` so the
+    result can never traverse out of an export directory.
+    """
+    safe = "".join(ch if ch.isalnum() or ch in " ._-()" else "_" for ch in value).strip()
+    safe = safe or "_"
+    if safe in (".", ".."):
+        return "_"
+    return safe
+
+
 def build_filename(
     session: SessionData,
     compensated: bool,
 ) -> str:
     """Build export filename per spec."""
     suffix = "COMP AVG" if compensated else "RAW AVG"
-    rig = session.rig.strip()
+    rig = safe_filename(session.rig.strip())
 
     if session.asset_tag.strip():
-        tag = session.asset_tag.strip()
+        tag = safe_filename(session.asset_tag.strip())
         return f"{tag} {rig} {suffix}.txt"
     else:
-        brand = session.brand.strip()
-        model = session.model.strip()
+        brand = safe_filename(session.brand.strip())
+        model = safe_filename(session.model.strip())
         return f"{brand} {model} {rig} {suffix}.txt"
 
 
@@ -32,14 +47,14 @@ def build_variation_filename(
 ) -> str:
     """Build variation export filename per spec."""
     suffix = "COMP VAR" if compensated else "RAW VAR"
-    rig = session.rig.strip()
+    rig = safe_filename(session.rig.strip())
 
     if session.asset_tag.strip():
-        tag = session.asset_tag.strip()
+        tag = safe_filename(session.asset_tag.strip())
         return f"{tag} {rig} {suffix}.txt"
     else:
-        brand = session.brand.strip()
-        model = session.model.strip()
+        brand = safe_filename(session.brand.strip())
+        model = safe_filename(session.model.strip())
         return f"{brand} {model} {rig} {suffix}.txt"
 
 

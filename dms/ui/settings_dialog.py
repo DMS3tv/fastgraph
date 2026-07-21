@@ -108,6 +108,15 @@ class SettingsWidget(QWidget):
             "Bluetooth mode only: maximum accepted timing drift. Lower is stricter."
         )
 
+        self._snr_min_db = QDoubleSpinBox()
+        self._snr_min_db.setRange(0.0, 40.0)
+        self._snr_min_db.setSingleStep(0.5)
+        self._snr_min_db.setDecimals(1)
+        self._snr_min_db.setSuffix(" dB")
+        self._snr_min_db.setToolTip(
+            "Minimum measurement SNR. Recordings below this are rejected. 0 disables."
+        )
+
         sweep_form.addRow("Sweep Duration", self._duration)
         sweep_form.addRow("Sample Rate", self._fs)
         sweep_form.addRow("Buffer Size", self._buf)
@@ -117,6 +126,7 @@ class SettingsWidget(QWidget):
         sweep_form.addRow("Start Align Confidence Min", self._start_conf_min)
         sweep_form.addRow("End Marker Confidence Min", self._end_conf_min)
         sweep_form.addRow("Max Timing Drift", self._timing_drift_max_ms)
+        sweep_form.addRow("Minimum SNR (dB)", self._snr_min_db)
         layout.addWidget(self._sweep_group)
 
         tuning_hint = QLabel(
@@ -235,6 +245,9 @@ class SettingsWidget(QWidget):
                 "timing_drift_max_ms", self._timing_drift_max_ms.value()
             )
         )
+        self._snr_min_db.editingFinished.connect(
+            lambda: self._save("snr_min_db", self._snr_min_db.value())
+        )
         self._confirm_clear.toggled.connect(
             lambda checked: self._save("confirm_clear_measurements", checked)
         )
@@ -310,6 +323,7 @@ class SettingsWidget(QWidget):
             self._start_conf_min,
             self._end_conf_min,
             self._timing_drift_max_ms,
+            self._snr_min_db,
             self._confirm_clear,
             self._confirm_clear_metadata,
             self._rnd_session_dir,
@@ -334,6 +348,7 @@ class SettingsWidget(QWidget):
             self._timing_drift_max_ms.setValue(
                 float(self._settings.get("timing_drift_max_ms"))
             )
+            self._snr_min_db.setValue(float(self._settings.get("snr_min_db")))
             self._confirm_clear.setChecked(
                 bool(self._settings.get("confirm_clear_measurements"))
             )

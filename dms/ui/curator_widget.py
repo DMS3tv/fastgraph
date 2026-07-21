@@ -126,6 +126,7 @@ class LayerListRow(QWidget):
         self.offset_spin.blockSignals(True)
         self.offset_spin.setValue(layer.vertical_offset_db)
         self.offset_spin.blockSignals(False)
+        self.offset_spin.setKeyboardTracking(False)
         self.offset_spin.valueChanged.connect(
             lambda value, layer_id=layer.id: on_offset_changed(layer_id, float(value))
         )
@@ -539,6 +540,7 @@ class CuratorWidget(QWidget):
             spin.setDecimals(1)
             spin.setSingleStep(1.0)
             spin.setSuffix(" dB")
+            spin.setKeyboardTracking(False)
             spin.valueChanged.connect(self._on_y_limit_changed)
         view_form.addRow("Lower", self._y_min_spin)
         view_form.addRow("Upper", self._y_max_spin)
@@ -863,6 +865,7 @@ class CuratorWidget(QWidget):
             QMessageBox.warning(self, "HRTF Error", str(exc))
             layer.hrtf = None
             self._sync_ui()
+            self._redraw()
             return
         self._sync_ui()
         self._redraw()

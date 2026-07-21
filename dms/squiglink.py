@@ -1,15 +1,56 @@
+import base64
+import errno
+import getpass
 import json
+import os
 import re
+import socket
+import time
+import uuid
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import paramiko
 
+from dms.export import safe_filename
 from dms.session import SessionData
 
 
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
+PHONE_BOOK_LOCK_PATH = PHONE_BOOK_REMOTE_PATH + ".lock"
 DATA_UPLOAD_DIR = "data"
+DEFAULT_SFTP_TIMEOUT = 10.0
+
+
+class HostKeyUnverifiedError(Exception):
+    """Raised when connecting to a host whose SSH host key has never been
+    trusted before (TOFU - trust on first use). The caller must show the
+    fingerprint to the user and get explicit confirmation before retrying
+    with `known_key` set."""
+
+    def __init__(self, key_str: str, fingerprint: str) -> None:
+        super().__init__(
+            f"Host key is not yet trusted (fingerprint {fingerprint})."
+        )
+        self.key_str = key_str
+        self.fingerprint = fingerprint
+
+
+class HostKeyMismatchError(Exception):
+    """Raised when the server's presented host key does not match the key
+    previously trusted for this host. This is a strong signal of a
+    man-in-the-middle attack (or a legitimate server key rotation) and must
+    never be silently accepted."""
+
+    def __init__(self, expected_fingerprint: str, actual_fingerprint: str) -> None:
+        super().__init__(
+            "Host key mismatch: expected fingerprint "
+            f"{expected_fingerprint}, received {actual_fingerprint}."
+        )
+        self.expected_fingerprint = expected_fingerprint
+        self.actual_fingerprint = actual_fingerprint
 
 
 class RemotePhoneBookError(Exception):
@@ -24,6 +65,22 @@ class RemotePhoneBookInvalidError(RemotePhoneBookError):
     pass
 
 
+class RemotePhoneBookReadError(Exception):
+    """Raised when the remote phone book could not be read for a reason other
+    than the file genuinely being missing (network/permission errors, or a
+    payload that fails to parse as JSON)."""
+
+    pass
+
+
+class PhoneBookLockedError(Exception):
+    """Raised when the shared remote phone book's advisory lock could not be
+    acquired - another upload appears to be in the middle of its own
+    read-merge-write cycle and retrying was exhausted."""
+
+    pass
+
+
 def build_upload_name_stem(session: SessionData, name_modifier: str) -> str:
     base = f"{session.brand.strip()} {session.model.strip()}".strip()
     side = (session.channel_side or "").strip().upper()
@@ -34,7 +91,7 @@ def build_upload_name_stem(session: SessionData, name_modifier: str) -> str:
         modifier = modifier[:-4].strip()
     if not modifier:
         modifier = side
-    return f"{base} {modifier}".strip()
+    return safe_filename(f"{base} {modifier}".strip())
 
 
 def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
@@ -43,12 +100,113 @@ def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
     if modifier.lower().endswith(".txt"):
         modifier = modifier[:-4].strip()
     if not modifier:
-        return base
+        return safe_filename(base)
     # Phone-book entries should not carry terminal side/unit tags such as L, R, L1, R2.
     modifier = re.sub(r"(?:^|\s+)[LR](?:\d+)?$", "", modifier, flags=re.IGNORECASE).strip()
     if not modifier:
-        return base
-    return f"{base} {modifier}".strip()
+        return safe_filename(base)
+    return safe_filename(f"{base} {modifier}".strip())
+
+
+def _fingerprint_from_key_bytes(key_bytes: bytes) -> str:
+    """Format a SHA256 fingerprint the same way OpenSSH does:
+    "SHA256:" followed by the unpadded base64 of the digest."""
+    digest = hashlib.sha256(key_bytes).digest()
+    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _fingerprint_from_known_key_str(known_key: str) -> str:
+    """Compute the fingerprint of a previously-stored "name base64" host key
+    string (the same format `open_verified_transport` builds as `key_str`).
+    Falls back to hashing the raw string if it can't be parsed as a normal
+    key line, so a malformed stored value still produces *some* stable
+    fingerprint rather than raising."""
+    parts = known_key.strip().split(None, 1)
+    if len(parts) == 2:
+        try:
+            key_bytes = base64.b64decode(parts[1], validate=True)
+        except (ValueError, TypeError):
+            key_bytes = None
+        if key_bytes is not None:
+            return _fingerprint_from_key_bytes(key_bytes)
+    return _fingerprint_from_key_bytes(known_key.encode("utf-8"))
+
+
+def _close_quietly(closeable: Any) -> None:
+    try:
+        closeable.close()
+    except Exception:
+        pass
+
+
+def open_verified_transport(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    known_key: str | None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
+) -> paramiko.Transport:
+    """Open an authenticated paramiko Transport, but only after verifying the
+    server's host key against `known_key` (trust-on-first-use).
+
+    - `known_key` is None: the host has never been trusted before. The
+      transport is closed and `HostKeyUnverifiedError` is raised so the
+      caller can show the fingerprint to the user and decide whether to
+      trust it.
+    - `known_key` doesn't match the presented key: the transport is closed
+      and `HostKeyMismatchError` is raised. This must never be silently
+      bypassed - it typically means either a man-in-the-middle attack or a
+      legitimate server key rotation, and the caller must decide explicitly.
+    - `known_key` matches: password authentication proceeds as normal.
+
+    The underlying socket/transport is closed on every failure path,
+    including authentication failure.
+    """
+    sock = socket.create_connection((host, int(port)), timeout=timeout)
+    transport = paramiko.Transport(sock)
+    try:
+        transport.start_client(timeout=timeout)
+        key = transport.get_remote_server_key()
+        key_str = f"{key.get_name()} {key.get_base64()}"
+        fingerprint = _fingerprint_from_key_bytes(key.asbytes())
+
+        if known_key is None:
+            raise HostKeyUnverifiedError(key_str, fingerprint)
+        if known_key != key_str:
+            raise HostKeyMismatchError(
+                _fingerprint_from_known_key_str(known_key), fingerprint
+            )
+
+        transport.auth_password(username, password)
+    except Exception:
+        _close_quietly(transport)
+        _close_quietly(sock)
+        raise
+    return transport
+
+
+def open_sftp_session(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    known_key: str | None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
+) -> tuple[paramiko.Transport, paramiko.SFTPClient]:
+    """Open a verified transport and an SFTP client on top of it. Callers
+    that need to do more than one SFTP operation per connection (upload plus
+    phone-book sync) should use this instead of `upload_export_sftp` so they
+    only pay for one TOFU host-key check and one connection per attempt."""
+    transport = open_verified_transport(
+        host, port, username, password, known_key, timeout=timeout
+    )
+    try:
+        sftp = paramiko.SFTPClient.from_transport(transport)
+    except Exception:
+        _close_quietly(transport)
+        raise
+    return transport, sftp
 
 
 def upload_export_sftp(
@@ -58,14 +216,18 @@ def upload_export_sftp(
     username: str,
     password: str,
     remote_filename: str | None = None,
+    *,
+    known_key: str | None = None,
+    timeout: float = DEFAULT_SFTP_TIMEOUT,
 ) -> None:
     """
     Upload exported file to Squiglink endpoint over SFTP.
     Upload exported file to the account-scoped Squiglink data directory.
     """
-    transport = paramiko.Transport((host, int(port)))
+    transport = open_verified_transport(
+        host, port, username, password, known_key, timeout=timeout
+    )
     try:
-        transport.connect(username=username, password=password)
         sftp = paramiko.SFTPClient.from_transport(transport)
         try:
             filename = (remote_filename or local_path.name).strip().split("/")[-1]
@@ -76,6 +238,97 @@ def upload_export_sftp(
         transport.close()
 
 
+def _write_lock_payload(sftp: paramiko.SFTPClient, lock_path: str) -> None:
+    payload = json.dumps(
+        {
+            "username": getpass.getuser(),
+            "pid": os.getpid(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).encode("utf-8")
+    # "x" is SFTP's O_CREAT|O_EXCL - the create only succeeds if the file did
+    # not already exist, which is what makes this usable as a lock.
+    with sftp.file(lock_path, "x") as f:
+        f.write(payload)
+
+
+def acquire_phone_book_lock(
+    sftp: paramiko.SFTPClient,
+    lock_path: str = PHONE_BOOK_LOCK_PATH,
+    *,
+    retries: int = 3,
+    retry_delay_s: float = 2.0,
+    stale_after_s: float = 120.0,
+) -> None:
+    """Acquire an advisory lock on the shared remote phone book by
+    exclusively creating `lock_path`.
+
+    This is advisory only: it depends on every writer going through this same
+    path, but it stops two concurrent Fastgraph uploads from interleaving
+    their read-merge-write cycles and silently dropping one upload's entry.
+
+    On contention (the lock file already exists), a single stale-lock
+    reclaim is attempted first: if the existing lock's mtime is older than
+    `stale_after_s`, it is removed and creation is retried immediately
+    (without consuming a retry). Otherwise, the caller sleeps
+    `retry_delay_s` and retries, up to `retries` times, before raising
+    `PhoneBookLockedError`.
+    """
+    remaining = retries
+    stale_reclaim_used = False
+    while True:
+        try:
+            _write_lock_payload(sftp, lock_path)
+            return
+        except (OSError, paramiko.SSHException):
+            pass  # lock file already exists (or another transient failure)
+
+        if not stale_reclaim_used:
+            try:
+                lock_stat = sftp.stat(lock_path)
+            except (OSError, paramiko.SSHException):
+                # The lock vanished between our failed create and this stat
+                # (the other uploader just released it) - retry right away,
+                # this doesn't count as a "stale" reclaim.
+                continue
+
+            # Server clock skew means st_mtime is not directly comparable to
+            # our local clock with confidence - we only ever treat this as
+            # a conservative *lower bound* on the lock's age (if our clocks
+            # disagree, the lock might really be older or younger than this
+            # says). Erring towards "not stale yet" just costs a retry;
+            # erring towards "stale" could steal a lock that is still live,
+            # so stale reclaim is only attempted once per call and only when
+            # the age comfortably exceeds stale_after_s.
+            age_s = time.time() - lock_stat.st_mtime
+            if age_s > stale_after_s:
+                stale_reclaim_used = True
+                try:
+                    sftp.remove(lock_path)
+                except (OSError, paramiko.SSHException):
+                    pass
+                continue
+
+        if remaining <= 0:
+            raise PhoneBookLockedError(
+                "Another upload is currently updating the shared phone book "
+                "— please try again in a minute."
+            )
+        remaining -= 1
+        time.sleep(retry_delay_s)
+
+
+def release_phone_book_lock(sftp: paramiko.SFTPClient, lock_path: str) -> None:
+    """Best-effort release of a lock acquired via `acquire_phone_book_lock`.
+    Always safe to call, including when the lock is already gone (e.g. it
+    went stale and was reclaimed by someone else) or the connection is no
+    longer usable."""
+    try:
+        sftp.remove(lock_path)
+    except Exception:
+        pass
+
+
 def read_remote_phone_book(
     sftp: paramiko.SFTPClient,
     remote_path: str = PHONE_BOOK_REMOTE_PATH,
@@ -83,15 +336,20 @@ def read_remote_phone_book(
     try:
         with sftp.file(remote_path, "r") as f:
             payload = f.read().decode("utf-8")
-    except FileNotFoundError as exc:
-        raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
-    except OSError as exc:
-        raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
+    except (OSError, paramiko.SSHException) as exc:
+        # paramiko surfaces a missing SFTP path as FileNotFoundError, or as a
+        # plain OSError/IOError with errno set to ENOENT. Anything else (a
+        # dropped connection, permission denied, etc.) is NOT "missing" and
+        # must not be treated as an invitation to create a fresh phone book.
+        is_missing = isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == errno.ENOENT
+        if is_missing:
+            raise RemotePhoneBookMissingError(f"Remote phone book missing: {remote_path}") from exc
+        raise RemotePhoneBookReadError(f"Failed to read remote phone book: {exc}") from exc
 
     try:
         parsed = json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise RemotePhoneBookInvalidError("Remote phone book is invalid JSON.") from exc
+        raise RemotePhoneBookReadError(f"Remote phone book is invalid JSON: {exc}") from exc
 
     if not isinstance(parsed, list):
         raise RemotePhoneBookInvalidError("Remote phone book JSON must be a list.")
@@ -167,11 +425,41 @@ def merge_phone_book_entry(
     return phone_book
 
 
+def _remote_temp_path(remote_path: str) -> str:
+    """Build a sibling temp-file name for `remote_path` (POSIX-style remote
+    paths; do not use pathlib.Path, which applies local/Windows semantics)."""
+    suffix = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    return f"{remote_path}.tmp-{suffix}"
+
+
 def write_remote_phone_book(
     sftp: paramiko.SFTPClient,
     phone_book: list[dict[str, Any]],
     remote_path: str = PHONE_BOOK_REMOTE_PATH,
 ) -> None:
+    """Write the shared remote phone book without ever truncating the live
+    file in place. The payload is written to a temp file in the same remote
+    directory and then atomically swapped into place, so a dropped connection
+    or interrupted write can never leave `remote_path` half-written."""
     payload = json.dumps(phone_book, indent=4, ensure_ascii=False) + "\n"
-    with sftp.file(remote_path, "w") as f:
-        f.write(payload.encode("utf-8"))
+    tmp_path = _remote_temp_path(remote_path)
+    try:
+        with sftp.file(tmp_path, "w") as f:
+            f.write(payload.encode("utf-8"))
+
+        try:
+            sftp.posix_rename(tmp_path, remote_path)
+        except (OSError, paramiko.SSHException):
+            # Server doesn't support the POSIX-rename extension (or it failed
+            # for some other reason) - fall back to remove-then-rename.
+            try:
+                sftp.remove(remote_path)
+            except FileNotFoundError:
+                pass
+            sftp.rename(tmp_path, remote_path)
+    except Exception:
+        try:
+            sftp.remove(tmp_path)
+        except OSError:
+            pass
+        raise

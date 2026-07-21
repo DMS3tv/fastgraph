@@ -3,8 +3,50 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from dms.export import build_variation_filename, export_variation
+from dms.export import build_filename, build_variation_filename, export_variation, safe_filename
 from dms.session import SessionData
+
+
+def test_safe_filename_passes_through_benign_characters() -> None:
+    assert safe_filename("Unit 7 (v2) - final.example") == "Unit 7 (v2) - final.example"
+
+
+def test_safe_filename_replaces_path_separators() -> None:
+    assert "/" not in safe_filename("/etc/evil")
+    assert "\\" not in safe_filename("..\\evil")
+
+
+def test_safe_filename_rejects_bare_dot_dot() -> None:
+    assert safe_filename("..") == "_"
+    assert safe_filename(".") == "_"
+
+
+def test_build_filename_sanitizes_asset_tag_path_traversal() -> None:
+    session = SessionData(
+        rig="GRAS",
+        brand="DMS",
+        model="Example",
+        asset_tag="/etc/evil",
+    )
+
+    filename = build_filename(session, compensated=False)
+
+    assert "/" not in filename
+    assert Path(filename).parent == Path(".")
+
+
+def test_build_filename_sanitizes_asset_tag_windows_traversal() -> None:
+    session = SessionData(
+        rig="GRAS",
+        brand="DMS",
+        model="Example",
+        asset_tag="..\\evil",
+    )
+
+    filename = build_filename(session, compensated=True)
+
+    assert "\\" not in filename
+    assert Path(filename).parent == Path(".")
 
 
 def test_build_variation_filename_uses_brand_model_and_raw_suffix() -> None:

@@ -21,6 +21,8 @@ class AlignmentSettings:
     start_alignment_confidence_min: float = 9.0
     end_marker_confidence_min: float = 7.0
     timing_drift_max_ms: float = 35.0
+    snr_min_db: float = 6.0
+    sweep_coverage_min: float = 0.05
 
 
 class MeasurementFailureReason:
@@ -30,6 +32,9 @@ class MeasurementFailureReason:
     SHORT_RECORDING = "short_recording"
     SHORT_ALIGNED_RECORDING = "short_aligned_recording"
     END_MARKER_UNVERIFIED = "end_marker_unverified"
+    LOW_SNR = "low_snr"
+    INCOMPLETE_SWEEP = "incomplete_sweep"
+    INVALID_RECORDING = "invalid_recording"
 
 
 class MeasurementWarningReason:
@@ -297,6 +302,9 @@ def is_retryable_timing_failure(
             MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
             MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
             MeasurementFailureReason.END_MARKER_UNVERIFIED,
+            MeasurementFailureReason.LOW_SNR,
+            MeasurementFailureReason.INCOMPLETE_SWEEP,
+            MeasurementFailureReason.INVALID_RECORDING,
         }
 
     msg = message.lower()
@@ -608,9 +616,9 @@ def find_start_alignment(
 
     max_extra_latency_s = 2.0 if str(settings.latency).lower() == "high" else 1.2
     start_search_radius = int(round(max_extra_latency_s * layout.fs))
-    start_search_lo = max(0, layout.excitation_start_sample - start_search_radius)
+    start_search_lo = max(0, layout.sweep_start_sample - start_search_radius)
     start_search_hi = min(
-        len(corr_valid), layout.excitation_start_sample + start_search_radius
+        len(corr_valid), layout.sweep_start_sample + start_search_radius
     )
     if start_search_hi - start_search_lo < 32:
         start_search_lo = 0
@@ -669,9 +677,9 @@ def find_start_alignment(
                 if marker_locked_start <= max_start_idx:
                     start_idx = marker_locked_start
                     marker_locked_candidate = int(marker_locked_start)
-                start_conf = max(start_conf, min_start_conf)
+                    start_conf = max(start_conf, min_start_conf)
 
-    if bluetooth_mode and start_conf < min_start_conf:
+    if start_conf < min_start_conf:
         start_result = StartAlignmentResult(
             selected_sweep_start=int(start_idx),
             sweep_correlation_candidate=int(sweep_start_candidate),
@@ -679,9 +687,18 @@ def find_start_alignment(
             start_confidence=float(start_conf),
             start_marker_confidence=float(start_marker_conf),
         )
+        if bluetooth_mode:
+            message = (
+                f"Low start-alignment confidence ({start_conf:.1f}; marker {start_marker_conf:.1f}). "
+                "Please reduce noise, increase playback level, or use higher latency."
+            )
+        else:
+            message = (
+                f"Low start-alignment confidence ({start_conf:.1f}). "
+                "Please reduce noise, increase playback level, or use higher latency."
+            )
         _raise_alignment_error(
-            f"Low start-alignment confidence ({start_conf:.1f}; marker {start_marker_conf:.1f}). "
-            "Please reduce noise, increase playback level, or use higher latency.",
+            message,
             MeasurementFailureReason.LOW_START_CONFIDENCE,
             layout,
             settings,
@@ -819,6 +836,7 @@ def _bluetooth_sweep_fallback_result(
         sweep_rec,
         start_idx,
         layout,
+        marker_stretch=fallback_end_result.marker_template_stretch or 1.0,
     )
     if len(sweep_ref) == len(sweep_rec):
         rec_norm = float(np.sqrt(np.sum(np.square(sweep_rec))))
@@ -1114,6 +1132,7 @@ def _estimate_bluetooth_fallback_snr_db(
     aligned_recording: np.ndarray,
     start_idx: int,
     layout: MeasurementSignalLayout,
+    marker_stretch: float = 1.0,
 ) -> float:
     noise_win_n = int(round(0.12 * layout.fs))
     rec = np.asarray(rec_mono)
@@ -1124,13 +1143,16 @@ def _estimate_bluetooth_fallback_snr_db(
         - len(layout.start_marker),
     )
     pre_noise = rec[max(0, pre_noise_stop - noise_win_n):pre_noise_stop]
+    end_marker_2_len = int(
+        round(len(getattr(layout, "end_marker_2", layout.end_marker)) * marker_stretch)
+    )
     post_noise_start = (
         int(start_idx)
         + layout.sweep_samples
         + layout.end_marker_gap_samples
         + len(layout.end_marker)
         + layout.end_marker_pair_gap_samples
-        + len(getattr(layout, "end_marker_2", layout.end_marker))
+        + end_marker_2_len
     )
     post_noise = rec[
         post_noise_start:min(len(rec), post_noise_start + noise_win_n)
@@ -1163,6 +1185,13 @@ def align_recording_to_layout(
             layout,
             settings,
         )
+    if not np.isfinite(rec).all():
+        _raise_alignment_error(
+            "Recording contains invalid samples — check the input device.",
+            MeasurementFailureReason.INVALID_RECORDING,
+            layout,
+            settings,
+        )
 
     start_result = find_start_alignment(rec, sweep, layout, settings)
     bluetooth_mode = bool(settings.bluetooth_headphone_mode)
@@ -1172,6 +1201,31 @@ def align_recording_to_layout(
             rec, layout, settings, start_result, end_result
         )
         sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
+
+        if float(settings.sweep_coverage_min) > 0:
+            segment_edges = np.linspace(0, len(sweep_rec), 9, dtype=int)
+            segment_rms = np.array(
+                [
+                    float(np.sqrt(np.mean(np.square(sweep_rec[segment_edges[i]:segment_edges[i + 1]]))))
+                    if segment_edges[i + 1] > segment_edges[i]
+                    else 0.0
+                    for i in range(8)
+                ]
+            )
+            median_rms = float(np.median(segment_rms))
+            min_rms = float(np.min(segment_rms))
+            if median_rms > 0.0 and min_rms < float(settings.sweep_coverage_min) * median_rms:
+                _raise_alignment_error(
+                    f"Incomplete sweep recording (segment coverage ratio "
+                    f"{min_rms / median_rms:.2f}; minimum {settings.sweep_coverage_min:.2f}). "
+                    "The sweep recording has silent/dropped sections — check the "
+                    "connection and try again.",
+                    MeasurementFailureReason.INCOMPLETE_SWEEP,
+                    layout,
+                    settings,
+                    start=start_result,
+                )
+
         snr_db = estimate_snr_db(
             rec,
             sweep_rec,
@@ -1179,6 +1233,18 @@ def align_recording_to_layout(
             start_idx,
             layout.fs,
         )
+
+        if float(settings.snr_min_db) > 0 and snr_db < float(settings.snr_min_db):
+            _raise_alignment_error(
+                f"Low measurement SNR ({snr_db:.1f} dB; minimum {settings.snr_min_db:.1f} dB). "
+                "Please reduce noise, increase playback level, or use higher latency.",
+                MeasurementFailureReason.LOW_SNR,
+                layout,
+                settings,
+                start=start_result,
+                snr_db=snr_db,
+            )
+
         return MeasurementAlignmentResult(
             aligned_recording=sweep_rec,
             start=start_result,
@@ -1350,10 +1416,16 @@ def align_recording_to_layout(
             marker_template_stretch=end_result.marker_template_stretch,
         )
 
+    marker_2_stretch = end_result.marker_template_stretch
+    if marker_2_stretch is None:
+        marker_2_stretch = 1.0
+    marker_2_len = int(
+        round(len(getattr(layout, "end_marker_2", layout.end_marker)) * marker_2_stretch)
+    )
     snr_db = estimate_snr_db(
         rec,
         sweep_rec,
-        end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
+        end_result.marker_2_start + marker_2_len,
         end_result.selected_sweep_start,
         layout.fs,
     )

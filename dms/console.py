@@ -19,7 +19,18 @@ def _redact(value: Any, key: str = "") -> Any:
     if any(part in key.lower() for part in _SECRET_PARTS):
         return "<redacted>"
     if isinstance(value, dict):
-        return {str(k): _redact(v, str(k)) for k, v in value.items()}
+        redacted = {str(k): _redact(v, str(k)) for k, v in value.items()}
+        # A generic {"name": <setting key>, "value": <setting value>} shape
+        # (e.g. main_window's "Session setting changed" log) names the secret
+        # in a sibling key rather than in the dict's own key, so the
+        # key-substring check above never sees it. Redact "value" whenever
+        # "name"/"key" identifies a secret-ish setting.
+        name_value = redacted.get("name", redacted.get("key"))
+        if isinstance(name_value, str) and any(
+            part in name_value.lower() for part in _SECRET_PARTS
+        ) and "value" in redacted:
+            redacted["value"] = "<redacted>"
+        return redacted
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
     return value

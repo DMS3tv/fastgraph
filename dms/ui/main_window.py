@@ -8,11 +8,12 @@ import sys
 import shlex
 import tempfile
 import json
+import copy
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import numpy as np
-import paramiko
 import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -48,6 +50,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.audio_engine import (
+    DevicePollWorker,
     LevelMonitor,
     SweepWorker,
     device_channel_count,
@@ -73,7 +76,9 @@ from dms.export import (
     build_variation_filename,
     export_curve,
     export_variation,
+    safe_filename,
 )
+from dms.file_io import atomic_write_text
 from dms.hrtf import HRTFCurve
 from dms.measurement_alignment import (
     format_diagnostics_summary,
@@ -102,20 +107,17 @@ from dms.rnd.models import (
     measurement_session_data,
     session_snapshot,
 )
-from dms.secure_store import decrypt_credentials, encrypt_credentials
+from dms.secure_store import (
+    CredentialDecryptionError,
+    decrypt_credentials,
+    encrypt_credentials,
+)
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
 from dms.squiglink import (
-    PHONE_BOOK_REMOTE_PATH,
-    RemotePhoneBookInvalidError,
-    RemotePhoneBookMissingError,
     build_phone_book_name_stem,
     build_upload_name_stem,
-    merge_phone_book_entry,
-    read_remote_phone_book,
-    upload_export_sftp,
-    write_remote_phone_book,
 )
 from dms.theme import DARK, LIGHT, ThemeController
 from dms.update_checker import UpdateCheckWorker
@@ -129,6 +131,7 @@ from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionDialog
 from dms.ui.settings_dialog import SettingsWidget
+from dms.ui.squiglink_worker import SquiglinkUploadConfig, SquiglinkUploadWorker
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
 
@@ -297,6 +300,7 @@ class PassFailDialog(QDialog):
         self._choice = self.CANCEL
         self.setModal(False)
         self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Review Measurement")
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -462,6 +466,7 @@ class RnDReviewDialog(QDialog):
         self._choice = self.CANCEL
         self.setModal(False)
         self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Review R&D Measurement")
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -735,7 +740,16 @@ class MainWindow(QMainWindow):
         self._active_sweep_worker: Optional[SweepWorker] = None
         self._pass_fail_dialog: Optional[PassFailDialog] = None
         self._rnd_review_dialog: Optional[RnDReviewDialog] = None
-        self._rnd_sweep_active = False
+
+        self._squiglink_thread: Optional[QThread] = None
+        self._squiglink_worker: Optional[SquiglinkUploadWorker] = None
+        self._squiglink_progress: Optional[QProgressDialog] = None
+        self._squiglink_config: Optional[SquiglinkUploadConfig] = None
+        self._squiglink_busy = False
+        self._squiglink_tmp_path: Optional[Path] = None
+        self._squiglink_pending_username = ""
+        self._squiglink_pending_password = ""
+        self._squiglink_pending_remember = False
 
         self._last_level_dbfs = -120.0
         self._displayed_level_dbfs = -60.0
@@ -755,6 +769,7 @@ class MainWindow(QMainWindow):
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
         self._level_monitor.error_occurred.connect(self._on_level_error)
+        self._level_monitor.stopped_unexpectedly.connect(self._on_level_stopped_unexpectedly)
 
         self._refresh_window_title()
         self.setMinimumSize(1280, 700)
@@ -773,15 +788,23 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_update_check()
         self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
+        self._warn_about_corrupt_config_on_startup()
         QTimer.singleShot(0, lambda: self._run_automation_trigger("app_start"))
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
         self._meter_ui_timer.start(_METER_UPDATE_MS)
 
-        self._device_check_timer = QTimer(self)
-        self._device_check_timer.timeout.connect(self._check_devices)
-        self._device_check_timer.start(1500)
+        # Device enumeration polls sd.query_devices() (blocking PortAudio call)
+        # every 1.5s. Run it on a persistent worker thread instead of the UI
+        # thread (mirrors the moveToThread/started wiring used for
+        # UpdateCheckWorker below), so the UI never stalls on enumeration.
+        self._device_poll_thread = QThread(self)
+        self._device_poll_worker = DevicePollWorker(interval_ms=1500)
+        self._device_poll_worker.moveToThread(self._device_poll_thread)
+        self._device_poll_thread.started.connect(self._device_poll_worker.start)
+        self._device_poll_worker.devices_changed.connect(self._on_devices_changed)
+        self._device_poll_thread.start()
 
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
@@ -1050,6 +1073,32 @@ class MainWindow(QMainWindow):
             and not getattr(self, "_automation_running", False)
         ):
             QTimer.singleShot(0, lambda: self._run_automation_trigger("app_error"))
+
+    def _warn_about_corrupt_config_on_startup(self) -> None:
+        messages: list[str] = []
+        if self._settings.load_error:
+            self._log_event("WARNING", "settings", self._settings.load_error)
+            messages.append(self._settings.load_error)
+        if self._cal_store.load_error:
+            self._log_event("WARNING", "calibration", self._cal_store.load_error)
+            messages.append(self._cal_store.load_error)
+        if not messages:
+            return
+        self._startup_config_warning_shown = False
+
+        def _show() -> None:
+            if self._startup_config_warning_shown:
+                return
+            self._startup_config_warning_shown = True
+            QMessageBox.warning(
+                self,
+                "Configuration Reset",
+                "One or more configuration files were corrupt and have been reset "
+                "to defaults (a backup was saved alongside each):\n\n"
+                + "\n\n".join(messages),
+            )
+
+        QTimer.singleShot(0, _show)
 
     def _command_reply(self, message: str, error: bool = False) -> None:
         self._log_event("ERROR" if error else "INFO", "console", message)
@@ -2347,20 +2396,22 @@ class MainWindow(QMainWindow):
                 self._current_input_channel(),
             )
 
-    def _check_devices(self) -> None:
+    def _on_devices_changed(
+        self,
+        out_devices: list[dict],
+        in_devices: list[dict],
+    ) -> None:
+        # Enumeration + change-detection happen on the DevicePollWorker
+        # thread; this slot only runs the handling logic for a change the
+        # worker already confirmed is real.
         current_out = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_output_devices()
+            for d in out_devices
         ]
         current_in = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_input_devices()
+            for d in in_devices
         ]
-
-        if current_out == self._last_output_devices and current_in == (
-            self._last_input_devices
-        ):
-            return
 
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
@@ -2374,18 +2425,30 @@ class MainWindow(QMainWindow):
         ):
             self._abort_active_sweep()
             self._state = AppState.IDLE
+            self._sweep_progress.setValue(0)
+            self._rnd_widget.set_status("Ready")
             self._statusbar.showMessage(
                 "Audio device change detected. Active sweep aborted safely."
             )
 
         self._refresh_devices()
 
-    def _abort_active_sweep(self) -> None:
+    def _abort_active_sweep(self) -> bool:
+        """Abort the active sweep thread, if any is still running.
+
+        Returns True if a running thread was actually signaled to abort. When
+        True, `_on_sweep_thread_finished` will fire shortly (the QThread's
+        own `finished` signal, emitted once `_SweepThread.run()` returns) and
+        is responsible for restarting the level monitor — callers should not
+        also restart it synchronously in that case, to avoid a double start.
+        """
         if self._sweep_thread is not None and self._sweep_thread.isRunning():
             try:
                 self._sweep_thread.abort()
             except Exception:
                 pass
+            return True
+        return False
 
     def _cleanup_sweep_thread(self) -> None:
         if self._sweep_thread is not None:
@@ -2483,6 +2546,19 @@ class MainWindow(QMainWindow):
     def _on_level_error(self, message: str) -> None:
         self._statusbar.showMessage(message)
 
+    def _on_level_stopped_unexpectedly(self, message: str) -> None:
+        # e.g. the input device was unplugged: the InputStream's
+        # finished_callback fired without us having requested a stop, so the
+        # meter would otherwise freeze at its last value. Log it and drop the
+        # meter back to its idle/no-signal visual state (same as when no
+        # input device is selected, see _start_level_monitor).
+        self._log_event("WARNING", "audio", message)
+        self._last_level_dbfs = -120.0
+        self._displayed_level_dbfs = -60.0
+        self._level_meter.set_level(-60.0)
+        self._level_status_label.setText("No signal")
+        self._statusbar.showMessage(message)
+
     def _start_update_check(self) -> None:
         enabled = bool(self._settings.get("update_check_enabled"))
         feed_url = str(self._settings.get("update_feed_url") or "").strip()
@@ -2532,6 +2608,15 @@ class MainWindow(QMainWindow):
 
     def _open_update_url(self) -> None:
         if not self._pending_update_url:
+            return
+        scheme = urlparse(self._pending_update_url).scheme
+        if scheme not in {"http", "https"}:
+            self._log_event(
+                "WARNING",
+                "update",
+                "Refused to open update release URL with disallowed scheme",
+                url=self._pending_update_url,
+            )
             return
         QDesktopServices.openUrl(QUrl(self._pending_update_url))
 
@@ -2645,6 +2730,11 @@ class MainWindow(QMainWindow):
         self._start_next_sweep()
 
     def _start_next_sweep(self) -> None:
+        if self._sweep_thread is not None:
+            self._log_event(
+                "WARNING", "measurement", "Sweep already running, ignoring start request"
+            )
+            return
         if not self._queue_active():
             self._state = AppState.IDLE
             self._apply_state_ui()
@@ -2716,6 +2806,8 @@ class MainWindow(QMainWindow):
                 self._settings.get("end_marker_confidence_min")
             ),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            snr_min_db=float(self._settings.get("snr_min_db")),
+            sweep_coverage_min=float(self._settings.get("sweep_coverage_min")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -2947,7 +3039,7 @@ class MainWindow(QMainWindow):
         self._start_next_sweep()
 
     def _cancel_queue(self) -> None:
-        self._abort_active_sweep()
+        aborted_running_thread = self._abort_active_sweep()
         self._close_pass_fail_dialog()
         self._pending_curve = None
         self._queue_target = 0
@@ -2958,7 +3050,13 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
-        self._start_level_monitor()
+        if not aborted_running_thread:
+            # No sweep thread was running (e.g. canceled from the pass/fail
+            # dialog after the sweep already finished) — _on_sweep_thread_finished
+            # won't fire again, so restart the monitor here. If a thread WAS
+            # aborted, let that handler restart it once the thread exits, to
+            # avoid starting it twice.
+            self._start_level_monitor()
         self._statusbar.showMessage("Queue canceled.")
 
     def _finish_queue(self) -> None:
@@ -3026,8 +3124,12 @@ class MainWindow(QMainWindow):
             return
         dlg = self._pass_fail_dialog
         self._pass_fail_dialog = None
-        dlg.blockSignals(True)
-        dlg.close()
+        try:
+            dlg.blockSignals(True)
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:
+            pass
 
     def _start_rnd_measurement(self) -> None:
         if self._state != AppState.IDLE:
@@ -3068,11 +3170,15 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("R&D measurement canceled due to high ambient level.")
                 return
 
-        self._rnd_sweep_active = True
         self._current_sweep_attempts = 0
         self._start_rnd_sweep()
 
     def _start_rnd_sweep(self) -> None:
+        if self._sweep_thread is not None:
+            self._log_event(
+                "WARNING", "rnd", "Sweep already running, ignoring start request"
+            )
+            return
         self._current_sweep_attempts += 1
         self._state = AppState.SWEEPING
         self._apply_state_ui()
@@ -3126,6 +3232,8 @@ class MainWindow(QMainWindow):
             start_alignment_confidence_min=float(self._settings.get("start_alignment_confidence_min")),
             end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            snr_min_db=float(self._settings.get("snr_min_db")),
+            sweep_coverage_min=float(self._settings.get("sweep_coverage_min")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -3187,11 +3295,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if choice == QMessageBox.StandardButton.Yes:
-                self._state = AppState.IDLE
-                self._apply_state_ui()
                 QTimer.singleShot(150, self._start_rnd_sweep)
                 return
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
@@ -3269,7 +3374,6 @@ class MainWindow(QMainWindow):
         )
         self._rnd_widget.add_measurement(measurement)
         self._pending_curve = None
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(100)
@@ -3281,15 +3385,18 @@ class MainWindow(QMainWindow):
         self._run_automation_trigger("rnd_measurement_kept")
 
     def _cancel_rnd_measurement(self) -> None:
-        self._abort_active_sweep()
+        aborted_running_thread = self._abort_active_sweep()
         self._close_rnd_review_dialog()
         self._pending_curve = None
-        self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
-        self._start_level_monitor()
+        if not aborted_running_thread:
+            # See _cancel_queue: only restart here if no thread was aborted;
+            # otherwise _on_sweep_thread_finished restarts it once, avoiding
+            # a double start.
+            self._start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage("R&D measurement canceled.")
 
@@ -3298,8 +3405,12 @@ class MainWindow(QMainWindow):
             return
         dlg = self._rnd_review_dialog
         self._rnd_review_dialog = None
-        dlg.blockSignals(True)
-        dlg.close()
+        try:
+            dlg.blockSignals(True)
+            dlg.close()
+            dlg.deleteLater()
+        except RuntimeError:
+            pass
 
     def _recompute_average(self) -> None:
         if not self._kept_curves:
@@ -3699,7 +3810,14 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dlg.calibration_done.connect(self._on_calibration_done)
-        dlg.exec()
+        # CalibrationDialog opens its own InputStream on the same device; stop
+        # our monitor first so the two don't collide on exclusive-mode
+        # backends, then always restart it once the dialog closes.
+        self._level_monitor.stop()
+        try:
+            dlg.exec()
+        finally:
+            self._start_level_monitor()
 
     def _on_calibration_done(self, device_name: str, sensitivity: float) -> None:
         label = self._current_input_device_label() or device_name
@@ -3728,6 +3846,14 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _play_test_noise(self) -> Optional[str]:
+        if self._state != AppState.IDLE:
+            self._log_event(
+                "WARNING",
+                "test_level",
+                "Test noise ping blocked: app not idle",
+                state=self._state,
+            )
+            return "Test noise is only available while idle."
         output_device = self._current_output_device()
         if output_device is None:
             return "No output device selected."
@@ -3930,12 +4056,34 @@ class MainWindow(QMainWindow):
         if not self._ensure_rnd_hrtfs_available([measurement]):
             return
         compensated = bool(hrtf_path)
-        filename = f"{self._safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
+        filename = f"{safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
         path = self._resolve_export_path(requested_path, filename, "Export R&D Measurement")
         if path is None:
             return
         freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
-        hrtf = HRTFCurve(hrtf_path) if compensated else None
+        hrtf = None
+        if compensated:
+            from dms.hrtf import get_hrtf_curve
+
+            try:
+                hrtf = get_hrtf_curve(hrtf_path)
+            except Exception as exc:
+                self._log_event(
+                    "WARNING",
+                    "rnd",
+                    "R&D export HRTF failed to load",
+                    path=hrtf_path,
+                    error=str(exc),
+                )
+                QMessageBox.warning(
+                    self,
+                    "HRTF Load Error",
+                    "Could not load the HRTF file needed to compensate this export "
+                    f"({Path(hrtf_path).name}):\n\n{exc}\n\n"
+                    "Export cancelled rather than writing a file that would be "
+                    "labeled as HRTF-compensated without the correction applied.",
+                )
+                return
         export_curve(
             freqs=freqs,
             mag_db=mag,
@@ -3970,7 +4118,7 @@ class MainWindow(QMainWindow):
             bool(self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name))
             for measurement in measurements
         )
-        filename = f"{self._safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
+        filename = f"{safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
         path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
         if path is None:
             return
@@ -4016,7 +4164,7 @@ class MainWindow(QMainWindow):
         if not directory:
             return
         for measurement in measurements:
-            path = Path(directory) / f"{self._safe_filename(measurement.name)}.txt"
+            path = Path(directory) / f"{safe_filename(measurement.name)}.txt"
             self._export_rnd_measurement(measurement, str(path))
         self._statusbar.showMessage(f"Exported {len(measurements)} R&D measurements.")
 
@@ -4068,14 +4216,26 @@ class MainWindow(QMainWindow):
         self._rnd_widget.session.saved_app_version = __version__
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._rnd_widget.photo_store.save_session(self._rnd_widget.session, path)
-            path.write_text(
+            # Copy in any new/updated photos first (purely additive), then durably
+            # write the session JSON, and only prune stale sidecar photos once the
+            # JSON referencing the current photo set is safely on disk. This way a
+            # failed/interrupted JSON write can never leave the on-disk session
+            # pointing at photos we already deleted.
+            self._rnd_widget.photo_store.materialize_photos(self._rnd_widget.session, path)
+            atomic_write_text(
+                path,
                 json.dumps(self._rnd_widget.session.to_dict(), indent=2),
                 encoding="utf-8",
             )
         except Exception as exc:
             QMessageBox.warning(self, "Save Failed", f"Could not save the R&D session.\n\n{exc}")
             return False
+        try:
+            self._rnd_widget.photo_store.prune_stale_photos(self._rnd_widget.session, path)
+        except Exception as exc:
+            self._log_event(
+                "WARNING", "rnd", "Failed to prune stale R&D session photos", path=str(path), error=str(exc)
+            )
         self._settings.set("rnd_session_directory", str(path.parent))
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Saved R&D session: {path}")
@@ -4125,6 +4285,19 @@ class MainWindow(QMainWindow):
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Loaded R&D session: {path_str}")
         self._log_event("INFO", "rnd", "R&D session loaded", path=path_str, mode=mode)
+        if incoming.load_warnings:
+            for warning in incoming.load_warnings:
+                self._log_event("WARNING", "rnd", warning)
+            shown = incoming.load_warnings[:10]
+            remaining = len(incoming.load_warnings) - len(shown)
+            detail = "\n".join(shown)
+            if remaining > 0:
+                detail += f"\n…and {remaining} more"
+            QMessageBox.warning(
+                self,
+                "Some R&D Items Could Not Be Loaded",
+                f"{len(incoming.load_warnings)} item(s) could not be loaded:\n\n{detail}",
+            )
         if missing_photos:
             QMessageBox.warning(
                 self,
@@ -4149,11 +4322,6 @@ class MainWindow(QMainWindow):
             return "add"
         return "cancel"
 
-    @staticmethod
-    def _safe_filename(value: str) -> str:
-        safe = "".join(ch if ch.isalnum() or ch in " ._-()" else "_" for ch in value).strip()
-        return safe or "R&D Measurement"
-
     def _resolve_export_path(
         self,
         requested_path: Optional[str],
@@ -4164,7 +4332,7 @@ class MainWindow(QMainWindow):
         if requested_path:
             path = Path(requested_path).expanduser()
             if path.exists() and path.is_dir():
-                path = path / filename
+                path = path / safe_filename(filename)
             if not path.parent.exists():
                 raise ValueError(f"Export directory does not exist: {path.parent}")
             if path.exists():
@@ -4291,7 +4459,7 @@ class MainWindow(QMainWindow):
                 "Export averaged FR as a REW-style TXT file."
             )
             export_enabled = idle and self._average is not None
-        upload_enabled = idle and self._average is not None
+        upload_enabled = idle and self._average is not None and not self._squiglink_busy
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
@@ -4309,6 +4477,10 @@ class MainWindow(QMainWindow):
         return host, port
 
     def _upload_to_squiglink(self) -> None:
+        if self._squiglink_thread is not None:
+            self._statusbar.showMessage("A Squiglink upload is already in progress.")
+            return
+
         curve = self._bottom_curve_for_display_and_export()
         if curve is None:
             QMessageBox.information(
@@ -4329,7 +4501,16 @@ class MainWindow(QMainWindow):
 
         self._log_event("INFO", "upload", "Squiglink upload requested", host=host, port=port)
 
-        saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
+        try:
+            saved = decrypt_credentials(self._settings.get("squiglink_credentials_encrypted"))
+        except CredentialDecryptionError:
+            saved = None
+            self._log_event(
+                "WARNING",
+                "upload",
+                "Saved Squiglink credentials could not be decrypted (machine or "
+                "username changed?) — enter them again",
+            )
         remember_saved = bool(self._settings.get("squiglink_remember_credentials"))
         auth = SquiglinkAuthDialog(
             self,
@@ -4343,14 +4524,13 @@ class MainWindow(QMainWindow):
         username = auth.username()
         password = auth.password()
         remember = auth.remember_credentials()
-        self._settings.set("squiglink_remember_credentials", remember)
-        if remember:
-            self._settings.set(
-                "squiglink_credentials_encrypted",
-                encrypt_credentials(username, password),
-            )
-        else:
-            self._settings.set("squiglink_credentials_encrypted", None)
+        # M9: credentials are NOT persisted here. They're stashed on self and
+        # only written to settings from _on_squiglink_succeeded, once the
+        # upload has actually succeeded - a failed/incorrect password must
+        # never get written to disk as "remembered".
+        self._squiglink_pending_username = username
+        self._squiglink_pending_password = password
+        self._squiglink_pending_remember = remember
 
         compensated = self._is_hrtf_active()
         if not self._ensure_upload_metadata():
@@ -4381,38 +4561,206 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=len(self._kept_curves),
             )
-            upload_export_sftp(
-                local_path=tmp_path,
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                remote_filename=filename,
-            )
-            phone_book_status = self._sync_remote_phone_book(
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                phone_book_stem=phone_book_stem,
-            )
-            self._statusbar.showMessage("Upload to Squiglink completed successfully.")
-            self._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
-            QMessageBox.information(
-                self,
-                "Upload Complete",
-                f"Upload to Squiglink completed successfully.\n\n{phone_book_status}",
-            )
         except Exception as exc:
-            self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
-            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
-            QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
-        finally:
             if tmp_path is not None:
                 try:
                     tmp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+            self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
+            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
+            QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
+            return
+
+        # The temp file now lives until the whole (possibly multi-phase, due
+        # to host-key trust / phone-book fallback round-trips) operation
+        # concludes - see _finish_squiglink_operation.
+        self._squiglink_tmp_path = tmp_path
+
+        host_keys = dict(self._settings.get("squiglink_host_keys") or {})
+        known_key = host_keys.get(f"{host}:{port}")
+
+        config = SquiglinkUploadConfig(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            known_key=known_key,
+            local_path=str(tmp_path),
+            remote_filename=filename,
+            # Snapshot brand/model rather than sharing self._session with the
+            # worker thread - the worker only ever reads .brand/.model, and a
+            # snapshot avoids any cross-thread mutation race if the user
+            # somehow edits session metadata while the upload is in flight.
+            session=copy.copy(self._session),
+            phone_book_stem=phone_book_stem,
+            fallback_mode=None,
+            skip_upload=False,
+        )
+        self._start_squiglink_worker(config)
+
+    def _start_squiglink_worker(self, config: SquiglinkUploadConfig) -> None:
+        self._squiglink_config = config
+        self._squiglink_busy = True
+        self._sync_export_button()
+
+        progress = QProgressDialog(
+            "Uploading to Squiglink…", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("Squiglink Upload")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        worker = SquiglinkUploadWorker(config)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._on_squiglink_succeeded)
+        worker.failed.connect(self._on_squiglink_failed)
+        worker.host_key_needed.connect(self._on_squiglink_host_key_needed)
+        worker.phone_book_decision_needed.connect(self._on_squiglink_phone_book_decision)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # NOT progress.canceled.connect(worker.cancel): `worker` lives on the
+        # background thread, so a Qt signal/slot connection to a method on it
+        # would auto-resolve to a queued cross-thread call that only gets
+        # delivered once that thread's event loop starts - i.e. after run()
+        # already returned. Route through a same-thread (main-thread) slot
+        # that calls worker.cancel() as a plain, immediate method call
+        # instead, exactly like _abort_active_sweep() -> SweepWorker.abort().
+        progress.canceled.connect(self._cancel_squiglink_upload)
+
+        self._squiglink_thread = thread
+        self._squiglink_worker = worker
+        self._squiglink_progress = progress
+        progress.show()
+        thread.start()
+
+    def _cancel_squiglink_upload(self) -> None:
+        # Called synchronously on the main thread in response to the
+        # progress dialog's Cancel button; calls worker.cancel() as a plain
+        # method call (not a queued signal) so it takes effect immediately.
+        if self._squiglink_worker is not None:
+            self._squiglink_worker.cancel()
+
+    def _close_squiglink_progress(self) -> None:
+        if self._squiglink_progress is not None:
+            self._squiglink_progress.close()
+            self._squiglink_progress = None
+
+    def _finish_squiglink_operation(self) -> None:
+        """Called once the whole (possibly multi-phase) upload concludes,
+        successfully or not. Must NOT be called from the host-key/phone-book
+        decision slots when a relaunch is pending - only when there's
+        nothing left to retry."""
+        self._close_squiglink_progress()
+        # The thread deletes itself via its finished -> deleteLater wiring
+        # (mirroring _start_update_check); calling deleteLater here would
+        # queue a deferred delete that can run before the queued quit() is
+        # processed, destroying a still-running QThread.
+        self._squiglink_thread = None
+        self._squiglink_worker = None
+        self._squiglink_config = None
+        self._squiglink_busy = False
+        self._sync_export_button()
+        if self._squiglink_tmp_path is not None:
+            try:
+                self._squiglink_tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._squiglink_tmp_path = None
+
+    def _on_squiglink_succeeded(self, summary: str) -> None:
+        # M9: only persist credentials once the upload has actually
+        # succeeded end to end.
+        self._settings.set(
+            "squiglink_remember_credentials", self._squiglink_pending_remember
+        )
+        if self._squiglink_pending_remember:
+            self._settings.set(
+                "squiglink_credentials_encrypted",
+                encrypt_credentials(
+                    self._squiglink_pending_username, self._squiglink_pending_password
+                ),
+            )
+        else:
+            self._settings.set("squiglink_credentials_encrypted", None)
+
+        filename = self._squiglink_config.remote_filename if self._squiglink_config else ""
+        self._statusbar.showMessage("Upload to Squiglink completed successfully.")
+        self._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
+        self._finish_squiglink_operation()
+        QMessageBox.information(
+            self,
+            "Upload Complete",
+            f"Upload to Squiglink completed successfully.\n\n{summary}",
+        )
+
+    def _on_squiglink_failed(self, message: str) -> None:
+        # M9: a failed attempt (bad password, network error, canceled host
+        # key, etc.) must never touch squiglink_remember_credentials /
+        # squiglink_credentials_encrypted - any previously-saved credentials
+        # are left exactly as they were.
+        self._statusbar.showMessage(f"Upload to Squiglink failed: {message}")
+        self._log_event("ERROR", "upload", f"Squiglink upload failed: {message}")
+        self._finish_squiglink_operation()
+        QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{message}")
+
+    def _on_squiglink_host_key_needed(self, key_str: str, fingerprint: str) -> None:
+        self._close_squiglink_progress()
+        config = self._squiglink_config
+        if config is None:
+            return
+
+        choice = QMessageBox.question(
+            self,
+            "Verify Squiglink Server",
+            (
+                f"This is the first connection to {config.host}:{config.port}.\n\n"
+                f"Server host key fingerprint:\n{fingerprint}\n\n"
+                "Only continue if you trust this server. If you were not "
+                "expecting to see this prompt, do not proceed."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._on_squiglink_failed(
+                "Upload canceled: the server's host key was not trusted."
+            )
+            return
+
+        host_keys = dict(self._settings.get("squiglink_host_keys") or {})
+        host_keys[f"{config.host}:{config.port}"] = key_str
+        self._settings.set("squiglink_host_keys", host_keys)
+
+        config.known_key = key_str
+        self._start_squiglink_worker(config)
+
+    def _on_squiglink_phone_book_decision(self, kind: str, detail: str) -> None:
+        self._close_squiglink_progress()
+        config = self._squiglink_config
+        if config is None:
+            return
+
+        mode = self._ask_phone_book_fallback_mode(detail)
+        if mode == "fail":
+            self._on_squiglink_failed(
+                f"Upload canceled because phone book could not be loaded: {detail}"
+            )
+            return
+
+        # The measurement file upload already succeeded in phase 1 - the
+        # worker only reaches this decision point after a successful upload
+        # (run() uploads before ever touching the phone book, and any upload
+        # failure returns via the `failed` signal before the phone-book step
+        # runs at all) - so the relaunch must not repeat it.
+        config.fallback_mode = mode
+        config.skip_upload = True
+        self._start_squiglink_worker(config)
 
     def _ensure_upload_metadata(self) -> bool:
         side = (getattr(self._session, "channel_side", "") or "").strip().upper()
@@ -4464,49 +4812,24 @@ class MainWindow(QMainWindow):
             return "skip"
         return "fail"
 
-    def _sync_remote_phone_book(
-        self,
-        host: str,
-        port: int,
-        username: str,
-        password: str,
-        phone_book_stem: str,
-    ) -> str:
-        transport = paramiko.Transport((host, int(port)))
-        try:
-            transport.connect(username=username, password=password)
-            sftp = paramiko.SFTPClient.from_transport(transport)
-            try:
-                try:
-                    phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
-                except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
-                    mode = self._ask_phone_book_fallback_mode(str(exc))
-                    if mode == "fail":
-                        raise RuntimeError(
-                            f"Upload canceled because phone book could not be loaded: {exc}"
-                        ) from exc
-                    if mode == "skip":
-                        return "Measurement uploaded. Phone book update was skipped."
-                    phone_book = []
-
-                merge_phone_book_entry(phone_book, self._session, phone_book_stem)
-                write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
-                return "Phone book updated successfully."
-            finally:
-                sftp.close()
-        finally:
-            transport.close()
-
     def closeEvent(self, event) -> None:
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
         try:
-            self._device_check_timer.stop()
+            if self._device_poll_thread is not None and self._device_poll_thread.isRunning():
+                self._device_poll_thread.quit()
+                self._device_poll_thread.wait(3000)
         except Exception:
             pass
 
         try:
             self._abort_active_sweep()
+        except Exception:
+            pass
+
+        try:
+            if self._sweep_thread is not None and self._sweep_thread.isRunning():
+                self._sweep_thread.wait(3000)
         except Exception:
             pass
 
@@ -4518,7 +4841,20 @@ class MainWindow(QMainWindow):
         try:
             if self._update_check_thread is not None and self._update_check_thread.isRunning():
                 self._update_check_thread.quit()
-                self._update_check_thread.wait(500)
+                self._update_check_thread.wait(4500)
+        except Exception:
+            pass
+
+        try:
+            if self._squiglink_worker is not None:
+                self._squiglink_worker.cancel()
+        except Exception:
+            pass
+
+        try:
+            if self._squiglink_thread is not None and self._squiglink_thread.isRunning():
+                self._squiglink_thread.quit()
+                self._squiglink_thread.wait(12000)
         except Exception:
             pass
 

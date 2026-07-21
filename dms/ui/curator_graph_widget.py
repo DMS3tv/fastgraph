@@ -101,6 +101,7 @@ class GraphWidget(LockedPlotWidget):
         super().__init__()
         self._items: list[object] = []
         self._state: GraphState | None = None
+        self._visible_layers_cache: list[tuple[LayerState, CurveData]] = []
         self._wipe_progress = 1.0
         self._entering_layer_ids: set[str] = set()
         self._entering_bounds = False
@@ -121,6 +122,9 @@ class GraphWidget(LockedPlotWidget):
 
     def redraw(self, state: GraphState) -> None:
         self._state = state
+        self._visible_layers_cache = visible_display_layers(
+            state.layers, state.smoothing_fraction
+        )
         self._render()
 
     def apply_theme(self, theme: str) -> None:
@@ -162,9 +166,7 @@ class GraphWidget(LockedPlotWidget):
     def snapshot_visible_layer(self, layer_id: str) -> LayerSnapshot | None:
         if self._state is None:
             return None
-        for layer, curve in visible_display_layers(
-            self._state.layers, self._state.smoothing_fraction
-        ):
+        for layer, curve in self._visible_layers_cache:
             if layer.id == layer_id:
                 return LayerSnapshot(layer=layer, curve=curve)
         return None
@@ -198,7 +200,7 @@ class GraphWidget(LockedPlotWidget):
         self._draw_bounds(state, bounds_progress)
         for snapshot in self._exiting_layers:
             self._draw_curve(snapshot.curve, snapshot.layer.color, 1.0 - self._wipe_progress)
-        visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
+        visible_layers = self._visible_layers_cache
         for layer, curve in visible_layers:
             progress = self._wipe_progress if layer.id in self._entering_layer_ids else 1.0
             self._draw_curve(curve, layer.color, progress)

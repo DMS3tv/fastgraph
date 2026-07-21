@@ -73,9 +73,10 @@ def test_scan_automation_directory_loads_json_files(tmp_path: Path) -> None:
     save_automation(tmp_path / "one.fastgraph-automation.json", AutomationDefinition(name="One"))
     (tmp_path / "ignore.json").write_text("{}", encoding="utf-8")
 
-    loaded = scan_automation_directory(tmp_path)
+    loaded, skipped = scan_automation_directory(tmp_path)
 
     assert [automation.name for _path, automation in loaded] == ["One"]
+    assert skipped == []
 
 
 def test_default_automation_directory_uses_documents_or_home() -> None:

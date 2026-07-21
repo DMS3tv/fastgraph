@@ -1,6 +1,8 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional
+from dms.file_io import atomic_write_json
 from dms.settings_manager import _config_dir
 
 
@@ -10,6 +12,7 @@ class CalibrationStore:
     def __init__(self) -> None:
         self._path = _config_dir() / "calibration.json"
         self._data: dict[str, float] = {}
+        self.load_error: str | None = None
         self._load()
 
     def get_sensitivity(self, device_name: str) -> Optional[float]:
@@ -37,17 +40,26 @@ class CalibrationStore:
         return 20.0 * __import__("math").log10(pa / 20e-6)
 
     def _load(self) -> None:
-        if self._path.exists():
+        if not self._path.exists():
+            return
+        try:
+            with open(self._path) as f:
+                self._data = json.load(f)
+        except Exception:
+            self._data = {}
+            corrupt_path = self._path.with_name(self._path.name + ".corrupt")
             try:
-                with open(self._path) as f:
-                    self._data = json.load(f)
-            except Exception:
-                self._data = {}
+                os.replace(self._path, corrupt_path)
+            except OSError:
+                pass
+            self.load_error = (
+                f"{self._path.name} was corrupt and has been reset; "
+                f"backup saved as {corrupt_path.name}"
+            )
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self._path, "w") as f:
-                json.dump(self._data, f, indent=2)
+            atomic_write_json(self._path, self._data)
         except Exception:
             pass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
@@ -21,6 +22,22 @@ _JPEG_QUALITY = 88
 def attachment_directory(session_path: Path) -> Path:
     """Return the portable sidecar directory for an R&D session file."""
     return session_path.with_name(f"{session_path.stem}.attachments")
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    """Copy source into destination without ever leaving a partially-written file in place."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent)
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        shutil.copy2(source, tmp_path)
+        os.replace(tmp_path, destination)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def session_photos(session: RnDSession):
@@ -79,20 +96,38 @@ class RnDPhotoStore:
                 missing.append(photo.file_name)
         return missing
 
-    def save_session(self, session: RnDSession, session_path: Path) -> None:
-        """Materialize all available staged photos and remove stale managed assets."""
+    def materialize_photos(self, session: RnDSession, session_path: Path) -> None:
+        """Copy all available staged/runtime photos into the sidecar directory.
+
+        Purely additive: never removes anything, so it is safe to call before the
+        session JSON itself has been durably written.
+        """
         destination_dir = attachment_directory(session_path)
         photos = list(session_photos(session))
         if photos:
             destination_dir.mkdir(parents=True, exist_ok=True)
-        expected = {photo.file_name for photo in photos}
         for photo in photos:
             source = Path(photo.runtime_path) if photo.runtime_path else self.root / photo.file_name
             if not source.is_file():
                 continue
             destination = destination_dir / photo.file_name
-            shutil.copy2(source, destination)
+            _atomic_copy(source, destination)
+
+    def prune_stale_photos(self, session: RnDSession, session_path: Path) -> None:
+        """Remove managed sidecar JPEGs no longer referenced by the session.
+
+        Destructive: only call this after the session JSON referencing the current
+        photo set has been durably written, so a failed write never orphans photos
+        the on-disk session still points at.
+        """
+        destination_dir = attachment_directory(session_path)
+        expected = {photo.file_name for photo in session_photos(session)}
         if destination_dir.exists():
             for child in destination_dir.iterdir():
                 if child.is_file() and _MANAGED_JPEG.match(child.name) and child.name not in expected:
                     child.unlink()
+
+    def save_session(self, session: RnDSession, session_path: Path) -> None:
+        """Materialize all available staged photos and remove stale managed assets."""
+        self.materialize_photos(session, session_path)
+        self.prune_stale_photos(session, session_path)

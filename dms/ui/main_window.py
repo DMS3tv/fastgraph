@@ -74,6 +74,7 @@ from dms.export import (
     export_curve,
     export_variation,
 )
+from dms.file_io import atomic_write_text
 from dms.hrtf import HRTFCurve
 from dms.measurement_alignment import (
     format_diagnostics_summary,
@@ -4068,14 +4069,26 @@ class MainWindow(QMainWindow):
         self._rnd_widget.session.saved_app_version = __version__
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._rnd_widget.photo_store.save_session(self._rnd_widget.session, path)
-            path.write_text(
+            # Copy in any new/updated photos first (purely additive), then durably
+            # write the session JSON, and only prune stale sidecar photos once the
+            # JSON referencing the current photo set is safely on disk. This way a
+            # failed/interrupted JSON write can never leave the on-disk session
+            # pointing at photos we already deleted.
+            self._rnd_widget.photo_store.materialize_photos(self._rnd_widget.session, path)
+            atomic_write_text(
+                path,
                 json.dumps(self._rnd_widget.session.to_dict(), indent=2),
                 encoding="utf-8",
             )
         except Exception as exc:
             QMessageBox.warning(self, "Save Failed", f"Could not save the R&D session.\n\n{exc}")
             return False
+        try:
+            self._rnd_widget.photo_store.prune_stale_photos(self._rnd_widget.session, path)
+        except Exception as exc:
+            self._log_event(
+                "WARNING", "rnd", "Failed to prune stale R&D session photos", path=str(path), error=str(exc)
+            )
         self._settings.set("rnd_session_directory", str(path.parent))
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Saved R&D session: {path}")

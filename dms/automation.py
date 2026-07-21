@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from dms.file_io import atomic_write_text
+
 
 SCHEMA_VERSION = 1
 AUTOMATION_SUFFIX = ".fastgraph-automation.json"
@@ -200,16 +202,19 @@ def load_automation(path: Path) -> AutomationDefinition:
 
 def save_automation(path: Path, automation: AutomationDefinition) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(automation.to_dict(), indent=2), encoding="utf-8")
+    atomic_write_text(path, json.dumps(automation.to_dict(), indent=2), encoding="utf-8")
 
 
-def scan_automation_directory(directory: Path) -> list[tuple[Path, AutomationDefinition]]:
+def scan_automation_directory(
+    directory: Path,
+) -> tuple[list[tuple[Path, AutomationDefinition]], list[tuple[Path, str]]]:
     if not directory.exists():
-        return []
+        return [], []
     loaded: list[tuple[Path, AutomationDefinition]] = []
+    skipped: list[tuple[Path, str]] = []
     for path in sorted(directory.glob(f"*{AUTOMATION_SUFFIX}")):
         try:
             loaded.append((path, load_automation(path)))
-        except Exception:
-            continue
-    return loaded
+        except Exception as exc:
+            skipped.append((path, str(exc)))
+    return loaded, skipped

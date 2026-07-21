@@ -244,7 +244,7 @@ class EventsWidget(QWidget):
 
     def reload_library(self) -> None:
         self._library.clear()
-        self._library_items: list[tuple[Path, AutomationDefinition]] = scan_automation_directory(
+        self._library_items, _skipped = scan_automation_directory(
             self.automation_directory()
         )
         for path, automation in self._library_items:
@@ -381,9 +381,10 @@ class EventsWidget(QWidget):
         self._load_into_editor(load_automation(path), path)
 
     def automations_for_trigger(self, trigger: str) -> list[AutomationDefinition]:
+        loaded, _skipped = scan_automation_directory(self.automation_directory())
         return [
             automation
-            for _path, automation in scan_automation_directory(self.automation_directory())
+            for _path, automation in loaded
             if automation.enabled and automation.trigger == trigger
         ]
 

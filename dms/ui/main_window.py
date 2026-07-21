@@ -2745,6 +2745,8 @@ class MainWindow(QMainWindow):
                 self._settings.get("end_marker_confidence_min")
             ),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            snr_min_db=float(self._settings.get("snr_min_db")),
+            sweep_coverage_min=float(self._settings.get("sweep_coverage_min")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -3155,6 +3157,8 @@ class MainWindow(QMainWindow):
             start_alignment_confidence_min=float(self._settings.get("start_alignment_confidence_min")),
             end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            snr_min_db=float(self._settings.get("snr_min_db")),
+            sweep_coverage_min=float(self._settings.get("sweep_coverage_min")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()

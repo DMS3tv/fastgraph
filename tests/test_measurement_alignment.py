@@ -17,10 +17,21 @@ from dms.measurement_alignment import (
 from dms.measurement_layout import build_measurement_layout
 
 
-def _test_sweep(length: int) -> np.ndarray:
+def _test_sweep(length: int, taper_edges_only: bool = False) -> np.ndarray:
     rng = np.random.default_rng(1234)
     sweep = rng.normal(0.0, 0.2, length).astype(np.float32)
-    sweep *= np.hanning(length).astype(np.float32)
+    if taper_edges_only:
+        # Matches production sweeps (dms/processing.py generate_log_sweep), which
+        # only cosine-fade a short edge region to avoid clicks rather than
+        # windowing the whole waveform. Standard-mode tests need this realistic
+        # envelope so the H4 sweep-coverage gate (which compares RMS across 8
+        # equal segments) doesn't mistake a full-length taper for dropout.
+        fade_n = max(1, length // 40)
+        fade = (np.sin(np.linspace(0.0, np.pi / 2, fade_n)) ** 2).astype(np.float32)
+        sweep[:fade_n] *= fade
+        sweep[-fade_n:] *= fade[::-1]
+    else:
+        sweep *= np.hanning(length).astype(np.float32)
     return sweep
 
 
@@ -32,7 +43,11 @@ def _recording_from_layout(layout, delay_samples: int = 0) -> np.ndarray:
 
 
 def _layout(fs: int = 8_000, bluetooth: bool = False):
-    sweep = _test_sweep(2_048)
+    # Standard-mode tests use a realistic (edges-only) taper so the H4
+    # sweep-coverage gate sees uniform in-band RMS for genuinely clean
+    # recordings; Bluetooth-mode tests keep the original full-window taper
+    # since those code paths never exercise the new coverage/SNR gates.
+    sweep = _test_sweep(2_048, taper_edges_only=not bluetooth)
     layout = build_measurement_layout(
         sweep=sweep,
         fs=fs,
@@ -1010,11 +1025,14 @@ def test_standard_mode_rejects_pure_noise_recording() -> None:
 
 
 def test_standard_mode_rejects_dropout_recording() -> None:
-    # H4: simulate a dropout where the recording is clean up to the sweep onset
-    # but goes silent partway through (zero-padded tail, same total length).
-    # The start gate looks only at the sweep onset region, so this case is not
-    # guaranteed to be caught by start_conf alone -- assert failure broadly
-    # rather than pinning the exact failure reason.
+    # H4-residual: simulate a dropout where the recording is clean up to the
+    # sweep onset but goes silent partway through (zero-padded tail, same
+    # total length). An SNR floor cannot catch this -- the zeroed tail makes
+    # the measured noise floor ~0, so SNR looks artificially high -- which is
+    # exactly why the sweep-coverage gate exists. With the default settings,
+    # onset confidence (~9.1) stays above start_alignment_confidence_min
+    # (9.0), so the start gate does NOT fire here; the coverage gate (segment
+    # RMS ratio ~0.0, far below sweep_coverage_min=0.05) is what catches it.
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
     mid = layout.excitation_start_sample + len(layout.excitation) // 2
@@ -1023,4 +1041,110 @@ def test_standard_mode_rejects_dropout_recording() -> None:
     with pytest.raises(MeasurementAlignmentError) as exc:
         align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
 
-    assert exc.value.reason is not None
+    assert exc.value.reason == MeasurementFailureReason.INCOMPLETE_SWEEP
+    assert exc.value.diagnostics.start_confidence is not None
+    assert exc.value.diagnostics.start_confidence >= 9.0
+
+
+def _segment_rms_ratio(aligned_recording: np.ndarray) -> float:
+    n = len(aligned_recording)
+    edges = np.linspace(0, n, 9, dtype=int)
+    segment_rms = [
+        float(np.sqrt(np.mean(np.square(aligned_recording[edges[i]:edges[i + 1]]))))
+        for i in range(8)
+    ]
+    median_rms = float(np.median(segment_rms))
+    return float(np.min(segment_rms)) / median_rms if median_rms > 0 else 0.0
+
+
+def test_h4_residual_clean_sweep_passes_snr_and_coverage_gates_by_default(
+    capsys,
+) -> None:
+    # H4-residual (a): a clean recording with realistic edge-only sweep
+    # tapering must pass both new gates at production defaults (snr_min_db=6.0,
+    # sweep_coverage_min=0.05).
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+
+    result = align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    ratio = _segment_rms_ratio(result.aligned_recording)
+    print(
+        f"[H4-residual clean case] snr_db={result.snr_db:.1f} "
+        f"segment_rms_ratio={ratio:.3f}"
+    )
+    assert result.diagnostics.failure_reason is None
+    assert result.snr_db >= 6.0
+    assert ratio >= 0.25
+
+
+def test_h4_residual_mid_sweep_dropout_is_caught_by_coverage_not_snr() -> None:
+    # H4-residual (b): pinned in test_standard_mode_rejects_dropout_recording
+    # above. This test additionally documents the measured segment-RMS ratio
+    # for reviewers, and confirms the physics claim that a zeroed tail keeps
+    # SNR looking artificially high (noise floor ~0) so the SNR gate alone
+    # would never catch this -- only the coverage gate does.
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+    mid = layout.excitation_start_sample + len(layout.excitation) // 2
+    rec[mid:] = 0.0
+
+    with pytest.raises(MeasurementAlignmentError) as exc:
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
+
+    assert exc.value.reason == MeasurementFailureReason.INCOMPLETE_SWEEP
+
+    # With the coverage gate disabled, the same recording proceeds to SNR
+    # estimation, which reports an artificially high SNR -- proving an SNR
+    # floor cannot substitute for the coverage gate on this failure mode.
+    result = align_recording_to_layout(
+        rec, sweep, layout, AlignmentSettings(sweep_coverage_min=0.0)
+    )
+    assert result.snr_db >= 100.0
+
+
+def test_h4_residual_heavy_noise_with_confident_start_triggers_low_snr() -> None:
+    # H4-residual (c): additive noise (seeded) heavy enough to push snr_db
+    # below the 6.0 default floor while start-alignment confidence stays
+    # comfortably above the 9.0 default gate, isolating the SNR gate.
+    sweep, layout = _layout()
+    rec = _recording_from_layout(layout)
+    rng = np.random.default_rng(777)
+    noisy_rec = (rec + rng.normal(0.0, 0.13, len(rec)).astype(np.float32)).astype(
+        np.float32
+    )
+
+    with pytest.raises(MeasurementAlignmentError, match="Low measurement SNR") as exc:
+        align_recording_to_layout(noisy_rec, sweep, layout, AlignmentSettings())
+
+    diagnostics = exc.value.diagnostics
+    assert exc.value.reason == MeasurementFailureReason.LOW_SNR
+    assert diagnostics.start_confidence is not None
+    assert diagnostics.start_confidence >= 9.0
+    assert diagnostics.snr_db is not None
+    assert diagnostics.snr_db < 6.0
+
+
+def test_h4_residual_zero_thresholds_disable_both_gates() -> None:
+    # H4-residual (d): snr_min_db=0 and sweep_coverage_min=0 disable both new
+    # gates, so the degraded recordings from (b)/(c) succeed again.
+    sweep, layout = _layout()
+    disabled_settings = AlignmentSettings(snr_min_db=0.0, sweep_coverage_min=0.0)
+
+    dropout_rec = _recording_from_layout(layout)
+    mid = layout.excitation_start_sample + len(layout.excitation) // 2
+    dropout_rec[mid:] = 0.0
+    dropout_result = align_recording_to_layout(
+        dropout_rec, sweep, layout, disabled_settings
+    )
+    assert dropout_result.diagnostics.failure_reason is None
+
+    rng = np.random.default_rng(777)
+    noisy_rec = (
+        _recording_from_layout(layout)
+        + rng.normal(0.0, 0.13, layout.total_samples + 256).astype(np.float32)
+    ).astype(np.float32)
+    noisy_result = align_recording_to_layout(
+        noisy_rec, sweep, layout, disabled_settings
+    )
+    assert noisy_result.diagnostics.failure_reason is None

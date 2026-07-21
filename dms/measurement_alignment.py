@@ -21,6 +21,8 @@ class AlignmentSettings:
     start_alignment_confidence_min: float = 9.0
     end_marker_confidence_min: float = 7.0
     timing_drift_max_ms: float = 35.0
+    snr_min_db: float = 6.0
+    sweep_coverage_min: float = 0.05
 
 
 class MeasurementFailureReason:
@@ -30,6 +32,8 @@ class MeasurementFailureReason:
     SHORT_RECORDING = "short_recording"
     SHORT_ALIGNED_RECORDING = "short_aligned_recording"
     END_MARKER_UNVERIFIED = "end_marker_unverified"
+    LOW_SNR = "low_snr"
+    INCOMPLETE_SWEEP = "incomplete_sweep"
 
 
 class MeasurementWarningReason:
@@ -297,6 +301,8 @@ def is_retryable_timing_failure(
             MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
             MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
             MeasurementFailureReason.END_MARKER_UNVERIFIED,
+            MeasurementFailureReason.LOW_SNR,
+            MeasurementFailureReason.INCOMPLETE_SWEEP,
         }
 
     msg = message.lower()
@@ -1181,6 +1187,31 @@ def align_recording_to_layout(
             rec, layout, settings, start_result, end_result
         )
         sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
+
+        if float(settings.sweep_coverage_min) > 0:
+            segment_edges = np.linspace(0, len(sweep_rec), 9, dtype=int)
+            segment_rms = np.array(
+                [
+                    float(np.sqrt(np.mean(np.square(sweep_rec[segment_edges[i]:segment_edges[i + 1]]))))
+                    if segment_edges[i + 1] > segment_edges[i]
+                    else 0.0
+                    for i in range(8)
+                ]
+            )
+            median_rms = float(np.median(segment_rms))
+            min_rms = float(np.min(segment_rms))
+            if median_rms > 0.0 and min_rms < float(settings.sweep_coverage_min) * median_rms:
+                _raise_alignment_error(
+                    f"Incomplete sweep recording (segment coverage ratio "
+                    f"{min_rms / median_rms:.2f}; minimum {settings.sweep_coverage_min:.2f}). "
+                    "The sweep recording has silent/dropped sections — check the "
+                    "connection and try again.",
+                    MeasurementFailureReason.INCOMPLETE_SWEEP,
+                    layout,
+                    settings,
+                    start=start_result,
+                )
+
         snr_db = estimate_snr_db(
             rec,
             sweep_rec,
@@ -1188,6 +1219,18 @@ def align_recording_to_layout(
             start_idx,
             layout.fs,
         )
+
+        if float(settings.snr_min_db) > 0 and snr_db < float(settings.snr_min_db):
+            _raise_alignment_error(
+                f"Low measurement SNR ({snr_db:.1f} dB; minimum {settings.snr_min_db:.1f} dB). "
+                "Please reduce noise, increase playback level, or use higher latency.",
+                MeasurementFailureReason.LOW_SNR,
+                layout,
+                settings,
+                start=start_result,
+                snr_db=snr_db,
+            )
+
         return MeasurementAlignmentResult(
             aligned_recording=sweep_rec,
             start=start_result,

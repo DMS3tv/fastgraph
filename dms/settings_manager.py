@@ -38,6 +38,8 @@ _DEFAULTS: dict[str, Any] = {
     "start_alignment_confidence_min": 9.0,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,
+    "snr_min_db": 6.0,
+    "sweep_coverage_min": 0.05,
     "update_check_enabled": True,
     "update_feed_url": "",
     "squiglink_host": "sftp.squig.link",

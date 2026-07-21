@@ -17,6 +17,8 @@ MEASUREMENT_PROFILE_KEYS = (
     "start_alignment_confidence_min",
     "end_marker_confidence_min",
     "timing_drift_max_ms",
+    "snr_min_db",
+    "sweep_coverage_min",
 )
 
 PROFILE_SNAPSHOT_SETTING = "standard_measurement_profile_snapshot"
@@ -30,6 +32,8 @@ STANDARD_PROFILE_DEFAULTS: dict[str, Any] = {
     "start_alignment_confidence_min": 9.0,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,
+    "snr_min_db": 6.0,
+    "sweep_coverage_min": 0.05,
 }
 
 BLUETOOTH_PROFILE_DEFAULTS: dict[str, Any] = {
@@ -41,6 +45,8 @@ BLUETOOTH_PROFILE_DEFAULTS: dict[str, Any] = {
     "start_alignment_confidence_min": 3.0,
     "end_marker_confidence_min": 2.5,
     "timing_drift_max_ms": 120.0,
+    "snr_min_db": 0.0,
+    "sweep_coverage_min": 0.0,
 }
 
 

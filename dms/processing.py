@@ -162,6 +162,12 @@ def compute_rms_average(
     sum_lin = np.zeros(n_points)
     count = 0
     for freqs, mag_db in curves:
+        if len(freqs) < 2 or len(mag_db) < 2 or len(freqs) != len(mag_db):
+            raise ValueError(
+                "compute_rms_average received a degenerate curve "
+                f"(freqs len={len(freqs)}, mag_db len={len(mag_db)}); "
+                "each curve needs at least 2 matching points"
+            )
         interp = interp1d(freqs, mag_db, kind="linear", bounds_error=False,
                           fill_value=(mag_db[0], mag_db[-1]))
         vals = interp(common_freqs)

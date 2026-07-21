@@ -186,3 +186,124 @@ def test_group_variation_requires_two_measurements_and_returns_percentiles() -> 
     assert p75.shape == freqs.shape
     assert p90.shape == freqs.shape
     assert median.shape == freqs.shape
+
+
+def test_session_from_dict_skips_measurement_missing_freqs_key() -> None:
+    good = _measurement("a", "A")
+    session = RnDSession(measurements=[good], ungrouped_order=["a"])
+    data = session.to_dict()
+    bad_measurement = _measurement("b", "B").to_dict()
+    del bad_measurement["freqs"]
+    data["measurements"].append(bad_measurement)
+
+    loaded = RnDSession.from_dict(data)
+
+    assert [item.id for item in loaded.measurements] == ["a"]
+    assert loaded.measurements[0].name == "A"
+    assert np.allclose(loaded.measurements[0].mag_db, good.mag_db)
+    assert len(loaded.load_warnings) == 1
+
+
+def test_session_from_dict_skips_measurement_with_empty_curve_arrays() -> None:
+    good = _measurement("a", "A")
+    bad_dict = _measurement("b", "B").to_dict()
+    bad_dict["freqs"] = []
+    bad_dict["mag_db"] = []
+    session = RnDSession(measurements=[good], ungrouped_order=["a"])
+    data = session.to_dict()
+    data["measurements"].append(bad_dict)
+
+    loaded = RnDSession.from_dict(data)
+
+    assert [item.id for item in loaded.measurements] == ["a"]
+    assert len(loaded.load_warnings) == 1
+
+
+def test_session_from_dict_skips_measurement_with_mismatched_lengths() -> None:
+    good = _measurement("a", "A")
+    bad_dict = _measurement("b", "B").to_dict()
+    bad_dict["freqs"] = [100.0, 1000.0, 10000.0]
+    bad_dict["mag_db"] = [1.0, 0.0]
+    session = RnDSession(measurements=[good], ungrouped_order=["a"])
+    data = session.to_dict()
+    data["measurements"].append(bad_dict)
+
+    loaded = RnDSession.from_dict(data)
+
+    assert [item.id for item in loaded.measurements] == ["a"]
+    assert len(loaded.load_warnings) == 1
+
+
+def test_session_from_dict_skips_measurement_with_nan_values() -> None:
+    good = _measurement("a", "A")
+    bad_dict = _measurement("b", "B").to_dict()
+    bad_dict["mag_db"] = [1.0, float("nan"), 3.0]
+    session = RnDSession(measurements=[good], ungrouped_order=["a"])
+    data = session.to_dict()
+    data["measurements"].append(bad_dict)
+
+    loaded = RnDSession.from_dict(data)
+
+    assert [item.id for item in loaded.measurements] == ["a"]
+    assert len(loaded.load_warnings) == 1
+
+
+def test_session_from_dict_resets_corrupt_target_curve() -> None:
+    session = RnDSession(
+        measurements=[_measurement("a", "A")],
+        ungrouped_order=["a"],
+        target_visible=True,
+        target_freqs=np.array([100.0, 1000.0, 10000.0]),
+        target_mag_db=np.array([1.0, 0.0, -1.0]),
+    )
+    data = session.to_dict()
+    data["target_mag_db"] = [1.0, 0.0]  # mismatched length vs target_freqs
+
+    loaded = RnDSession.from_dict(data)
+
+    assert loaded.target_visible is False
+    assert loaded.target_freqs.size == 0
+    assert loaded.target_mag_db.size == 0
+    assert len(loaded.load_warnings) == 1
+
+
+def test_session_from_dict_no_target_data_produces_no_warnings() -> None:
+    session = RnDSession(measurements=[_measurement("a", "A")], ungrouped_order=["a"])
+    data = session.to_dict()
+
+    loaded = RnDSession.from_dict(data)
+
+    assert loaded.load_warnings == []
+
+
+def test_group_variation_ignores_degenerate_measurement() -> None:
+    good_a = _measurement("a", "A")
+    good_b = _measurement("b", "B", 2.0)
+    bad = RnDMeasurement(
+        id="c",
+        name="C",
+        freqs=np.array([]),
+        mag_db=np.array([]),
+        metadata={},
+        rig="Rig",
+        input_device_label="Input",
+        input_channel_index=0,
+        input_channel_label="Channel 1",
+        output_device_label="Output",
+    )
+
+    variation = group_variation([good_a, good_b, bad])
+
+    assert variation is not None
+    freqs, p10, p25, p75, p90, median = variation
+    assert len(freqs) == 1200
+
+
+def test_rnd_session_round_trip_has_no_load_warnings() -> None:
+    first = _measurement("a", "A")
+    second = _measurement("b", "B", 1.0)
+    session = RnDSession(measurements=[first, second], ungrouped_order=["a", "b"])
+
+    loaded = RnDSession.from_dict(session.to_dict())
+
+    assert loaded.load_warnings == []

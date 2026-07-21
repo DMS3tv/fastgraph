@@ -24,6 +24,35 @@ DEFAULT_COLORS = [
 ]
 
 
+def _validate_curve_arrays(
+    freqs_raw: Any, mag_db_raw: Any, *, label: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate and coerce a frequency/magnitude curve pair.
+
+    Raises ValueError with `label` in the message if the data is missing,
+    non-numeric, mismatched in length, too short (<2 points), or contains
+    non-finite values.
+    """
+    if freqs_raw is None or mag_db_raw is None:
+        raise ValueError(f"{label}: missing frequency/magnitude data")
+    try:
+        freqs = np.asarray(freqs_raw, dtype=float)
+        mag_db = np.asarray(mag_db_raw, dtype=float)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}: non-numeric frequency/magnitude data")
+    if freqs.ndim != 1 or mag_db.ndim != 1:
+        raise ValueError(f"{label}: malformed frequency/magnitude data")
+    if len(freqs) != len(mag_db):
+        raise ValueError(
+            f"{label}: mismatched frequency/magnitude lengths ({len(freqs)} vs {len(mag_db)})"
+        )
+    if len(freqs) < 2:
+        raise ValueError(f"{label}: too few data points ({len(freqs)})")
+    if not (np.isfinite(freqs).all() and np.isfinite(mag_db).all()):
+        raise ValueError(f"{label}: contains non-finite values")
+    return freqs, mag_db
+
+
 @dataclass
 class RnDMeasurement:
     name: str
@@ -75,11 +104,18 @@ class RnDMeasurement:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RnDMeasurement":
+        measurement_id = str(data.get("id") or uuid4().hex)
+        name = str(data.get("name") or "R&D Measurement")
+        freqs, mag_db = _validate_curve_arrays(
+            data.get("freqs"),
+            data.get("mag_db"),
+            label=f"R&D measurement '{name}' ({measurement_id})",
+        )
         return cls(
-            id=str(data.get("id") or uuid4().hex),
-            name=str(data.get("name") or "R&D Measurement"),
-            freqs=np.array(data.get("freqs") or [], dtype=float),
-            mag_db=np.array(data.get("mag_db") or [], dtype=float),
+            id=measurement_id,
+            name=name,
+            freqs=freqs,
+            mag_db=mag_db,
             metadata=dict(data.get("metadata") or {}),
             rig=str(data.get("rig") or ""),
             input_device_label=str(data.get("input_device_label") or ""),
@@ -206,6 +242,7 @@ class RnDSession:
     delta_mode_enabled: bool = False
     schema_version: int = SCHEMA_VERSION
     saved_app_version: str = ""
+    load_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -234,13 +271,37 @@ class RnDSession:
         version = int(data.get("schema_version") or 0)
         if version != SCHEMA_VERSION:
             raise ValueError(f"Unsupported R&D session schema version: {version}")
+
+        load_warnings: list[str] = []
+
+        measurements: list[RnDMeasurement] = []
+        for item in data.get("measurements") or []:
+            try:
+                measurements.append(RnDMeasurement.from_dict(item))
+            except ValueError as exc:
+                load_warnings.append(str(exc))
+
+        target_freqs_raw = data.get("target_freqs") or []
+        target_mag_db_raw = data.get("target_mag_db") or []
+        target_visible = bool(data.get("target_visible", False))
+        target_freqs = np.array([], dtype=float)
+        target_mag_db = np.array([], dtype=float)
+        target_expected = target_visible or bool(target_freqs_raw) or bool(target_mag_db_raw)
+        if target_expected:
+            try:
+                target_freqs, target_mag_db = _validate_curve_arrays(
+                    target_freqs_raw, target_mag_db_raw, label="R&D target curve"
+                )
+            except ValueError as exc:
+                target_freqs = np.array([], dtype=float)
+                target_mag_db = np.array([], dtype=float)
+                target_visible = False
+                load_warnings.append(str(exc))
+
         session = cls(
             schema_version=version,
             saved_app_version=str(data.get("saved_app_version") or ""),
-            measurements=[
-                RnDMeasurement.from_dict(item)
-                for item in data.get("measurements") or []
-            ],
+            measurements=measurements,
             groups=[RnDGroup.from_dict(item) for item in data.get("groups") or []],
             ungrouped_order=[str(item) for item in data.get("ungrouped_order") or []],
             selected_id=data.get("selected_id"),
@@ -248,14 +309,15 @@ class RnDSession:
             hrtf_name=str(data.get("hrtf_name") or ""),
             hrtf_enabled=bool(data.get("hrtf_enabled")),
             preference_bounds_enabled=bool(data.get("preference_bounds_enabled", False)),
-            target_visible=bool(data.get("target_visible", False)),
+            target_visible=target_visible,
             target_name=str(data.get("target_name") or ""),
             target_path=str(data.get("target_path") or ""),
-            target_freqs=np.array(data.get("target_freqs") or [], dtype=float),
-            target_mag_db=np.array(data.get("target_mag_db") or [], dtype=float),
+            target_freqs=target_freqs,
+            target_mag_db=target_mag_db,
             target_offset_db=float(data.get("target_offset_db") or 0.0),
             smoothing_fraction=int(data.get("smoothing_fraction") or 48),
             delta_mode_enabled=bool(data.get("delta_mode_enabled", False)),
+            load_warnings=load_warnings,
         )
         session.repair_ordering()
         return session
@@ -360,9 +422,13 @@ def group_variation(
     *,
     smoothing_fraction: int = 48,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    if len(measurements) < 2:
+    valid_measurements = [
+        item for item in measurements
+        if len(item.freqs) >= 2 and len(item.mag_db) >= 2
+    ]
+    if len(valid_measurements) < 2:
         return None
-    curves = [(item.freqs, item.mag_db) for item in measurements]
+    curves = [(item.freqs, item.mag_db) for item in valid_measurements]
     base_freqs, _avg = compute_rms_average(
         curves,
         n_points=1200,
@@ -372,7 +438,7 @@ def group_variation(
         normalize_ref=True,
     )
     rows = []
-    for measurement in measurements:
+    for measurement in valid_measurements:
         values = np.interp(base_freqs, measurement.freqs, measurement.mag_db)
         _, values = smooth_fractional_octave(
             base_freqs,

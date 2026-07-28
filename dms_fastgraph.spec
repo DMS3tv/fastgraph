@@ -5,7 +5,7 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[("HRTFs", "HRTFs"), ("Bounds", "Bounds")],
+    datas=[("HRTFs", "HRTFs"), ("Bounds", "Bounds"), ("assets", "assets")],
     hiddenimports=["PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets"],
     hookspath=[],
     hooksconfig={},

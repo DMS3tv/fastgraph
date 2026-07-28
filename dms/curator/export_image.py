@@ -42,6 +42,8 @@ def export_graph_image(
     state: GraphState,
     output_path: str | Path,
     size: tuple[int, int] = (1920, 1080),
+    *,
+    brand_mode: bool = False,
 ) -> None:
     image = QImage(QSize(size[0], size[1]), QImage.Format.Format_ARGB32)
     image.fill(QColor(state.background))
@@ -49,7 +51,13 @@ def export_graph_image(
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     try:
-        _draw_poster(painter, state, size)
+        if brand_mode:
+            # Local import: export_brand imports helpers from this module.
+            from dms.curator.export_brand import draw_brand_poster
+
+            draw_brand_poster(painter, state, size)
+        else:
+            _draw_poster(painter, state, size)
     finally:
         painter.end()
 

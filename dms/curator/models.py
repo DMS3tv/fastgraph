@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from dms import brand_brand
 from dms.hrtf import HRTFCurve
 from uuid import uuid4
 
@@ -23,7 +24,7 @@ class CurveData:
     median_db: np.ndarray | None = None
     p75_db: np.ndarray | None = None
     p90_db: np.ndarray | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def shifted(self, amount_db: float) -> "CurveData":
         return replace(
@@ -66,14 +67,18 @@ class ExportText:
     fixture: str = ""
     hrtf_note: str = "Test Fixture"
     notes: str = ""
+    brand_footer_left_1: str = brand_brand.FOOTER_LEFT_1_DEFAULT
+    brand_footer_left_2: str = brand_brand.FOOTER_LEFT_2_DEFAULT
+    brand_legend_bounds_label: str = brand_brand.LEGEND_BOUNDS_LABEL_DEFAULT
+    brand_legend_variation_label: str = brand_brand.LEGEND_VARIATION_LABEL_DEFAULT
 
 
 @dataclass
 class GraphState:
     layers: list[LayerState] = field(default_factory=list)
     bounds: PreferenceBounds = field(default_factory=PreferenceBounds)
-    y_min: float = -20.0
-    y_max: float = 20.0
+    y_min: float = -17.5
+    y_max: float = 17.5
     background: str = "#101217"
     aspect_locked_25db: bool = True
     smoothing_fraction: int = 48

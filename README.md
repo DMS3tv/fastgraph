@@ -244,6 +244,27 @@ Fastgraph starts in Dark mode. Use the sun/moon switch beside the feedback
 button in the bottom status bar to change themes immediately. The selected
 theme is saved and restored the next time Fastgraph starts.
 
+## brand Mode
+
+Enable **brand mode** in Settings to use the BRAND colors and the 3840x2160
+Curator poster export. The Curator preview uses the same layout as the saved
+image.
+
+A clean installation starts in the standard FastGraph view. The first BRAND mode
+activation on each computer requires the BRAND access password. FastGraph stores
+the successful local unlock, not the password. This access check limits
+accidental brand use. It does not prove that an export came from brand.
+
+When a measurement has headphone metadata, Curator fills the poster title,
+headphone details, fixture or HRTF footer, asset footer, and legend labels.
+Each field remains editable. Right-click a field to restore its metadata value,
+or use **Fill from Metadata** to restore all automatic fields.
+
+Curator reduces text size when a value is too long for its poster area. It
+shows a warning before export when the text must go below the preferred
+readable size. BRAND mode reports missing Heading or Inconsolata fonts and
+uses a visible fallback without bundling licensed font files.
+
 ## HRTF Files
 
 Plain TXT, two columns: `frequency_hz  magnitude_db`
@@ -394,6 +415,17 @@ Leaving **Create or update a GitHub release** disabled runs a build-only job.
 Its downloadable artifacts are useful for testing before publishing. Release
 notes are taken from the matching version section in `CHANGELOG.md`; if no
 section exists, GitHub generates notes automatically.
+
+## Project Records
+
+Historical engineering records that are useful when maintaining the app are
+kept with the source tree:
+
+- `docs/investigations/2026-07-08-macos-audio-freeze.md` records the evidence
+  and follow-up questions from a macOS audio freeze investigation.
+- `docs/reviews/2026-06-20-linux-pr-7-review.md` preserves the review of the
+  original Linux build pull request. It is a historical review, not a statement
+  of the current build status.
 
 ## Quiet Update Indicator
 

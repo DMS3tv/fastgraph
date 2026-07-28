@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
-from dms.theme import LIGHT, normalize_theme, theme_colors
+from dms import brand_brand
+from dms.theme import LIGHT, brand_theme_colors, normalize_theme, theme_colors
 
 
 pg.setConfigOption("background", "#1a1a1a")
@@ -131,6 +132,7 @@ class DualPlotWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._theme = "dark"
+        self._brand_mode = False
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
 
         layout = QVBoxLayout(self)
@@ -186,9 +188,13 @@ class DualPlotWidget(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def apply_theme(self, theme: str) -> None:
+    def _bottom_accent_color(self) -> str:
+        return brand_brand.GRADIENT_ORANGE if self._brand_mode else _GOLD
+
+    def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
-        colors = theme_colors(self._theme)
+        self._brand_mode = bool(brand_mode)
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
         foreground = colors["plot_fg"]
         for plot in (self._top_plot, self._bot_plot):
             plot.setBackground(colors["plot_bg"])
@@ -209,6 +215,8 @@ class DualPlotWidget(QWidget):
                 color = (90, 98, 108, 180) if self._theme == LIGHT else _GREY
                 width = 1.0
             item.setPen(pg.mkPen(color=color, width=width))
+        if self._bot_item is not None:
+            self._bot_item.setPen(pg.mkPen(color=self._bottom_accent_color(), width=2.0))
         self.update()
 
     def update_curves(
@@ -358,7 +366,7 @@ class DualPlotWidget(QWidget):
         self._bot_plot.setTitle("Averaged Result (1/48 Oct RMS)")
         if average is not None and len(average[0]) > 0:
             freqs, mag_db = average
-            pen = pg.mkPen(color=_GOLD, width=2.0)
+            pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
             self._bot_item = self._bot_plot.plot(freqs, mag_db, pen=pen)
             self._auto_center_y(self._bot_plot, [average])
 

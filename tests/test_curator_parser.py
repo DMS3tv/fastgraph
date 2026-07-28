@@ -22,6 +22,7 @@ def test_parse_two_column_fr_sorts_and_skips_headers(tmp_path: Path) -> None:
 
     assert curve.kind == "fr"
     assert curve.metadata["Brand"] == "Example"
+    assert curve.metadata["brand"] == "Example"
     assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
     assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])
 
@@ -61,3 +62,29 @@ def test_parse_rejects_missing_positive_frequencies(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="positive frequency"):
         parse_measurement_txt(path)
+
+
+def test_parse_normalizes_fastgraph_rew_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "curve.txt"
+    path.write_text(
+        "* Brand: Sony\n"
+        "* Model: WH-1000XM5\n"
+        "* Rig: B&K 5128\n"
+        "* Asset Tag: HP-104\n"
+        "* EQ Applied: No\n"
+        "* ANC/Transparency: ANC\n"
+        "* Connection: Bluetooth\n"
+        "100 1\n"
+        "1000 0\n",
+        encoding="utf-8",
+    )
+
+    metadata = parse_measurement_txt(path).metadata
+
+    assert metadata["brand"] == "Sony"
+    assert metadata["model"] == "WH-1000XM5"
+    assert metadata["rig"] == "B&K 5128"
+    assert metadata["asset_tag"] == "HP-104"
+    assert metadata["eq_applied"] is False
+    assert metadata["anc_mode"] is True
+    assert metadata["connection"] == "Bluetooth"

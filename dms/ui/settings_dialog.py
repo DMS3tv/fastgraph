@@ -8,15 +8,18 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QFileDialog,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
     QKeySequenceEdit,
 )
 
+from dms.brand_access import verify_brand_password
 from dms.settings_manager import SettingsManager
 from dms.shortcuts import (
     DEFAULT_SHORTCUT_BINDINGS,
@@ -50,6 +53,24 @@ class SettingsWidget(QWidget):
         layout = QVBoxLayout(self._settings_column)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        self._appearance_group = QGroupBox("Appearance")
+        appearance_layout = QVBoxLayout(self._appearance_group)
+        self._brand_mode = QCheckBox("brand mode")
+        self._brand_mode.setToolTip(
+            "Re-themes the app to the brand brand. Curator exports switch to the "
+            "4K branded poster layout with brand trace colors."
+        )
+        appearance_layout.addWidget(self._brand_mode)
+        brand_mode_hint = QLabel(
+            "Curator export becomes a 3840×2160 branded poster. First use on each "
+            "computer requires the BRAND access password. This local check does not "
+            "certify export authenticity."
+        )
+        brand_mode_hint.setWordWrap(True)
+        brand_mode_hint.setProperty("tone", "muted")
+        appearance_layout.addWidget(brand_mode_hint)
+        layout.addWidget(self._appearance_group)
 
         self._sweep_group = QGroupBox("Sweep and Timing")
         sweep_form = QFormLayout(self._sweep_group)
@@ -249,6 +270,7 @@ class SettingsWidget(QWidget):
             lambda: self._save("automation_directory", self._automation_dir.text().strip())
         )
         self._automation_browse.clicked.connect(self._choose_automation_dir)
+        self._brand_mode.toggled.connect(self._on_brand_mode_toggled)
         for action, edit in self._shortcut_edits.items():
             edit.editingFinished.connect(
                 lambda action=action, edit=edit: self._save_shortcut(action, edit.keySequence().toString())
@@ -259,6 +281,35 @@ class SettingsWidget(QWidget):
     def _save(self, key: str, value: object) -> None:
         self._settings.set(key, value)
         self.settings_changed.emit(key, value)
+
+    def _on_brand_mode_toggled(self, checked: bool) -> None:
+        if checked and not bool(self._settings.get("brand_mode_unlocked")):
+            password, accepted = QInputDialog.getText(
+                self,
+                "Unlock brand Mode",
+                "Enter the BRAND access password:",
+                QLineEdit.EchoMode.Password,
+            )
+            if not accepted or not verify_brand_password(password):
+                self._brand_mode.blockSignals(True)
+                self._brand_mode.setChecked(False)
+                self._brand_mode.blockSignals(False)
+                if accepted:
+                    QMessageBox.warning(
+                        self,
+                        "brand Mode",
+                        "The password was not accepted.",
+                    )
+                return
+            self._settings.update(
+                {
+                    "brand_mode_unlocked": True,
+                    "brand_mode": True,
+                }
+            )
+            self.settings_changed.emit("brand_mode", True)
+            return
+        self._save("brand_mode", checked)
 
     def _save_latency(self, value: str) -> None:
         if not value:
@@ -301,6 +352,7 @@ class SettingsWidget(QWidget):
 
     def refresh_from_settings(self) -> None:
         controls = (
+            self._brand_mode,
             self._duration,
             self._fs,
             self._buf,
@@ -319,6 +371,7 @@ class SettingsWidget(QWidget):
         for control in controls:
             control.blockSignals(True)
         try:
+            self._brand_mode.setChecked(bool(self._settings.get("brand_mode")))
             self._duration.setValue(float(self._settings.get("sweep_duration")))
             self._fs.setCurrentIndex(self._fs.findData(self._settings.get("sample_rate")))
             self._buf.setCurrentIndex(self._buf.findData(self._settings.get("buffer_size")))
@@ -350,6 +403,7 @@ class SettingsWidget(QWidget):
                 control.blockSignals(False)
 
     def set_editing_enabled(self, enabled: bool) -> None:
+        self._appearance_group.setEnabled(enabled)
         self._sweep_group.setEnabled(enabled)
         self._audio_tools_group.setEnabled(enabled)
         self._safety_group.setEnabled(enabled)

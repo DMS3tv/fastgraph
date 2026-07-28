@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QRect, QTimer, Qt
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QAbstractItemView,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -26,8 +27,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from dms import brand_brand
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.export_image import export_graph_image
+from dms.curator.export_brand import draw_brand_poster, brand_export_warnings
+from dms.curator.metadata import automatic_export_values, metadata_has_identity
 from dms.curator.models import CurveData, ExportText, GraphState, LayerState, PreferenceBounds
 from dms.curator.parser import load_hrtf_txt, parse_measurement_txt
 from dms.curator.transforms import (
@@ -36,28 +40,22 @@ from dms.curator.transforms import (
     combine_variation_layers,
     normalization_offset_at_1khz,
 )
+from dms.brand_brand import default_color_cycle
+from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.console import ConsoleEventStore
 from dms.theme import DARK, theme_colors
 
 
-DEFAULT_COLORS = [
-    "#15f4ee",
-    "#d8ff38",
-    "#ff4fd8",
-    "#ff8a22",
-    "#7f5cff",
-    "#4dff88",
-]
 ACCENT_COLOR = "#FCBE11"
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 HRTF_DIR = ROOT_DIR / "HRTFs"
 BOUNDS_DIR = ROOT_DIR / "Bounds"
 UPPER_BOUNDS_PATH = BOUNDS_DIR / "- Upper Bounds.txt"
 LOWER_BOUNDS_PATH = BOUNDS_DIR / "- Lower Bounds.txt"
-DEFAULT_Y_MIN = -20.0
-DEFAULT_Y_MAX = 20.0
+DEFAULT_Y_MIN = -17.5
+DEFAULT_Y_MAX = 17.5
 SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
 
 
@@ -93,7 +91,9 @@ class LayerListRow(QWidget):
         self.color_btn.setStyleSheet(
             f"background-color: {layer.color}; border: 1px solid #242a35; border-radius: 4px;"
         )
-        self.color_btn.clicked.connect(lambda _checked=False, layer_id=layer.id: on_color_clicked(layer_id))
+        self.color_btn.clicked.connect(
+            lambda _checked=False, layer_id=layer.id: on_color_clicked(layer_id, self.color_btn)
+        )
         top.addWidget(self.color_btn)
 
         self.name_edit = QLineEdit(layer.name)
@@ -155,12 +155,32 @@ class LayerListRow(QWidget):
         layout.addLayout(controls)
 
 
+class BrandPosterPreview(QWidget):
+    """Scaled preview that uses the final BRAND export renderer."""
+
+    def __init__(self, state: GraphState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        try:
+            draw_brand_poster(painter, self._state, (self.width(), self.height()))
+        finally:
+            painter.end()
+
+
 class GraphStage(QWidget):
     def __init__(self, graph: GraphWidget, state: GraphState, on_text_changed) -> None:
         super().__init__()
         self._graph = graph
         self._graph_frame = AspectRatioWidget(graph, ratio=16.0 / 9.0)
         self._graph_frame.setParent(self)
+        self._brand_preview = BrandPosterPreview(state, self)
+        self._brand_preview.hide()
+        self._brand_mode = False
         self._on_text_changed = on_text_changed
 
         self.title_input = QLineEdit(state.export_text.title, self)
@@ -173,9 +193,41 @@ class GraphStage(QWidget):
         self.fixture_input.setObjectName("viewportFixtureInput")
         self.hrtf_note_input.setObjectName("viewportFooterInput")
 
+        self._default_placeholders = {
+            "title": self.title_input.placeholderText(),
+            "fixture": self.fixture_input.placeholderText(),
+            "hrtf_note": self.hrtf_note_input.placeholderText(),
+        }
+        self._default_tooltips = {
+            "fixture": self.fixture_input.toolTip(),
+            "hrtf_note": self.hrtf_note_input.toolTip(),
+        }
+
     @property
     def graph_frame(self) -> AspectRatioWidget:
         return self._graph_frame
+
+    def set_brand_mode(self, enabled: bool) -> None:
+        self._brand_mode = bool(enabled)
+        self._graph_frame.setVisible(not self._brand_mode)
+        self._brand_preview.setVisible(self._brand_mode)
+        if enabled:
+            self.title_input.setPlaceholderText("FREQUENCY RESPONSE & VARIATION")
+            self.fixture_input.setPlaceholderText("MODEL | ANC ON | STANDARD | BLUETOOTH")
+            self.fixture_input.setToolTip("Pipe-separated subtitle segments")
+            self.hrtf_note_input.setPlaceholderText("B&K 5128, miniDSP EARS PRO(711)")
+            self.hrtf_note_input.setToolTip("Footer center text")
+        else:
+            self.title_input.setPlaceholderText(self._default_placeholders["title"])
+            self.fixture_input.setPlaceholderText(self._default_placeholders["fixture"])
+            self.fixture_input.setToolTip(self._default_tooltips["fixture"])
+            self.hrtf_note_input.setPlaceholderText(self._default_placeholders["hrtf_note"])
+            self.hrtf_note_input.setToolTip(self._default_tooltips["hrtf_note"])
+        self._brand_preview.update()
+
+    def refresh_preview(self) -> None:
+        if self._brand_mode:
+            self._brand_preview.update()
 
     def start_wipe(
         self,
@@ -185,12 +237,21 @@ class GraphStage(QWidget):
         exiting_layers: list[LayerSnapshot] | None = None,
         exiting_bounds: BoundsSnapshot | None = None,
     ) -> None:
+        if self._brand_mode:
+            self._graph.wipeProgress = 1.0
+            self._brand_preview.update()
+            return
         self._graph.start_data_wipe(
             entering_layer_ids=entering_layer_ids,
             entering_bounds=entering_bounds,
             exiting_layers=exiting_layers,
             exiting_bounds=exiting_bounds,
         )
+        QTimer.singleShot(250, self._finish_stalled_wipe)
+
+    def _finish_stalled_wipe(self) -> None:
+        if self._graph.wipeProgress < 0.98:
+            self._graph.wipeProgress = 1.0
 
     def resizeEvent(self, event) -> None:
         width = self.width()
@@ -203,6 +264,7 @@ class GraphStage(QWidget):
         graph_left = (width - graph_width) // 2
         graph_top = 92
         self._graph_frame.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
+        self._brand_preview.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
 
         left = graph_left + 36
         top_width = min(520, max(260, graph_width - 72))
@@ -214,21 +276,33 @@ class GraphStage(QWidget):
 
 
 class CuratorWidget(QWidget):
-    def __init__(self, events: ConsoleEventStore, theme: str = DARK, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        events: ConsoleEventStore,
+        theme: str = DARK,
+        parent: QWidget | None = None,
+        *,
+        brand_mode: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._events = events
         self._theme = theme
+        self._brand_mode = bool(brand_mode)
         self._custom_background = False
+        self._manual_export_fields: set[str] = set()
+        self._primary_metadata_layer_id: str | None = None
+        self._applying_auto_text = False
         self._state = GraphState()
-        self._state.background = theme_colors(theme)["plot_bg"]
+        self._state.background = brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
         self.setAcceptDrops(True)
         self._build_ui()
+        self._configure_export_fields()
         self._refresh_hrtf_options()
         self._load_default_bounds()
         self._sync_ui()
-        self.apply_theme(theme)
+        self.apply_theme(theme, brand_mode=self._brand_mode)
         self._redraw()
 
     @property
@@ -244,16 +318,26 @@ class CuratorWidget(QWidget):
         if hasattr(window, "statusBar"):
             window.statusBar().showMessage(message)
 
-    def apply_theme(self, theme: str) -> None:
+    def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = theme
+        self._brand_mode = bool(brand_mode)
         if not self._custom_background:
-            self._state.background = theme_colors(theme)["plot_bg"]
-        self._graph.apply_theme(theme)
+            self._state.background = (
+                brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
+            )
+        self._graph.apply_theme(theme, brand_mode=self._brand_mode)
+        self._export_btn.setText("Export 4K PNG..." if self._brand_mode else "Export 1080p PNG...")
+        self._brand_poster_box.setVisible(self._brand_mode)
+        self._graph_stage.set_brand_mode(self._brand_mode)
+        if self._brand_mode:
+            self._apply_auto_export_text()
         self._redraw()
 
     def reset_background_to_theme(self) -> None:
         self._custom_background = False
-        self._state.background = theme_colors(self._theme)["plot_bg"]
+        self._state.background = (
+            brand_brand.BACKGROUND if self._brand_mode else theme_colors(self._theme)["plot_bg"]
+        )
         self._redraw()
         self._log("INFO", "Graph background reset to theme", theme=self._theme)
 
@@ -278,19 +362,26 @@ class CuratorWidget(QWidget):
             p90_db=_copy_optional(curve.p90_db),
             metadata=dict(curve.metadata),
         )
+        colors = default_color_cycle(self._brand_mode)
+        color = colors[len(self._state.layers) % len(colors)]
         layer = LayerState(
             curve=copied,
             source_path=Path(source_path),
             name=str(name),
-            color=DEFAULT_COLORS[len(self._state.layers) % len(DEFAULT_COLORS)],
+            color=color,
             vertical_offset_db=normalization_offset_at_1khz(copied) if normalize else 0.0,
             hrtf=hrtf,
         )
         self._state.layers.append(layer)
         self._selected_layer_id = layer.id
+        if self._primary_metadata_layer_id is None:
+            self._primary_metadata_layer_id = layer.id
         if animate:
             self._sync_ui()
             self._redraw_with_wipe(entering_layer_ids={layer.id})
+        else:
+            self._refresh_metadata_source_combo()
+        self._apply_auto_export_text()
         self._log(
             "INFO",
             "Layer added",
@@ -432,11 +523,25 @@ class CuratorWidget(QWidget):
             "title": self._graph_stage.title_input,
             "fixture": self._graph_stage.fixture_input,
             "footer": self._graph_stage.hrtf_note_input,
+            "footer1": self._brand_footer1_edit,
+            "footer2": self._brand_footer2_edit,
+            "legend_bounds": self._brand_legend_bounds_edit,
+            "legend_variation": self._brand_legend_variation_edit,
         }
         if field not in widgets:
-            raise ValueError("Text field must be title, fixture, or footer.")
+            raise ValueError(
+                "Text field must be title, fixture, footer, footer1, footer2, "
+                "legend_bounds, or legend_variation."
+            )
+        self._manual_export_fields.add(field)
         widgets[field].setText(value)
-        self._on_export_text_changed()
+        if field in ("footer1", "footer2", "legend_bounds", "legend_variation"):
+            self._on_brand_text_changed()
+        else:
+            self._on_export_text_changed()
+        self._set_export_field_state(field)
+        self._update_metadata_status()
+        self._graph_stage.refresh_preview()
         self._log("INFO", "Export text changed", field=field, value=value)
 
     def clear_layers(self) -> None:
@@ -452,7 +557,18 @@ class CuratorWidget(QWidget):
         if output.suffix.lower() != ".png":
             output = output.with_suffix(".png")
         self._on_export_text_changed()
-        export_graph_image(self._state, output, size=(1920, 1080))
+        if self._brand_mode:
+            warnings = brand_export_warnings(self._state)
+            if warnings:
+                self._log(
+                    "WARNING",
+                    "BRAND export text is below the preferred readable size",
+                    warnings=warnings,
+                )
+                self._show_status("BRAND export has a text-size warning.")
+            export_graph_image(self._state, output, size=(3840, 2160), brand_mode=True)
+        else:
+            export_graph_image(self._state, output, size=(1920, 1080))
         self._show_status(f"Exported Curator PNG: {output}")
         self._log("INFO", "PNG exported", path=str(output))
         return output
@@ -567,7 +683,227 @@ class CuratorWidget(QWidget):
         self._export_btn.clicked.connect(self._choose_export_path)
         view_form.addRow("Export", self._export_btn)
         layout.addWidget(view_box, 0)
+
+        self._brand_poster_box = QGroupBox("BRAND Poster Text")
+        self._brand_poster_box.setObjectName("brandPosterBox")
+        brand_form = QFormLayout(self._brand_poster_box)
+        self._brand_form = brand_form
+        brand_form.setContentsMargins(12, 12, 12, 12)
+        brand_form.setHorizontalSpacing(12)
+        brand_form.setVerticalSpacing(8)
+        brand_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        brand_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        brand_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        brand_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._brand_metadata_source_combo = QComboBox()
+        self._brand_metadata_source_combo.currentIndexChanged.connect(
+            self._on_metadata_source_changed
+        )
+        brand_form.addRow("Metadata source", self._brand_metadata_source_combo)
+
+        self._brand_fill_metadata_btn = QPushButton("Fill from Metadata")
+        self._brand_fill_metadata_btn.clicked.connect(self._fill_from_metadata)
+        brand_form.addRow("Automatic text", self._brand_fill_metadata_btn)
+
+        self._brand_metadata_status = QLabel("Field status: All fields are automatic.")
+        self._brand_metadata_status.setObjectName("brandMetadataStatus")
+        self._brand_metadata_status.setWordWrap(False)
+        self._brand_metadata_status.setProperty("tone", "muted")
+        brand_form.addRow(self._brand_metadata_status)
+
+        status = brand_font_status()
+        if status.uses_fallback:
+            missing = ", ".join(status.missing_families)
+            font_text = (
+                f"Missing fonts: {missing}. Fallbacks: {status.heading_family} headings, "
+                f"{status.mono_family} body."
+            )
+        else:
+            font_text = (
+                f"Fonts: {status.heading_family} headings, "
+                f"{status.mono_family} body text."
+            )
+        self._brand_font_status = QLabel(font_text)
+        self._brand_font_status.setObjectName("brandFontStatus")
+        self._brand_font_status.setWordWrap(True)
+        self._brand_font_status.setMinimumHeight(30 if not status.uses_fallback else 48)
+        self._brand_font_status.setProperty(
+            "tone",
+            "warning" if status.uses_fallback else "muted",
+        )
+        brand_form.addRow(self._brand_font_status)
+
+        self._brand_footer1_edit = QLineEdit(self._state.export_text.brand_footer_left_1)
+        self._brand_footer2_edit = QLineEdit(self._state.export_text.brand_footer_left_2)
+        self._brand_legend_bounds_edit = QLineEdit(self._state.export_text.brand_legend_bounds_label)
+        self._brand_legend_variation_edit = QLineEdit(self._state.export_text.brand_legend_variation_label)
+        self._brand_footer1_edit.textChanged.connect(self._on_brand_text_changed)
+        self._brand_footer2_edit.textChanged.connect(self._on_brand_text_changed)
+        self._brand_legend_bounds_edit.textChanged.connect(self._on_brand_text_changed)
+        self._brand_legend_variation_edit.textChanged.connect(self._on_brand_text_changed)
+        brand_form.addRow("Footer line 1", self._brand_footer1_edit)
+        brand_form.addRow("Footer line 2", self._brand_footer2_edit)
+        brand_form.addRow("Legend: bounds", self._brand_legend_bounds_edit)
+        brand_form.addRow("Legend: variation", self._brand_legend_variation_edit)
+        self._brand_poster_box.setVisible(False)
+        layout.addWidget(self._brand_poster_box, 0)
         return panel
+
+    def _configure_export_fields(self) -> None:
+        self._export_field_widgets: dict[str, QLineEdit] = {
+            "title": self._graph_stage.title_input,
+            "fixture": self._graph_stage.fixture_input,
+            "footer": self._graph_stage.hrtf_note_input,
+            "footer1": self._brand_footer1_edit,
+            "footer2": self._brand_footer2_edit,
+            "legend_bounds": self._brand_legend_bounds_edit,
+            "legend_variation": self._brand_legend_variation_edit,
+        }
+        for field, editor in self._export_field_widgets.items():
+            editor.textEdited.connect(
+                lambda _text, field_name=field: self._mark_export_field_manual(field_name)
+            )
+            editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            editor.customContextMenuRequested.connect(
+                lambda position, field_name=field, widget=editor: self._show_export_field_menu(
+                    field_name,
+                    widget,
+                    position,
+                )
+            )
+            self._set_export_field_state(field)
+
+    def _show_export_field_menu(self, field: str, editor: QLineEdit, position) -> None:
+        menu = editor.createStandardContextMenu()
+        menu.addSeparator()
+        reset_action = menu.addAction("Reset to Metadata")
+        reset_action.triggered.connect(
+            lambda _checked=False, field_name=field: self._reset_export_field(field_name)
+        )
+        menu.exec(editor.mapToGlobal(position))
+
+    def _mark_export_field_manual(self, field: str) -> None:
+        if self._applying_auto_text:
+            return
+        self._manual_export_fields.add(field)
+        self._set_export_field_state(field)
+        self._update_metadata_status()
+        self._graph_stage.refresh_preview()
+
+    def _reset_export_field(self, field: str) -> None:
+        self._manual_export_fields.discard(field)
+        self._apply_auto_export_text(fields={field})
+
+    def _fill_from_metadata(self) -> None:
+        self._manual_export_fields.clear()
+        self._apply_auto_export_text()
+        self._show_status("BRAND poster text filled from metadata.")
+
+    def _set_export_field_state(self, field: str) -> None:
+        editor = self._export_field_widgets.get(field)
+        if editor is None:
+            return
+        state = "manual" if field in self._manual_export_fields else "auto"
+        editor.setProperty("metadataState", state)
+        editor.setToolTip(
+            f"{'Manually edited' if state == 'manual' else 'Filled from metadata when available'}. "
+            "Right-click to reset this field."
+        )
+        editor.style().unpolish(editor)
+        editor.style().polish(editor)
+
+    def _update_metadata_status(self) -> None:
+        labels = {
+            "title": "Title",
+            "fixture": "Headphone details",
+            "footer": "Center footer",
+            "footer1": "Footer line 1",
+            "footer2": "Footer line 2",
+            "legend_bounds": "Bounds legend",
+            "legend_variation": "Variation legend",
+        }
+        manual = [labels[field] for field in labels if field in self._manual_export_fields]
+        if manual:
+            automatic_count = len(labels) - len(manual)
+            self._brand_metadata_status.setText(
+                f"Field status: {len(manual)} manual, {automatic_count} automatic."
+            )
+            self._brand_metadata_status.setToolTip(
+                "Manual fields: " + ", ".join(manual) + "."
+            )
+        else:
+            self._brand_metadata_status.setText("Field status: All fields are automatic.")
+            self._brand_metadata_status.setToolTip(
+                "Each field updates from the selected metadata source."
+            )
+        for field in self._export_field_widgets:
+            self._set_export_field_state(field)
+
+    def _primary_metadata_layer(self) -> LayerState | None:
+        layer = self._layer_by_id(self._primary_metadata_layer_id or "")
+        if layer is not None:
+            return layer
+        layer = next(
+            (item for item in self._state.layers if metadata_has_identity(item.curve.metadata)),
+            self._state.layers[0] if self._state.layers else None,
+        )
+        self._primary_metadata_layer_id = layer.id if layer is not None else None
+        return layer
+
+    def _refresh_metadata_source_combo(self) -> None:
+        if not hasattr(self, "_brand_metadata_source_combo"):
+            return
+        primary = self._primary_metadata_layer()
+        self._brand_metadata_source_combo.blockSignals(True)
+        self._brand_metadata_source_combo.clear()
+        if not self._state.layers:
+            self._brand_metadata_source_combo.addItem("No layers", "")
+            self._brand_metadata_source_combo.setEnabled(False)
+        else:
+            self._brand_metadata_source_combo.setEnabled(True)
+            for number, layer in enumerate(self._state.layers, 1):
+                self._brand_metadata_source_combo.addItem(
+                    f"Layer {number}: {layer.name}",
+                    layer.id,
+                )
+            index = self._brand_metadata_source_combo.findData(primary.id if primary else "")
+            self._brand_metadata_source_combo.setCurrentIndex(max(0, index))
+        self._brand_metadata_source_combo.blockSignals(False)
+
+    def _on_metadata_source_changed(self, _index: int) -> None:
+        layer_id = str(self._brand_metadata_source_combo.currentData() or "")
+        self._primary_metadata_layer_id = layer_id or None
+        self._apply_auto_export_text()
+
+    def _apply_auto_export_text(self, fields: set[str] | None = None) -> None:
+        if not self._brand_mode or not hasattr(self, "_export_field_widgets"):
+            return
+        primary = self._primary_metadata_layer()
+        values = automatic_export_values(self._state, primary)
+        selected_fields = fields or set(values)
+        self._applying_auto_text = True
+        try:
+            for field in selected_fields:
+                if field in self._manual_export_fields:
+                    continue
+                value = values.get(field, "")
+                editor = self._export_field_widgets.get(field)
+                if editor is None:
+                    continue
+                if editor.text() != value:
+                    editor.setText(value)
+            self._on_export_text_changed()
+            self._on_brand_text_changed()
+        finally:
+            self._applying_auto_text = False
+        self._update_metadata_status()
+        self._graph_stage.refresh_preview()
 
     def _sync_ui(self) -> None:
         self._layer_list.blockSignals(True)
@@ -612,6 +948,7 @@ class CuratorWidget(QWidget):
         self._show_names_enabled.setChecked(self._state.show_layer_names)
         self._show_names_enabled.blockSignals(False)
         self._sync_combine_button()
+        self._refresh_metadata_source_combo()
 
     def _sync_bounds_controls(self) -> None:
         self._bounds_enabled.blockSignals(True)
@@ -648,6 +985,7 @@ class CuratorWidget(QWidget):
 
     def _redraw(self) -> None:
         self._graph.redraw(self._state)
+        self._graph_stage.refresh_preview()
 
     def _redraw_with_wipe(
         self,
@@ -692,8 +1030,11 @@ class CuratorWidget(QWidget):
         number = self._layer_number(layer)
         exiting = self._graph.snapshot_visible_layer(layer.id)
         self._state.layers = [item for item in self._state.layers if item.id != layer.id]
+        if self._primary_metadata_layer_id == layer.id:
+            self._primary_metadata_layer_id = None
         self._selected_layer_id = self._state.layers[-1].id if self._state.layers else None
         self._sync_ui()
+        self._apply_auto_export_text()
         self._redraw_with_wipe(exiting_layers=[exiting] if exiting is not None else None)
         self._log("INFO", "Layer removed", layer=number, name=layer.name)
 
@@ -706,7 +1047,10 @@ class CuratorWidget(QWidget):
         ]
         self._state.layers.clear()
         self._selected_layer_id = None
+        self._primary_metadata_layer_id = None
+        self._manual_export_fields.clear()
         self._sync_ui()
+        self._apply_auto_export_text()
         self._redraw_with_wipe(exiting_layers=exiting_layers)
         self._log("INFO", "All layers cleared", count=count)
 
@@ -717,6 +1061,7 @@ class CuratorWidget(QWidget):
         exiting = self._graph.snapshot_visible_layer(layer_id) if not visible else None
         layer.visible = visible
         self._sync_ui()
+        self._apply_auto_export_text()
         if visible:
             self._redraw_with_wipe(entering_layer_ids={layer_id})
         else:
@@ -771,11 +1116,13 @@ class CuratorWidget(QWidget):
             layer.visible = False
 
         existing = sum(1 for layer in self._state.layers if layer.is_combined)
+        colors = default_color_cycle(self._brand_mode)
+        color = colors[len(self._state.layers) % len(colors)]
         combined = LayerState(
             curve=combined_curve,
             source_path=Path("<combined>"),
             name=f"Combined Variation {existing + 1}",
-            color=DEFAULT_COLORS[len(self._state.layers) % len(DEFAULT_COLORS)],
+            color=color,
             vertical_offset_db=0.0,
             hrtf=None,
             is_combined=True,
@@ -784,6 +1131,7 @@ class CuratorWidget(QWidget):
         self._state.layers.append(combined)
         self._selected_layer_id = combined.id
         self._sync_ui()
+        self._apply_auto_export_text()
         for index in range(self._layer_list.count()):
             item = self._layer_list.item(index)
             item.setSelected(item.data(256) == combined.id)
@@ -796,14 +1144,31 @@ class CuratorWidget(QWidget):
         )
         return combined
 
-    def _choose_layer_color(self, layer_id: str) -> None:
+    def _choose_layer_color(self, layer_id: str, button: QPushButton) -> None:
         layer = self._layer_by_id(layer_id)
         if layer is None:
+            return
+        if self._brand_mode:
+            menu = QMenu(self)
+            for hex_color in brand_brand.brand_menu_colors(layer.color):
+                pixmap = QPixmap(14, 14)
+                pixmap.fill(QColor(hex_color))
+                label = hex_color
+                if hex_color.lower() == layer.color.lower():
+                    label = f"{hex_color} (current)"
+                action = menu.addAction(QIcon(pixmap), label)
+                action.triggered.connect(
+                    lambda _checked=False, c=hex_color: self._apply_layer_color(layer, c)
+                )
+            menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
             return
         color = QColorDialog.getColor(QColor(layer.color), self, "Choose Layer Color")
         if not color.isValid():
             return
-        layer.color = color.name()
+        self._apply_layer_color(layer, color.name())
+
+    def _apply_layer_color(self, layer: LayerState, hex_color: str) -> None:
+        layer.color = hex_color
         self._sync_ui()
         self._redraw()
         self._log(
@@ -847,6 +1212,7 @@ class CuratorWidget(QWidget):
             return
         if not path or path == "__combined__":
             layer.hrtf = None
+            self._apply_auto_export_text()
             self._redraw()
             self._log(
                 "INFO", "Layer HRTF changed",
@@ -865,6 +1231,7 @@ class CuratorWidget(QWidget):
             self._sync_ui()
             return
         self._sync_ui()
+        self._apply_auto_export_text()
         self._redraw()
         self._log(
             "INFO", "Layer HRTF changed",
@@ -877,6 +1244,7 @@ class CuratorWidget(QWidget):
             return
         layer.hrtf = None
         self._sync_ui()
+        self._apply_auto_export_text()
         self._redraw()
 
     def _layer_by_id(self, layer_id: str) -> LayerState | None:
@@ -912,6 +1280,7 @@ class CuratorWidget(QWidget):
             self._load_default_bounds()
         self._state.bounds.enabled = enabling
         self._sync_bounds_controls()
+        self._apply_auto_export_text()
         self._redraw_with_wipe(entering_bounds=enabling, exiting_bounds=exiting_bounds)
         self._log("INFO", "Preference bounds changed", enabled=enabling)
 
@@ -961,23 +1330,54 @@ class CuratorWidget(QWidget):
             event.ignore()
 
     def _on_export_text_changed(self) -> None:
+        previous = self._state.export_text
         self._state.export_text = ExportText(
             title=self._graph_stage.title_input.text(),
             fixture=self._graph_stage.fixture_input.text(),
             hrtf_note=self._graph_stage.hrtf_note_input.text(),
-            notes=self._state.export_text.notes,
+            notes=previous.notes,
+            brand_footer_left_1=previous.brand_footer_left_1,
+            brand_footer_left_2=previous.brand_footer_left_2,
+            brand_legend_bounds_label=previous.brand_legend_bounds_label,
+            brand_legend_variation_label=previous.brand_legend_variation_label,
         )
+        if hasattr(self, "_graph_stage"):
+            self._graph_stage.refresh_preview()
+
+    def _on_brand_text_changed(self, _value: str = "") -> None:
+        previous = self._state.export_text
+        self._state.export_text = ExportText(
+            title=previous.title,
+            fixture=previous.fixture,
+            hrtf_note=previous.hrtf_note,
+            notes=previous.notes,
+            brand_footer_left_1=self._brand_footer1_edit.text(),
+            brand_footer_left_2=self._brand_footer2_edit.text(),
+            brand_legend_bounds_label=self._brand_legend_bounds_edit.text(),
+            brand_legend_variation_label=self._brand_legend_variation_edit.text(),
+        )
+        if hasattr(self, "_graph_stage"):
+            self._graph_stage.refresh_preview()
 
     def _choose_export_path(self) -> None:
         self._on_export_text_changed()
+        default_name = "curator_export_4k.png" if self._brand_mode else "curator_export.png"
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Curator PNG",
-            "curator_export.png",
+            default_name,
             "PNG Image (*.png)",
         )
         if not path:
             return
+        if self._brand_mode:
+            warnings = brand_export_warnings(self._state)
+            if warnings:
+                QMessageBox.warning(
+                    self,
+                    "BRAND Export Text Warning",
+                    "\n".join(warnings),
+                )
         try:
             self.export_png(path)
         except Exception as exc:

@@ -7,21 +7,12 @@ from uuid import uuid4
 
 import numpy as np
 
+from dms.brand_brand import NON_BRAND_DEFAULT_COLORS as DEFAULT_COLORS
 from dms.processing import compute_rms_average, smooth_fractional_octave
 from dms.session import SessionData
 
 
 SCHEMA_VERSION = 1
-
-
-DEFAULT_COLORS = [
-    "#15f4ee",
-    "#d8ff38",
-    "#ff4fd8",
-    "#ff8a22",
-    "#7f5cff",
-    "#4dff88",
-]
 
 
 @dataclass

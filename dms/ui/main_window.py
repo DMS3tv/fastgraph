@@ -66,6 +66,7 @@ from dms.audio_engine import (
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
 from dms.console import ConsoleEventStore
+from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
 from dms.curator.parser import parse_measurement_txt
 from dms.export import (
@@ -715,6 +716,7 @@ class MainWindow(QMainWindow):
             theme_controller = ThemeController(app, settings)
         self._theme_controller = theme_controller
         self._theme_controller.theme_changed.connect(self._on_theme_changed)
+        self._theme_controller.brand_mode_changed.connect(self._on_brand_mode_changed)
         self._cal_store = CalibrationStore()
 
         self._state = AppState.IDLE
@@ -762,6 +764,11 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
+        if self._theme_controller.brand_mode:
+            self._theme_toggle.setEnabled(False)
+            self._theme_toggle.setToolTip(
+                "Dark/Light toggle is locked while brand mode is active."
+            )
         if bool(self._settings.get("bluetooth_headphone_mode")):
             self._apply_bluetooth_headphone_mode_settings(
                 notify=False,
@@ -834,6 +841,7 @@ class MainWindow(QMainWindow):
         self._curator_widget = CuratorWidget(
             self._console_events,
             theme=self._theme_controller.theme,
+            brand_mode=self._theme_controller.brand_mode,
             parent=self,
         )
         self._tabs.addTab(self._curator_widget, "Curator")
@@ -900,6 +908,9 @@ class MainWindow(QMainWindow):
             self._start_level_monitor()
         if key == "shortcut_bindings":
             self._configure_keyboard_shortcuts()
+        if key == "brand_mode":
+            # SettingsWidget._save already persisted this value; avoid a redundant write.
+            self._theme_controller.set_brand_mode(bool(_value), persist=False)
         self._log_event("INFO", "settings", "Setting saved", name=key)
         self._statusbar.showMessage("Setting saved.")
 
@@ -1023,23 +1034,37 @@ class MainWindow(QMainWindow):
         return header
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
+        brand = self._theme_controller.brand_mode
         toggle = getattr(self, "_theme_toggle", None)
         if toggle is not None:
             toggle.set_dark(theme == DARK)
         plots = getattr(self, "_plots", None)
         if plots is not None:
-            plots.apply_theme(theme)
+            plots.apply_theme(theme, brand_mode=brand)
         rnd = getattr(self, "_rnd_widget", None)
         if rnd is not None:
-            rnd.apply_theme(theme)
+            rnd.apply_theme(theme, brand_mode=brand)
         curator = getattr(self, "_curator_widget", None)
         if curator is not None:
-            curator.apply_theme(theme)
+            curator.apply_theme(theme, brand_mode=brand)
         meter = getattr(self, "_level_meter", None)
         if meter is not None:
             meter.update()
         if log and hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "Application theme changed", theme=theme)
+
+    def _on_brand_mode_changed(self, enabled: bool) -> None:
+        toggle = getattr(self, "_theme_toggle", None)
+        if toggle is not None:
+            toggle.setEnabled(not enabled)
+            toggle.setToolTip(
+                "Dark/Light toggle is locked while brand mode is active."
+                if enabled
+                else ""
+            )
+        self._on_theme_changed(self._theme_controller.theme, log=False)
+        if hasattr(self, "_console_events"):
+            self._log_event("INFO", "theme", "brand mode changed", brand_mode=enabled)
 
     def _log_event(self, severity: str, source: str, message: str, **details) -> None:
         self._console_events.publish(severity, source, message, details)
@@ -3775,6 +3800,13 @@ class MainWindow(QMainWindow):
         active_hrtf = self._hrtf if self._is_hrtf_active() else None
         correction = None
         curve: CurveData
+        curator_metadata = session_snapshot(self._session)
+        curator_metadata.update(
+            {
+                "hrtf_name": active_hrtf.name if active_hrtf is not None else "",
+                "compensated": active_hrtf is not None,
+            }
+        )
         if mode == "variation":
             if self._variation is None:
                 raise ValueError("No variation band is available to send.")
@@ -3789,7 +3821,11 @@ class MainWindow(QMainWindow):
                 median_db=np.array(median, dtype=float, copy=True) + (correction if correction is not None else 0.0),
                 p75_db=np.array(p75, dtype=float, copy=True) + (correction if correction is not None else 0.0),
                 p90_db=np.array(p90, dtype=float, copy=True) + (correction if correction is not None else 0.0),
-                metadata={"Source": "Fastgraph current variation"},
+                metadata={
+                    **curator_metadata,
+                    "Source": "Fastgraph current variation",
+                    "curve_type": "variation",
+                },
             )
             kind_label = "VAR"
         else:
@@ -3806,7 +3842,11 @@ class MainWindow(QMainWindow):
                 kind="fr",
                 freqs=np.array(freqs, dtype=float, copy=True),
                 mag_db=baseline,
-                metadata={"Source": "Fastgraph current average"},
+                metadata={
+                    **curator_metadata,
+                    "Source": "Fastgraph current average",
+                    "curve_type": "frequency_response",
+                },
             )
             kind_label = "AVG"
 
@@ -3828,8 +3868,6 @@ class MainWindow(QMainWindow):
             normalize=False,
         )
         self._curator_widget.offset_layer_to_zero_at_1khz(layer)
-        if not self._curator_widget.graph_state.export_text.fixture:
-            self._curator_widget.set_export_text("fixture", self._session.rig)
         self._statusbar.showMessage(f"Sent to Curator: {layer.name}")
         self._log_event(
             "INFO",
@@ -3855,7 +3893,14 @@ class MainWindow(QMainWindow):
                 kind="fr",
                 freqs=freqs,
                 mag_db=mag,
-                metadata={"Source": "Fastgraph R&D measurement"},
+                metadata={
+                    **dict(measurement.metadata),
+                    "rig": measurement.rig,
+                    "hrtf_name": measurement.hrtf_name,
+                    "compensated": bool(measurement.hrtf_path or measurement.hrtf_name),
+                    "Source": "Fastgraph R&D measurement",
+                    "curve_type": "frequency_response",
+                },
             )
             name = measurement.name
         elif group is not None:
@@ -3881,6 +3926,30 @@ class MainWindow(QMainWindow):
                 )
                 return
             freqs, p10, p25, p75, p90, median = variation
+            group_metadata = shared_metadata(
+                measurement.metadata for measurement in measurements
+            )
+            rigs = {measurement.rig.strip() for measurement in measurements}
+            if len(rigs) == 1 and next(iter(rigs)):
+                group_metadata["rig"] = next(iter(rigs))
+            hrtf_names = {
+                measurement.hrtf_name.strip()
+                for measurement in measurements
+            }
+            if len(hrtf_names) == 1 and next(iter(hrtf_names)):
+                group_metadata["hrtf_name"] = next(iter(hrtf_names))
+            compensation_states = {
+                bool(measurement.hrtf_path or measurement.hrtf_name)
+                for measurement in measurements
+            }
+            if len(compensation_states) == 1:
+                group_metadata["compensated"] = next(iter(compensation_states))
+            group_metadata.update(
+                {
+                    "Source": "Fastgraph R&D group variation",
+                    "curve_type": "variation",
+                }
+            )
             curve = CurveData(
                 kind="variation",
                 freqs=np.array(freqs, dtype=float, copy=True),
@@ -3889,7 +3958,7 @@ class MainWindow(QMainWindow):
                 median_db=np.array(median, dtype=float, copy=True),
                 p75_db=np.array(p75, dtype=float, copy=True),
                 p90_db=np.array(p90, dtype=float, copy=True),
-                metadata={"Source": "Fastgraph R&D group variation"},
+                metadata=group_metadata,
             )
             name = f"{group.name} VAR"
         else:

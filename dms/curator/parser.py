@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dms.curator.metadata import canonicalize_metadata
 from dms.curator.models import CurveData
 from dms.hrtf import HRTFCurve
 
@@ -29,7 +30,7 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
             median_db=data[:, 3],
             p75_db=data[:, 4],
             p90_db=data[:, 5],
-            metadata=metadata,
+            metadata=canonicalize_metadata(metadata),
         )
 
     data = np.asarray([row[:2] for row in rows if len(row) >= 2], dtype=float)
@@ -40,7 +41,7 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
         kind="fr",
         freqs=data[:, 0],
         mag_db=data[:, 1],
-        metadata=metadata,
+        metadata=canonicalize_metadata(metadata),
     )
 
 

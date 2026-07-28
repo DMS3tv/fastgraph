@@ -7,7 +7,15 @@ from PyQt6.QtWidgets import QApplication
 
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
-from dms.theme import DARK, LIGHT, ThemeController, application_stylesheet, normalize_theme
+from dms.theme import (
+    DARK,
+    LIGHT,
+    ThemeController,
+    application_stylesheet,
+    brand_application_stylesheet,
+    brand_theme_colors,
+    normalize_theme,
+)
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
@@ -35,6 +43,46 @@ def test_theme_controller_applies_and_persists(monkeypatch, tmp_path: Path) -> N
     assert controller.theme == LIGHT
     assert settings.get("theme") == LIGHT
     assert "#f3f5f8" in app.styleSheet()
+
+
+def test_theme_controller_brand_mode_persists_and_signals(monkeypatch, tmp_path: Path) -> None:
+    app = _app()
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    settings = SettingsManager()
+    controller = ThemeController(app, settings)
+
+    received: list[bool] = []
+    controller.brand_mode_changed.connect(received.append)
+
+    controller.set_brand_mode(True)
+
+    assert controller.brand_mode is True
+    assert settings.get("brand_mode") is True
+    assert "#232323" in app.styleSheet()
+    assert "#7A7A7A" in app.styleSheet()
+    assert received == [True]
+
+    controller.set_brand_mode(True)
+    assert received == [True]
+
+    controller.set_brand_mode(False)
+
+    assert controller.brand_mode is False
+    assert settings.get("brand_mode") is False
+    assert app.styleSheet() == application_stylesheet(controller.theme)
+    assert received == [True, False]
+
+
+def test_brand_stylesheet_has_visible_accent_hierarchy() -> None:
+    stylesheet = brand_application_stylesheet()
+
+    assert brand_theme_colors()["border"] == "#5C5C5C"
+    assert "QGroupBox#brandPosterBox" in stylesheet
+    assert "QGroupBox#brandPosterBox QLabel#brandMetadataStatus" in stylesheet
+    assert "background-color: transparent" in stylesheet
+    assert "QPushButton#exportButton" in stylesheet
+    assert 'QLineEdit[metadataState="manual"]' in stylesheet
+    assert "border-bottom: 3px solid #7A7A7A" in stylesheet
 
 
 def test_theme_toggle_direction() -> None:

@@ -163,6 +163,11 @@ def test_rnd_group_toggles_and_curator_send(qapp, monkeypatch, tmp_path: Path) -
     layer = window._curator_widget.graph_state.layers[0]
     assert layer.name == "Prototype A VAR"
     assert layer.curve.kind == "variation"
+    assert layer.curve.metadata["brand"] == "DMS"
+    assert layer.curve.metadata["model"] == "Demo"
+    assert layer.curve.metadata["rig"] == "Rig"
+    assert "hrtf_name" not in layer.curve.metadata
+    assert layer.curve.metadata["compensated"] is False
     assert window._tabs.currentWidget() is window._curator_widget
     window.close()
 
@@ -270,6 +275,9 @@ def test_rnd_offsets_are_additive_for_display_and_curator_send(qapp, monkeypatch
     layer = window._curator_widget.graph_state.layers[0]
     assert layer.name == "Offset Target"
     assert np.allclose(layer.curve.mag_db, [6.0, 5.0])
+    assert layer.curve.metadata["brand"] == "DMS"
+    assert layer.curve.metadata["model"] == "Demo"
+    assert layer.curve.metadata["rig"] == "Rig"
     window.close()
 
 

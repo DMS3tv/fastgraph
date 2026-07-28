@@ -237,6 +237,11 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(qapp, monkeypa
     assert np.allclose(displayed.mag_db, expected_mag + offset)
     assert np.isclose(np.interp(1000.0, displayed.freqs, displayed.mag_db), 0.0)
     assert window._tabs.currentWidget() is window._curator_widget
+    assert layer.curve.metadata["brand"] == "DMS"
+    assert layer.curve.metadata["model"] == "Demo"
+    assert layer.curve.metadata["rig"] == "Test Rig"
+    assert layer.curve.metadata["hrtf_name"] == "fixture"
+    assert layer.curve.metadata["compensated"] is True
     source_mag[:] = 99.0
     assert not np.allclose(layer.curve.mag_db, source_mag)
     window.close()
@@ -294,8 +299,8 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(
     state = window._curator_widget.graph_state
     layer = state.layers[0]
     displayed = apply_layer_transform(layer)
-    assert state.y_min == -20.0
-    assert state.y_max == 20.0
+    assert state.y_min == -17.5
+    assert state.y_max == 17.5
     assert np.isclose(np.interp(1000.0, displayed.freqs, displayed.median_db), 0.0)
     assert np.allclose(np.diff(layer.curve.median_db), [1.0, 1.0])
     assert np.allclose(np.diff(displayed.median_db), [1.0, 1.0])

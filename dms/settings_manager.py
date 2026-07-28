@@ -8,6 +8,8 @@ from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
 
 _DEFAULTS: dict[str, Any] = {
     "theme": "dark",
+    "brand_mode": False,
+    "brand_mode_unlocked": False,
     "sweep_duration": 2.0,
     "sample_rate": 48000,
     "buffer_size": 1024,
@@ -104,6 +106,8 @@ class SettingsManager:
                 self._data.update(saved)
             except Exception:
                 pass
+        if not bool(self._data.get("brand_mode_unlocked")):
+            self._data["brand_mode"] = False
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

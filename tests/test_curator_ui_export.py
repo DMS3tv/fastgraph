@@ -214,8 +214,8 @@ def test_view_aspect_toggle_and_reset(qapp) -> None:
 
     assert window.graph_state.aspect_locked_25db is True
     assert window._aspect_lock_enabled.isChecked()
-    assert window.graph_state.y_min == -20.0
-    assert window.graph_state.y_max == 20.0
+    assert window.graph_state.y_min == -17.5
+    assert window.graph_state.y_max == 17.5
     assert window.graph_state.smoothing_fraction == 48
     assert window.graph_state.show_layer_names is True
 

@@ -45,7 +45,9 @@ from dms.rnd.models import (
 )
 from dms.rnd.photos import RnDPhotoStore
 from dms.hrtf import HRTFCurve
-from dms.theme import LIGHT, normalize_theme, theme_colors
+from dms import brand_brand
+from dms.brand_brand import default_color_cycle
+from dms.theme import LIGHT, brand_theme_colors, normalize_theme, theme_colors
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
 
@@ -106,6 +108,7 @@ class RnDPlotWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._theme = "dark"
+        self._brand_mode = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -125,9 +128,10 @@ class RnDPlotWidget(QWidget):
         self._between_plots_widget = widget
         self.layout().insertWidget(1, widget)
 
-    def apply_theme(self, theme: str) -> None:
+    def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
-        colors = theme_colors(self._theme)
+        self._brand_mode = bool(brand_mode)
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
         for plot in (self.top_plot, self.bottom_plot):
             plot.setBackground(colors["plot_bg"])
             for axis_name in ("left", "bottom"):
@@ -135,6 +139,9 @@ class RnDPlotWidget(QWidget):
                 axis.setPen(pg.mkPen(colors["plot_fg"]))
                 axis.setTextPen(pg.mkPen(colors["plot_fg"]))
             plot.getPlotItem().titleLabel.setAttr("color", colors["plot_fg"])
+
+    def _accent_color(self) -> str:
+        return brand_brand.GRADIENT_ORANGE if self._brand_mode else VARIATION_COLOR
 
     def redraw(
         self,
@@ -220,7 +227,7 @@ class RnDPlotWidget(QWidget):
         variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         freqs, p10, p25, p75, p90, median = variation
-        qcolor = QColor("#ff5078" if group.milestone else group.color or VARIATION_COLOR)
+        qcolor = QColor("#ff5078" if group.milestone else group.color or self._accent_color())
         outer = QColor(qcolor)
         outer.setAlpha(55 if not group.milestone else 75)
         inner = QColor(qcolor)
@@ -329,6 +336,7 @@ class RnDWidget(QWidget):
         self.session = RnDSession()
         self.photo_store = RnDPhotoStore()
         self._theme = "dark"
+        self._brand_mode = False
         self._syncing = False
         self._busy = False
         self._notes_expanded = bool(notes_expanded)
@@ -339,9 +347,11 @@ class RnDWidget(QWidget):
         self._sync_tree()
         self.apply_theme(self._theme)
 
-    def apply_theme(self, theme: str) -> None:
+    def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
-        self._plots.apply_theme(theme)
+        self._brand_mode = bool(brand_mode)
+        self._plots.apply_theme(theme, brand_mode=self._brand_mode)
+        self._apply_accent_stylesheets()
         self._redraw()
 
     def set_busy(self, busy: bool) -> None:
@@ -363,7 +373,8 @@ class RnDWidget(QWidget):
         self._sync_photo_panel()
 
     def add_measurement(self, measurement: RnDMeasurement) -> None:
-        measurement.color = DEFAULT_COLORS[len(self.session.measurements) % len(DEFAULT_COLORS)]
+        colors = default_color_cycle(self._brand_mode)
+        measurement.color = colors[len(self.session.measurements) % len(colors)]
         if not measurement.hrtf_path and self.session.hrtf_path:
             measurement.hrtf_path = str(self.session.hrtf_path)
             measurement.hrtf_name = self.session.hrtf_name or self._hrtf_label(measurement.hrtf_path, "")
@@ -590,11 +601,6 @@ class RnDWidget(QWidget):
         self._tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self._tree.setStyleSheet(
-            "QTreeWidget QScrollBar:vertical { width: 16px; background: rgba(120, 120, 120, 45); }"
-            "QTreeWidget QScrollBar::handle:vertical { min-height: 32px; background: #FCBE11; border-radius: 6px; }"
-            "QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }"
-        )
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         self._tree.structure_changed.connect(self._on_tree_structure_changed)
@@ -676,6 +682,21 @@ class RnDWidget(QWidget):
             self._save_btn,
             self._load_btn,
         ]
+        self._apply_accent_stylesheets()
+
+    def _accent_color(self) -> str:
+        return brand_brand.GRADIENT_ORANGE if self._brand_mode else "#FCBE11"
+
+    def _apply_accent_stylesheets(self) -> None:
+        accent = self._accent_color()
+        self._tree.setStyleSheet(
+            "QTreeWidget QScrollBar:vertical { width: 16px; background: rgba(120, 120, 120, 45); }"
+            f"QTreeWidget QScrollBar::handle:vertical {{ min-height: 32px; background: {accent}; border-radius: 6px; }}"
+            "QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }"
+        )
+        self._export_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {accent}; color: #101217; font-weight: 700; }}"
+        )
 
     def _build_footer_controls(self) -> QWidget:
         footer = QWidget()
@@ -685,9 +706,6 @@ class RnDWidget(QWidget):
         row.setSpacing(8)
         row.addStretch(1)
         self._export_btn = QPushButton("Export Selected...")
-        self._export_btn.setStyleSheet(
-            "QPushButton { background-color: #FCBE11; color: #101217; font-weight: 700; }"
-        )
         self._export_btn.clicked.connect(self.export_requested)
         row.addWidget(self._export_btn)
         self._curator_btn = QPushButton("Send to Curator")
@@ -809,9 +827,10 @@ class RnDWidget(QWidget):
         self._sync_detail_panel()
 
     def _refresh_group_colors(self) -> None:
+        colors = default_color_cycle(self._brand_mode)
         for index, group in enumerate(self.session.groups):
             if not group.color or group.color == DEFAULT_COLORS[0]:
-                group.color = DEFAULT_COLORS[index % len(DEFAULT_COLORS)]
+                group.color = colors[index % len(colors)]
 
     def _measurement_item(self, measurement: RnDMeasurement) -> QTreeWidgetItem:
         item = QTreeWidgetItem([measurement.name, "", "", "", "", "", "", ""])
@@ -1353,7 +1372,8 @@ class RnDWidget(QWidget):
         names = {group.name for group in self.session.groups}
         name = self._unique_name("New Group", names)
         group = RnDGroup(name=name)
-        group.color = DEFAULT_COLORS[len(self.session.groups) % len(DEFAULT_COLORS)]
+        colors = default_color_cycle(self._brand_mode)
+        group.color = colors[len(self.session.groups) % len(colors)]
         selected_ids = self._selected_measurement_ids()
         if selected_ids:
             self._remove_measurement_ids_from_orders(selected_ids)

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QWidget
 
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
-from dms.theme import theme_colors
+from dms.theme import brand_theme_colors, theme_colors
 
 
 FREQ_MIN = 20.0
@@ -123,8 +123,8 @@ class GraphWidget(LockedPlotWidget):
         self._state = state
         self._render()
 
-    def apply_theme(self, theme: str) -> None:
-        colors = theme_colors(theme)
+    def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
+        colors = brand_theme_colors() if brand_mode else theme_colors(theme)
         for name in ("bottom", "left"):
             axis = self.getAxis(name)
             axis.setPen(pg.mkPen(colors["plot_fg"]))

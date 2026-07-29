@@ -7,7 +7,13 @@ import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QAbstractItemView, QApplication, QToolButton
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QBoxLayout,
+    QToolButton,
+    QWidget,
+)
 
 import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
@@ -95,6 +101,33 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_p
     assert window._current_input_channel() == 1
     window._ch_combo.setCurrentIndex(0)
     assert window._rnd_widget._input_channel_combo.currentData() == 0
+    window.close()
+
+
+def test_rnd_toolbar_uses_compact_stacked_rows(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 700)
+    window.show()
+    window._tabs.setCurrentIndex(1)
+    qapp.processEvents()
+
+    toolbar = window._rnd_widget._top_toolbar
+    layout = window._rnd_widget._top_toolbar_layout
+    measure = toolbar.findChild(QWidget, "rnd_measure_controls")
+    target = toolbar.findChild(QWidget, "rnd_target_controls")
+    assert layout.direction() == QBoxLayout.Direction.TopToBottom
+    assert layout.stretch(0) == 0
+    assert layout.stretch(1) == 0
+    assert toolbar.height() <= measure.height() + target.height() + 24
+    status_right = window._rnd_widget._status_label.geometry().right()
+    measure_left = window._rnd_widget._measure_btn.geometry().left()
+    assert measure_left - status_right <= 24
+
+    window.resize(1800, 1100)
+    qapp.processEvents()
+    assert layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert layout.stretch(0) == 1
+    assert layout.stretch(1) == 1
     window.close()
 
 

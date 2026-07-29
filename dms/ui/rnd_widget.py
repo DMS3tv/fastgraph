@@ -499,18 +499,28 @@ class RnDWidget(QWidget):
         toolbar = QWidget()
         toolbar.setObjectName("rnd_top_toolbar")
         toolbar.setProperty("surfaceLevel", "raised")
+        toolbar.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
         self._top_toolbar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, toolbar)
         self._top_toolbar_layout.setContentsMargins(4, 2, 4, 2)
         self._top_toolbar_layout.setSpacing(10)
 
         measure_controls = QWidget()
+        measure_controls.setObjectName("rnd_measure_controls")
         measure_controls.setProperty("layoutRole", "transparent")
+        measure_controls.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         measure_row = QHBoxLayout(measure_controls)
         measure_row.setContentsMargins(0, 0, 0, 0)
         measure_row.setSpacing(6)
         self._status_label = QLabel("Ready")
         self._status_label.setProperty("tone", "muted")
-        measure_row.addWidget(self._status_label, 1)
+        measure_row.addWidget(self._status_label)
+        measure_row.addSpacing(12)
         self._measure_btn = QPushButton("Measure")
         self._measure_btn.setObjectName("btn_start")
         self._measure_btn.clicked.connect(self.measure_requested)
@@ -539,10 +549,15 @@ class RnDWidget(QWidget):
         hrtf_index = self._default_hrtf_combo.findData(self.session.hrtf_path or "")
         self._default_hrtf_combo.setCurrentIndex(hrtf_index if hrtf_index >= 0 else 0)
         self._default_hrtf_combo.currentIndexChanged.connect(self._on_default_hrtf_changed)
-        measure_row.addWidget(self._default_hrtf_combo)
+        measure_row.addWidget(self._default_hrtf_combo, 1)
 
         target_controls = QWidget()
+        target_controls.setObjectName("rnd_target_controls")
         target_controls.setProperty("layoutRole", "transparent")
+        target_controls.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         view_controls = QHBoxLayout(target_controls)
         view_controls.setContentsMargins(0, 0, 0, 0)
         view_controls.addWidget(QLabel("Preference Bounds"))
@@ -796,12 +811,23 @@ class RnDWidget(QWidget):
         QTimer.singleShot(0, self._apply_default_splitter_sizes)
 
     def resizeEvent(self, event) -> None:
+        stacked = event.size().width() < 1500
         direction = (
-            QBoxLayout.Direction.LeftToRight
-            if event.size().width() >= 1500
-            else QBoxLayout.Direction.TopToBottom
+            QBoxLayout.Direction.TopToBottom
+            if stacked
+            else QBoxLayout.Direction.LeftToRight
         )
         self._top_toolbar_layout.setDirection(direction)
+        stretch = 0 if stacked else 1
+        self._top_toolbar_layout.setStretch(0, stretch)
+        self._top_toolbar_layout.setStretch(1, stretch)
+        self._top_toolbar_layout.setAlignment(
+            Qt.AlignmentFlag.AlignTop
+            if stacked
+            else Qt.AlignmentFlag.AlignVCenter
+        )
+        self._top_toolbar_layout.invalidate()
+        self._top_toolbar.updateGeometry()
         super().resizeEvent(event)
 
     def _apply_default_splitter_sizes(self) -> None:

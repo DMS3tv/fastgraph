@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
+from dms.ui.modern_button import ModernButton as QPushButton
 
 
 class SessionDialog(QDialog):

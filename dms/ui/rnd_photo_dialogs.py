@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from dms.ui.modern_button import ModernButton as QPushButton
+
 
 class CameraCaptureDialog(QDialog):
     """Preview a selected webcam and return an in-memory still image."""

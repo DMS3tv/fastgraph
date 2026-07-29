@@ -39,6 +39,7 @@ from dms.automation import (
     scan_automation_directory,
 )
 from dms.ui.console_widget import ConsoleWidget
+from dms.ui.modern_button import ModernButton as QPushButton
 
 
 class AutomationGuideWidget(QWidget):
@@ -423,9 +424,11 @@ class AutomationWidget(QWidget):
         self.guide = AutomationGuideWidget()
         self.guide.close_requested.connect(lambda: self.guide_button.setChecked(False))
         self.left_stack = QStackedWidget()
+        self.left_stack.setProperty("surfaceLevel", "viewport")
         self.left_stack.addWidget(console)
         self.left_stack.addWidget(self.guide)
         self.events = EventsWidget(directory_provider, version_provider)
+        self.events.setProperty("surfaceLevel", "panel")
         self.events.run_requested.connect(self.run_requested)
         self.splitter.addWidget(self.left_stack)
         self.splitter.addWidget(self.events)

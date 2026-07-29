@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.models import PreferenceBounds
+from dms.ui.modern_button import ModernButton as QPushButton
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
@@ -487,11 +488,13 @@ class RnDWidget(QWidget):
         self._splitter_initialized = False
 
         viewport_panel = QWidget()
+        viewport_panel.setProperty("surfaceLevel", "viewport")
         viewport_layout = QVBoxLayout(viewport_panel)
-        viewport_layout.setContentsMargins(0, 0, 0, 0)
+        viewport_layout.setContentsMargins(8, 8, 8, 8)
         viewport_layout.setSpacing(6)
         toolbar = QWidget()
         toolbar.setObjectName("rnd_top_toolbar")
+        toolbar.setProperty("surfaceLevel", "raised")
         self._top_toolbar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, toolbar)
         self._top_toolbar_layout.setContentsMargins(4, 2, 4, 2)
         self._top_toolbar_layout.setSpacing(10)
@@ -575,9 +578,11 @@ class RnDWidget(QWidget):
         splitter.addWidget(viewport_panel)
 
         panel = QWidget()
+        panel.setObjectName("controlPanel")
+        panel.setProperty("surfaceLevel", "panel")
         panel.setMinimumWidth(360)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
         panel_layout.setSpacing(8)
         splitter.addWidget(panel)
         splitter.setStretchFactor(0, 3)
@@ -694,13 +699,12 @@ class RnDWidget(QWidget):
             f"QTreeWidget QScrollBar::handle:vertical {{ min-height: 32px; background: {accent}; border-radius: 6px; }}"
             "QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }"
         )
-        self._export_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {accent}; color: #101217; font-weight: 700; }}"
-        )
+        self._export_btn.setRole("primary")
 
     def _build_footer_controls(self) -> QWidget:
         footer = QWidget()
         footer.setObjectName("rnd_footer_controls")
+        footer.setProperty("surfaceLevel", "raised")
         row = QHBoxLayout(footer)
         row.setContentsMargins(6, 4, 6, 4)
         row.setSpacing(8)

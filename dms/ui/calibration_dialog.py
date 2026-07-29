@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from dms.calibration import CalibrationStore
 from dms.audio_engine import device_by_index
+from dms.ui.modern_button import ModernButton as QPushButton
 
 _REF_SPL_DB = 94.0
 _REF_PASCAL = 20e-6 * (10 ** (_REF_SPL_DB / 20.0))  # ≈ 1.0 Pa

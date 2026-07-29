@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QApplication,
 )
+from dms.ui.modern_button import ModernButton as QPushButton
 
 from dms.audio_engine import (
     LevelMonitor,
@@ -418,9 +419,7 @@ class PassFailDialog(QDialog):
         button_row.addWidget(fail_btn)
 
         cancel_btn = QPushButton("Cancel Queue")
-        cancel_btn.setStyleSheet(
-            "QPushButton { padding: 8px 16px; border-radius: 6px; }"
-        )
+        cancel_btn.setRole("warning")
         cancel_btn.clicked.connect(self._accept_cancel)
         button_row.addWidget(cancel_btn)
 
@@ -1783,8 +1782,10 @@ class MainWindow(QMainWindow):
 
     def _build_control_panel(self) -> QWidget:
         panel = QWidget()
+        panel.setObjectName("controlPanel")
+        panel.setProperty("surfaceLevel", "panel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
         dev_box = QGroupBox("Devices")

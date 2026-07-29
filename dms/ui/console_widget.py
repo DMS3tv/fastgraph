@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.console import ConsoleEvent, ConsoleEventStore
+from dms.ui.modern_button import ModernButton as QPushButton
 
 
 class HistoryLineEdit(QLineEdit):

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -40,6 +41,7 @@ from dms.curator.transforms import (
     combine_variation_layers,
     normalization_offset_at_1khz,
 )
+from dms.ui.modern_button import ModernButton as QPushButton
 from dms.brand_brand import default_color_cycle
 from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
@@ -599,11 +601,21 @@ class CuratorWidget(QWidget):
 
         self._graph = GraphWidget()
         self._graph_stage = GraphStage(self._graph, self._state, self._on_export_text_changed)
+        self._graph_stage.setProperty("surfaceLevel", "viewport")
         self._graph_frame = self._graph_stage.graph_frame
         self._graph_frame.setMinimumHeight(430)
         self._graph_stage.setMinimumHeight(540)
         splitter.addWidget(self._graph_stage)
-        splitter.addWidget(self._build_panel())
+        controls_scroll = QScrollArea()
+        controls_scroll.setObjectName("curatorControlsScroll")
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        controls_scroll.setMinimumWidth(410)
+        controls_scroll.setWidget(self._build_panel())
+        splitter.addWidget(controls_scroll)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([1100, 500])
@@ -612,9 +624,10 @@ class CuratorWidget(QWidget):
     def _build_panel(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("controlPanel")
+        panel.setProperty("surfaceLevel", "panel")
         panel.setMinimumWidth(390)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
         self._data_box = QGroupBox("Data")

@@ -26,6 +26,7 @@ from dms.shortcuts import (
     SHORTCUT_ACTIONS,
     shortcut_bindings_from_settings,
 )
+from dms.ui.modern_button import ModernButton as QPushButton
 
 
 class SettingsWidget(QWidget):

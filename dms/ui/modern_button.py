@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QRectF, Qt, QVariantAnimation
-from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPalette, QPen
+from PyQt6.QtCore import QEasingCurve, QEvent, QPointF, QRectF, Qt, QVariantAnimation
+from PyQt6.QtGui import (
+    QColor,
+    QGradient,
+    QLinearGradient,
+    QPainter,
+    QPalette,
+    QPen,
+    QRadialGradient,
+)
 from PyQt6.QtWidgets import (
     QApplication,
-    QGraphicsDropShadowEffect,
     QPushButton,
     QStyle,
     QStyleOptionButton,
@@ -44,7 +51,7 @@ def _shade(color: QColor, amount: float) -> QColor:
 
 
 class ModernButton(QPushButton):
-    """A QPushButton with a softly raised surface and animated accent light."""
+    """A QPushButton recessed into its surface with an animated inner light."""
 
     VALID_ROLES = {
         "default",
@@ -72,8 +79,8 @@ class ModernButton(QPushButton):
         self._press_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._press_animation.valueChanged.connect(self._set_press_progress)
 
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self.setGraphicsEffect(self._shadow)
+        self.pressed.connect(self._begin_click_flash)
+        self.released.connect(self._release_click_flash)
         self._sync_visual_state()
 
     def setRole(self, role: str) -> None:
@@ -127,22 +134,15 @@ class ModernButton(QPushButton):
         return QColor(tokens.accent)
 
     def _surface_and_text(self, tokens: ThemeTokens) -> tuple[QColor, QColor]:
-        role = self.role()
-        control = QColor(tokens.control)
+        light_mode = tokens.name == "light"
+        control = QColor(tokens.control if light_mode else tokens.viewport)
         text = QColor(tokens.text)
-        if role == "primary":
-            return _mix(control, QColor(tokens.accent), 0.16), text
-        if role == "positive":
-            return _mix(control, QColor(tokens.positive), 0.15), text
-        if role == "warning":
-            return _mix(control, QColor(tokens.warning), 0.14), text
-        if role == "danger":
-            return _mix(control, QColor(tokens.danger), 0.16), text
-        if role == "ghost":
-            ghost = QColor(tokens.panel)
-            ghost.setAlpha(180)
-            return ghost, QColor(tokens.muted)
-        return control, text
+        darkness = 0.18 if light_mode else 0.58
+        base = _mix(control, QColor("#000000"), darkness)
+        if self.role() == "ghost":
+            base = _mix(base, QColor(tokens.panel), 0.22)
+            text = QColor(tokens.muted)
+        return base, text
 
     def _effective_hover(self) -> float:
         focus_progress = (
@@ -172,44 +172,54 @@ class ModernButton(QPushButton):
         self._hover_animation.setEndValue(float(target))
         self._hover_animation.start()
 
-    def _animate_press(self, target: float) -> None:
+    def _animate_press(self, target: float, *, duration: int | None = None) -> None:
         if not self.isEnabled() or self.role() == "swatch":
             return
         self._press_animation.stop()
-        self._press_animation.setDuration(self._tokens().motion.press_ms)
+        self._press_animation.setDuration(
+            self._tokens().motion.press_ms if duration is None else int(duration)
+        )
         self._press_animation.setStartValue(self._press_progress)
         self._press_animation.setEndValue(float(target))
         self._press_animation.start()
 
+    def _begin_click_flash(self) -> None:
+        self._press_progress = max(self._press_progress, 0.32)
+        self._animate_press(1.0)
+
+    def _release_click_flash(self) -> None:
+        self._press_progress = max(self._press_progress, 0.58)
+        self._animate_press(0.0, duration=130)
+
     def _sync_visual_state(self) -> None:
-        if self.role() == "swatch":
-            self._shadow.setEnabled(False)
-            self.update()
-            return
-        self._shadow.setEnabled(self.isEnabled())
-        tokens = self._tokens()
-        if not self.isEnabled():
-            self._shadow.setBlurRadius(0)
-            self._shadow.setOffset(0, 0)
-            self.update()
-            return
-        progress = self._effective_hover()
-        accent = self._accent(tokens)
-        rest_shadow = QColor(tokens.shadow)
-        rest_shadow.setAlpha(tokens.motion.rest_shadow_alpha)
-        glow = QColor(accent)
-        glow.setAlpha(tokens.motion.hover_glow_alpha)
-        self._shadow.setColor(_mix(rest_shadow, glow, progress))
-        self._shadow.setBlurRadius(
-            tokens.motion.rest_shadow_blur
-            + (tokens.motion.hover_shadow_blur - tokens.motion.rest_shadow_blur) * progress
-            - 4.0 * self._press_progress
-        )
-        self._shadow.setOffset(
-            0,
-            3.0 - 2.0 * progress - 2.0 * self._press_progress,
-        )
         self.update()
+
+    def _glow_profile(self) -> dict[str, float | int]:
+        if not self.isEnabled():
+            return {
+                "center_y": 1.05,
+                "radius": 0.50,
+                "center_alpha": 0,
+                "middle_alpha": 0,
+                "edge_alpha": 0,
+                "uniform_alpha": 0,
+            }
+        hover = self._effective_hover() if self.isEnabled() else 0.0
+        flash = self._press_progress if self.isEnabled() else 0.0
+        return {
+            "center_y": 1.05 - 0.27 * hover - 0.12 * flash,
+            "radius": 0.50 + 0.48 * hover + 0.10 * flash,
+            "center_alpha": round(76 + 32 * hover + 48 * flash),
+            "middle_alpha": round(34 + 34 * hover + 32 * flash),
+            "edge_alpha": round(1 + 10 * hover + 5 * flash),
+            "uniform_alpha": round(1 + 6 * hover + 10 * flash),
+        }
+
+    def _paint_rects(self) -> tuple[QRectF, QRectF, QRectF]:
+        outer = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        well = outer.adjusted(1.5, 1.5, -1.5, -1.5)
+        button = well.adjusted(2.0, 2.0, -2.0, -2.0)
+        return outer, well, button
 
     def enterEvent(self, event) -> None:
         self._animate_hover(1.0)
@@ -218,16 +228,6 @@ class ModernButton(QPushButton):
     def leaveEvent(self, event) -> None:
         self._animate_hover(0.0)
         super().leaveEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._animate_press(1.0)
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._animate_press(0.0)
-        super().mouseReleaseEvent(event)
 
     def focusInEvent(self, event) -> None:
         super().focusInEvent(event)
@@ -239,8 +239,6 @@ class ModernButton(QPushButton):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        if not hasattr(self, "_shadow"):
-            return
         if event.type() in {
             QEvent.Type.EnabledChange,
             QEvent.Type.PaletteChange,
@@ -275,46 +273,80 @@ class ModernButton(QPushButton):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         progress = self._effective_hover() if self.isEnabled() else 0.0
-        pressed = self._press_progress if self.isEnabled() else 0.0
+        flash = self._press_progress if self.isEnabled() else 0.0
         accent = self._accent(tokens)
         base, text = self._surface_and_text(tokens)
         if not self.isEnabled():
-            base = QColor(tokens.alternate)
+            base = _mix(QColor(tokens.alternate), QColor("#000000"), 0.28)
             text = QColor(tokens.disabled)
 
-        tint_amount = tokens.motion.hover_tint_alpha * progress
-        surface = _mix(base, accent, tint_amount)
-        top = _shade(surface, 0.045 + 0.025 * progress)
-        bottom = _shade(surface, -0.065 + 0.02 * progress)
-
-        y_offset = pressed
-        rect = QRectF(3.0, 2.0 + y_offset, self.width() - 6.0, self.height() - 8.0)
+        outer, well, rect = self._paint_rects()
         radius = min(float(tokens.geometry.radius_button), rect.height() / 2.0)
         if self.role() == "compact":
             radius = rect.height() / 2.0
 
-        lower_edge = QRectF(rect)
-        lower_edge.translate(0.0, 2.0 - pressed)
+        outer_radius = min(radius + 4.0, outer.height() / 2.0)
+        well_radius = min(radius + 2.0, well.height() / 2.0)
+        surround = QColor(tokens.panel)
+        surround_top = _shade(surround, 0.035)
+        surround_bottom = _shade(surround, -0.045)
+        surround_gradient = QLinearGradient(outer.topLeft(), outer.bottomLeft())
+        surround_gradient.setColorAt(0.0, surround_top)
+        surround_gradient.setColorAt(1.0, surround_bottom)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 120 if self.isEnabled() else 55))
-        painter.drawRoundedRect(lower_edge, radius, radius)
+        painter.setBrush(surround_gradient)
+        painter.drawRoundedRect(outer, outer_radius, outer_radius)
 
-        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        gradient.setColorAt(0.0, top)
-        gradient.setColorAt(1.0, bottom)
-        painter.setBrush(gradient)
-        border = _mix(QColor(tokens.border), accent, 0.45 * progress)
-        border_width = tokens.geometry.focus_border_px if self.hasFocus() else tokens.geometry.border_px
-        painter.setPen(QPen(border, border_width))
+        painter.setBrush(QColor(1, 3, 4, 238 if self.isEnabled() else 175))
+        painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
+        painter.drawRoundedRect(well, well_radius, well_radius)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base)
         painter.drawRoundedRect(rect, radius, radius)
 
+        profile = self._glow_profile()
+        uniform = QColor(accent)
+        uniform.setAlpha(int(profile["uniform_alpha"]))
+        painter.setBrush(uniform)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        glow = QRadialGradient(
+            QPointF(0.5, float(profile["center_y"])),
+            float(profile["radius"]),
+        )
+        glow.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
+        center = QColor(accent)
+        center.setAlpha(int(profile["center_alpha"]))
+        middle = QColor(accent)
+        middle.setAlpha(int(profile["middle_alpha"]))
+        edge = QColor(accent)
+        edge.setAlpha(int(profile["edge_alpha"]))
+        transparent = QColor(accent)
+        transparent.setAlpha(0)
+        glow.setColorAt(0.0, center)
+        glow.setColorAt(0.48, middle)
+        glow.setColorAt(0.88, edge)
+        glow.setColorAt(1.0, transparent)
+        painter.setBrush(glow)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        inner_border = _mix(QColor("#050607"), accent, 0.13 + 0.22 * progress)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(inner_border, 1.0))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        if self.hasFocus():
+            painter.setPen(QPen(accent, tokens.geometry.focus_border_px))
+            painter.drawRoundedRect(outer.adjusted(1, 1, -1, -1), outer_radius, outer_radius)
+
+        text = _mix(text, accent, 0.30 + 0.16 * progress + 0.12 * flash)
         option = QStyleOptionButton()
         option.initFrom(self)
         option.text = self.text()
         option.icon = self.icon()
         option.iconSize = self.iconSize()
         option.rect = rect.adjusted(8, 0, -8, 0).toRect()
-        option.rect.translate(0, round(y_offset))
         option.palette = QPalette(option.palette)
         option.palette.setColor(QPalette.ColorRole.ButtonText, text)
         if self.isDown():

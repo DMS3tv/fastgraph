@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QEvent, QRectF, Qt
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -74,15 +74,21 @@ def test_modern_button_hover_and_press_endpoints() -> None:
     button.show()
     app.processEvents()
 
+    rest = button._glow_profile()
+    assert button.graphicsEffect() is None
+
     button._set_hover_progress(1.0)
     assert button.hoverProgress() == 1.0
-    assert button.graphicsEffect().blurRadius() == DARK_TOKENS.motion.hover_shadow_blur
+    hover = button._glow_profile()
+    assert hover["center_y"] < rest["center_y"]
+    assert hover["radius"] > rest["radius"]
+    assert hover["center_alpha"] > rest["center_alpha"]
 
     button._set_press_progress(1.0)
     assert button.pressProgress() == 1.0
-    assert button.graphicsEffect().blurRadius() == (
-        DARK_TOKENS.motion.hover_shadow_blur - 4.0
-    )
+    flash = button._glow_profile()
+    assert flash["center_alpha"] > hover["center_alpha"]
+    assert flash["uniform_alpha"] > hover["uniform_alpha"]
 
 
 def test_modern_button_animates_hover_and_press() -> None:
@@ -115,19 +121,34 @@ def test_modern_button_focus_and_disabled_states() -> None:
 
     button.setEnabled(False)
     app.processEvents()
-    assert button.graphicsEffect().isEnabled() is False
+    assert button.graphicsEffect() is None
+    assert button._effective_hover() == 0.0
+    assert button._glow_profile()["center_alpha"] == 0
 
 
-def test_button_effect_has_room_outside_the_control_surface() -> None:
+def test_button_uses_nested_rectangles_for_the_recessed_well() -> None:
     app = _app()
     app.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button.resize(button.sizeHint())
     button.show()
     app.processEvents()
-    effect_bounds = button.graphicsEffect().boundingRectFor(QRectF(button.rect()))
-    assert effect_bounds.width() > button.width()
+    outer, well, face = button._paint_rects()
+    assert outer.contains(well)
+    assert well.contains(face)
+    assert well.width() - face.width() == 4.0
+    assert outer.width() - well.width() == 3.0
     assert button.sizeHint().height() >= DARK_TOKENS.geometry.button_height + 4
+
+
+def test_button_click_flash_has_a_visible_release_tail() -> None:
+    app = _app()
+    app.setProperty("fastgraphVisualMode", "dark")
+    button = ModernButton("Action")
+    button._begin_click_flash()
+    assert button.pressProgress() >= 0.32
+    button._release_click_flash()
+    assert button.pressProgress() >= 0.58
 
 
 def test_palette_change_refreshes_button_mode() -> None:

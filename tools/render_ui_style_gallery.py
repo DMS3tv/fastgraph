@@ -26,11 +26,20 @@ from dms.ui.modern_button import ModernButton
 from dms.ui.style_tokens import mode_tokens
 
 
-def _button(label: str, role: str, *, hover: bool = False) -> ModernButton:
+def _button(
+    label: str,
+    role: str,
+    *,
+    hover: bool = False,
+    flash: bool = False,
+) -> ModernButton:
     button = ModernButton(label)
     button.setRole(role)
     if hover:
         button._set_hover_progress(1.0)
+    if flash:
+        button._set_hover_progress(1.0)
+        button._set_press_progress(1.0)
     return button
 
 
@@ -81,19 +90,23 @@ def build_gallery(mode: str) -> QWidget:
     buttons = QGroupBox("Button Roles")
     button_layout = QVBoxLayout(buttons)
     first_row = QHBoxLayout()
-    first_row.addWidget(_button("Default", "default"))
-    first_row.addWidget(_button("Hover light", "default", hover=True))
+    first_row.addWidget(_button("Rest", "default"))
+    first_row.addWidget(_button("Hover fill", "default", hover=True))
+    first_row.addWidget(_button("Click flash", "default", flash=True))
     first_row.addWidget(_button("Primary", "primary"))
-    first_row.addWidget(_button("Positive", "positive"))
     button_layout.addLayout(first_row)
     second_row = QHBoxLayout()
+    second_row.addWidget(_button("Positive", "positive"))
     second_row.addWidget(_button("Warning", "warning"))
     second_row.addWidget(_button("Danger", "danger"))
-    second_row.addWidget(_button("Ghost", "ghost"))
+    button_layout.addLayout(second_row)
+    third_row = QHBoxLayout()
+    third_row.addWidget(_button("Ghost", "ghost"))
     disabled = _button("Disabled", "default")
     disabled.setEnabled(False)
-    second_row.addWidget(disabled)
-    button_layout.addLayout(second_row)
+    third_row.addWidget(disabled)
+    third_row.addStretch(2)
+    button_layout.addLayout(third_row)
     layout.addWidget(buttons)
 
     status = QLabel(

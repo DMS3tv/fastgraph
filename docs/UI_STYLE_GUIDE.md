@@ -55,9 +55,14 @@ All normal user actions use `ModernButton`.
 | `compact` | Short tab-header and status-bar actions |
 | `swatch` | A color-only control |
 
-A normal button has a shallow vertical gradient, a dark lower edge, and a soft
-shadow. Hover adds the current theme accent as an inner light and a soft outer
-glow. Press moves the surface down by 1 px and reduces the shadow.
+A normal button sits inside a thin dark recessed well. The surrounding rim has
+a small brightness change so the control reads as part of the interface
+surface. Do not put a drop shadow behind the control.
+
+At rest, the button face is dark and a contained accent light rises from the
+bottom center. Hover expands and brightens the light until it softly fills the
+button. Press briefly flashes the inner light like a bulb. The light must stay
+inside the recessed well.
 
 Use cyan light in standard FastGraph. Use orange light in Brand mode. Use red
 light for destructive actions. Disabled buttons have no glow or motion.
@@ -88,6 +93,6 @@ actions. Do not apply the gradient to every control.
 - Check dark, light, and Brand modes.
 - Check keyboard focus and disabled controls.
 - Check 1280 x 700 and 1800 x 1100 windows.
-- Confirm that glow and shadows do not clip.
+- Confirm that the inner glow does not cross the recessed well.
 - Confirm that tab shapes and control radii are consistent.
 - Confirm that graph and export output did not change.

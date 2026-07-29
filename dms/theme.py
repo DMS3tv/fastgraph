@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 
 from dms import brand_brand
 from dms.settings_manager import SettingsManager
+from dms.ui.style_tokens import BRAND_TOKENS, ThemeTokens, tokens_for
 
 
 DARK = "dark"
@@ -21,23 +22,51 @@ def normalize_theme(value: object) -> str:
 
 
 def theme_colors(theme: str) -> dict[str, str]:
-    if normalize_theme(theme) == LIGHT:
-        return {
-            "window": "#f3f5f8", "base": "#ffffff", "alternate": "#e9edf2",
-            "text": "#20252d", "muted": "#5f6977", "disabled": "#99a1ac",
-            "border": "#b9c1cc", "control": "#e8ecf1", "control_hover": "#dce3eb",
-            "selected": "#cfe4f6", "accent": "#176ea6", "plot_bg": "#fafbfc",
-            "plot_fg": "#4f5967", "plot_grid": "#aeb7c2", "meter_bg": "#e1e5ea",
-            "meter_mark": "#87909c", "meter_peak": "#20252d",
-        }
-    return {
-        "window": "#14171c", "base": "#242b36", "alternate": "#20262f",
-        "text": "#e3e7ee", "muted": "#91a2ba", "disabled": "#6e7785",
-        "border": "#455064", "control": "#2a303b", "control_hover": "#394356",
-        "selected": "#38536f", "accent": "#66ccff", "plot_bg": "#1a1a1a",
-        "plot_fg": "#aab0b9", "plot_grid": "#555d68", "meter_bg": "#111111",
-        "meter_mark": "#555555", "meter_peak": "#ffffff",
+    token = tokens_for(normalize_theme(theme))
+    light = token.name == LIGHT
+    return _color_dict(
+        token,
+        meter_bg="#e1e5ea" if light else "#111111",
+        meter_mark="#87909c" if light else "#555555",
+        meter_peak="#20252d" if light else "#ffffff",
+        lowercase=True,
+    )
+
+
+def _color_dict(
+    token: ThemeTokens,
+    *,
+    meter_bg: str,
+    meter_mark: str,
+    meter_peak: str,
+    lowercase: bool = False,
+) -> dict[str, str]:
+    values = {
+        "window": token.background,
+        "background": token.background,
+        "viewport": token.viewport,
+        "panel": token.panel,
+        "raised": token.raised,
+        "base": token.raised,
+        "alternate": token.alternate,
+        "text": token.text,
+        "muted": token.muted,
+        "disabled": token.disabled,
+        "border": token.border,
+        "control": token.control,
+        "control_hover": token.control_hover,
+        "selected": token.selected,
+        "accent": token.accent,
+        "plot_bg": token.plot_bg,
+        "plot_fg": token.plot_fg,
+        "plot_grid": token.plot_grid,
+        "meter_bg": meter_bg,
+        "meter_mark": meter_mark,
+        "meter_peak": meter_peak,
     }
+    if lowercase:
+        return {key: value.lower() for key, value in values.items()}
+    return values
 
 
 def _status_accent_colors(light: bool) -> dict[str, tuple[str, str, str]]:
@@ -62,18 +91,21 @@ def _status_accent_colors(light: bool) -> dict[str, tuple[str, str, str]]:
 def application_stylesheet(theme: str) -> str:
     c = theme_colors(theme)
     light = normalize_theme(theme) == LIGHT
+    token = tokens_for(theme)
     return _stylesheet_body(
         c,
+        visual_tokens=token,
         status=_status_accent_colors(light),
         tab_bg="#e5e9ee" if light else "#222222",
-        tab_selected="#ffffff" if light else "#2d2d2d",
-        group_bg="rgba(0, 0, 0, 0.018)" if light else "rgba(255, 255, 255, 0.015)",
+        tab_selected=token.raised,
+        group_bg=token.panel,
     )
 
 
 def _stylesheet_body(
     c: dict[str, str],
     *,
+    visual_tokens: ThemeTokens,
     status: dict[str, tuple[str, str, str]],
     tab_bg: str,
     tab_selected: str,
@@ -84,15 +116,26 @@ def _stylesheet_body(
     start_bg, start_hover, start_text = status["start"]
     cancel_bg, cancel_hover, cancel_text = status["cancel"]
     amber_bg, amber_hover, amber_text = status["amber"]
+    geometry = visual_tokens.geometry
+    typography = visual_tokens.typography
     return f"""
-    QWidget {{ background-color: {c['window']}; color: {c['text']}; font-family: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif; font-size: 13px; }}
+    QWidget {{ background-color: {c['window']}; color: {c['text']}; font-family: '{typography.ui_family}', 'Helvetica Neue', Arial, sans-serif; font-size: {typography.body_px}px; }}
     QMainWindow, QDialog {{ background-color: {c['window']}; }}
+    QLabel {{ background-color: transparent; }}
+    QCheckBox, QRadioButton {{ background-color: transparent; }}
     QToolTip {{ background-color: {c['base']}; color: {c['text']}; border: 1px solid {c['border']}; }}
-    QPushButton {{ background-color: {c['control']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: 8px; padding: 6px 14px; min-height: 28px; }}
+    QWidget[surfaceLevel="viewport"] {{ background-color: {c['viewport']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
+    QWidget[surfaceLevel="panel"] {{ background-color: {c['panel']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
+    QWidget[surfaceLevel="raised"] {{ background-color: {c['raised']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
+    QLabel[typographyRole="caption"] {{ font-size: {typography.caption_px}px; color: {c['muted']}; }}
+    QLabel[typographyRole="section"] {{ font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.section_px}px; font-weight: 600; }}
+    QLabel[typographyRole="screen"] {{ font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.screen_px}px; font-weight: 700; }}
+    QLabel[typographyRole="technical"], QLineEdit[typographyRole="technical"] {{ font-family: '{typography.technical_family}', monospace; font-size: {typography.body_px}px; }}
+    QPushButton {{ background-color: {c['control']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_button}px; padding: 6px 14px; min-height: 28px; }}
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['alternate']}; padding-top: 7px; }}
     QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
-    QWidget#tab_header_controls QPushButton {{ min-height: 20px; max-height: 24px; padding: 2px 10px; border-radius: 6px; }}
+    QWidget#tab_header_controls QPushButton {{ min-height: 20px; max-height: 26px; padding: 2px 10px; border-radius: 12px; }}
     QWidget#tab_header_controls QPushButton:pressed {{ padding-top: 3px; }}
     QPushButton#btn_keep {{ background-color: {keep_bg}; color: {keep_text}; font-weight: bold; }}
     QPushButton#btn_keep:hover {{ background-color: {keep_hover}; }}
@@ -111,7 +154,7 @@ def _stylesheet_body(
     QPushButton#btn_export:hover, QToolButton#section_toggle:hover {{ background-color: {amber_hover}; }}
     QPushButton#btn_upload, QPushButton#btn_update {{ background-color: {keep_bg}; color: {keep_text}; font-weight: 600; }}
     QPushButton#btn_upload:hover, QPushButton#btn_update:hover {{ background-color: {keep_hover}; }}
-    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {{ background-color: {c['base']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: 8px; padding: 3px 8px; min-height: 24px; selection-background-color: {c['selected']}; }}
+    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {{ background-color: {c['raised']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; padding: 3px 8px; min-height: 24px; selection-background-color: {c['selected']}; }}
     QComboBox::drop-down {{ border: none; width: 20px; }}
     QComboBox QAbstractItemView {{ background-color: {c['base']}; color: {c['text']}; selection-background-color: {c['selected']}; }}
     QSpinBox#queue_count_spin {{ font-size: 15px; font-weight: 700; color: {c['accent']}; padding-right: 34px; }}
@@ -121,17 +164,18 @@ def _stylesheet_body(
     QLabel[tone="error"] {{ color: {fail_text}; }}
     QLabel[tone="accent"] {{ color: {c['accent']}; font-weight: 600; }}
     QLabel[tone="warning"] {{ color: {amber_text}; }}
-    QFrame#diagnostic_box {{ border: 1px solid {c['border']}; border-radius: 6px; background-color: {c['alternate']}; }}
-    QLabel#diagnostic_details {{ color: {c['muted']}; background-color: {c['alternate']}; border: 1px solid {c['border']}; border-radius: 6px; padding: 8px; font-family: monospace; }}
-    QGroupBox {{ border: 1px solid {c['border']}; border-radius: 10px; margin-top: 10px; padding-top: 8px; background-color: {group_bg}; }}
-    QGroupBox::title {{ color: {c['muted']}; subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
+    QFrame#diagnostic_box {{ border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; background-color: {c['raised']}; }}
+    QLabel#diagnostic_details {{ color: {c['muted']}; background-color: {c['raised']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; padding: 8px; font-family: '{typography.technical_family}', monospace; }}
+    QGroupBox {{ border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; margin-top: 14px; padding-top: 10px; background-color: {group_bg}; }}
+    QGroupBox::title {{ color: {c['muted']}; subcontrol-origin: margin; left: 12px; padding: 0 5px; font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.section_px}px; font-weight: 600; }}
     QScrollArea, QScrollBar {{ background-color: {c['window']}; }}
     QScrollBar:vertical {{ width: 8px; }}
     QScrollBar::handle:vertical {{ background: {c['border']}; border-radius: 4px; }}
-    QTabWidget::pane {{ border: 1px solid {c['border']}; }}
-    QTabBar::tab {{ background: {tab_bg}; padding: 6px 14px; border: 1px solid {c['border']}; color: {c['text']}; }}
-    QTabBar::tab:selected {{ background: {tab_selected}; color: {c['accent']}; }}
-    QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {c['border']}; border-radius: 3px; background: {c['base']}; }}
+    QTabWidget::pane {{ background: {c['viewport']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; top: -1px; }}
+    QTabBar::tab {{ background: {tab_bg}; padding: 7px 16px; margin-right: 3px; border: 1px solid {c['border']}; border-bottom: 2px solid {c['border']}; border-top-left-radius: {geometry.radius_tab}px; border-top-right-radius: {geometry.radius_tab}px; color: {c['text']}; }}
+    QTabBar::tab:hover {{ background: {c['control_hover']}; }}
+    QTabBar::tab:selected {{ background: {tab_selected}; color: {c['accent']}; border-bottom: 2px solid {c['accent']}; }}
+    QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {c['border']}; border-radius: {geometry.radius_micro}px; background: {c['base']}; }}
     QCheckBox::indicator:checked {{ background: #3a7abf; }}
     QStatusBar {{ border-top: 1px solid {c['border']}; }}
     """
@@ -139,25 +183,23 @@ def _stylesheet_body(
 
 def brand_theme_colors() -> dict[str, str]:
     """Color set for brand mode (see BRAND Brand Guide)."""
-    return {
-        "window": brand_brand.BACKGROUND, "base": brand_brand.SURFACE, "alternate": "#1C1C1C",
-        "text": brand_brand.OFF_WHITE, "muted": "#A8A8A8", "disabled": "#6B6B6B",
-        "border": "#5C5C5C", "control": brand_brand.SURFACE, "control_hover": "#363636",
-        "selected": "#5A3018", "accent": brand_brand.GRADIENT_ORANGE,
-        "plot_bg": brand_brand.BACKGROUND, "plot_fg": brand_brand.OFF_WHITE,
-        "plot_grid": "#4A4A4A", "meter_bg": "#141414", "meter_mark": "#555555",
-        "meter_peak": brand_brand.WHITE,
-    }
+    return _color_dict(
+        BRAND_TOKENS,
+        meter_bg="#141414",
+        meter_mark="#555555",
+        meter_peak=brand_brand.WHITE,
+    )
 
 
 def brand_application_stylesheet() -> str:
     c = brand_theme_colors()
     base = _stylesheet_body(
         c,
+        visual_tokens=BRAND_TOKENS,
         status=_status_accent_colors(light=False),
         tab_bg=c["alternate"],
         tab_selected=c["base"],
-        group_bg="rgba(255, 255, 255, 0.02)",
+        group_bg=c["panel"],
     )
     return base + f"""
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
@@ -210,7 +252,9 @@ def brand_application_stylesheet() -> str:
         border-left: 3px solid {brand_brand.GRADIENT_ORANGE};
     }}
     QWidget#controlPanel {{
-        border-left: 1px solid #707070;
+        background-color: {BRAND_TOKENS.panel};
+        border: 1px solid #707070;
+        border-radius: {BRAND_TOKENS.geometry.radius_surface}px;
     }}
     """
 
@@ -282,8 +326,10 @@ class ThemeController(QObject):
 
     def _apply(self) -> None:
         if self._brand_mode:
+            self._app.setProperty("fastgraphVisualMode", "brand")
             self._app.setPalette(_brand_palette())
             self._app.setStyleSheet(brand_application_stylesheet())
         else:
+            self._app.setProperty("fastgraphVisualMode", self._theme)
             self._app.setPalette(_palette(self._theme))
             self._app.setStyleSheet(application_stylesheet(self._theme))

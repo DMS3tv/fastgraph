@@ -1,0 +1,131 @@
+"""Render a compact FastGraph component gallery for visual review."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from dms.theme import application_stylesheet, brand_application_stylesheet
+from dms.ui.modern_button import ModernButton
+from dms.ui.style_tokens import mode_tokens
+
+
+def _button(label: str, role: str, *, hover: bool = False) -> ModernButton:
+    button = ModernButton(label)
+    button.setRole(role)
+    if hover:
+        button._set_hover_progress(1.0)
+    return button
+
+
+def build_gallery(mode: str) -> QWidget:
+    tokens = mode_tokens(mode)
+    root = QWidget()
+    root.setWindowTitle(f"FastGraph UI Style - {mode.title()}")
+    root.resize(960, 700)
+    layout = QVBoxLayout(root)
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    title = QLabel(f"FastGraph UI Style - {mode.title()}")
+    title.setProperty("typographyRole", "screen")
+    layout.addWidget(title)
+
+    tabs = QTabWidget()
+    for name in ("Measure", "R&&D", "Curator", "Automation", "Settings"):
+        page = QWidget()
+        page.setProperty("surfaceLevel", "viewport")
+        tabs.addTab(page, name)
+    tabs.setCurrentIndex(2)
+    tabs.setFixedHeight(76)
+    layout.addWidget(tabs)
+
+    surfaces = QHBoxLayout()
+    for level in ("viewport", "panel", "raised"):
+        surface = QWidget()
+        surface.setProperty("surfaceLevel", level)
+        surface_layout = QVBoxLayout(surface)
+        label = QLabel(level.title())
+        label.setProperty("typographyRole", "section")
+        surface_layout.addWidget(label)
+        surface_layout.addWidget(QLabel(f"{level} surface"))
+        surfaces.addWidget(surface)
+    layout.addLayout(surfaces)
+
+    controls = QGroupBox("Fields and Controls")
+    controls_layout = QHBoxLayout(controls)
+    field = QLineEdit("Headphone metadata")
+    field.setProperty("typographyRole", "technical")
+    controls_layout.addWidget(field)
+    combo = QComboBox()
+    combo.addItems(["1/48 smoothing", "1/24 smoothing", "1/12 smoothing"])
+    controls_layout.addWidget(combo)
+    layout.addWidget(controls)
+
+    buttons = QGroupBox("Button Roles")
+    button_layout = QVBoxLayout(buttons)
+    first_row = QHBoxLayout()
+    first_row.addWidget(_button("Default", "default"))
+    first_row.addWidget(_button("Hover light", "default", hover=True))
+    first_row.addWidget(_button("Primary", "primary"))
+    first_row.addWidget(_button("Positive", "positive"))
+    button_layout.addLayout(first_row)
+    second_row = QHBoxLayout()
+    second_row.addWidget(_button("Warning", "warning"))
+    second_row.addWidget(_button("Danger", "danger"))
+    second_row.addWidget(_button("Ghost", "ghost"))
+    disabled = _button("Disabled", "default")
+    disabled.setEnabled(False)
+    second_row.addWidget(disabled)
+    button_layout.addLayout(second_row)
+    layout.addWidget(buttons)
+
+    status = QLabel(
+        f"Accent {tokens.accent}  |  Button radius {tokens.geometry.radius_button}px"
+    )
+    status.setProperty("typographyRole", "caption")
+    status.setAlignment(Qt.AlignmentFlag.AlignRight)
+    layout.addWidget(status)
+    return root
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output_dir", type=Path)
+    args = parser.parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    app = QApplication.instance() or QApplication([])
+    for mode in ("dark", "light", "brand"):
+        app.setProperty("fastgraphVisualMode", mode)
+        app.setStyleSheet(
+            brand_application_stylesheet()
+            if mode == "brand"
+            else application_stylesheet(mode)
+        )
+        gallery = build_gallery(mode)
+        gallery.show()
+        app.processEvents()
+        gallery.grab().save(str(args.output_dir / f"ui-style-{mode}.png"))
+        gallery.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -96,7 +96,7 @@ def application_stylesheet(theme: str) -> str:
         c,
         visual_tokens=token,
         status=_status_accent_colors(light),
-        tab_bg="#e5e9ee" if light else "#222222",
+        tab_bg="#e5e9ee" if light else token.alternate,
         tab_selected=token.raised,
         group_bg=token.panel,
     )

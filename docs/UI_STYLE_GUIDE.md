@@ -40,6 +40,11 @@ Use the following levels from back to front:
 Use color and a clear border to separate large surfaces. Do not add a large
 shadow to a panel or viewport.
 
+The standard dark theme uses black for the application background. Use
+`#090B0E` for viewports, `#10141A` for panels, `#171C23` for raised surfaces,
+and `#1D232C` for controls. Keep each level dark. Use borders and small tonal
+steps to show the surface order.
+
 ## Buttons
 
 All normal user actions use `ModernButton`.

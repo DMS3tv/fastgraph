@@ -35,8 +35,11 @@ def test_style_tokens_define_the_documented_scale() -> None:
 
 
 def test_theme_surface_tokens_and_brand_values() -> None:
-    assert DARK_TOKENS.background == "#14171C"
-    assert DARK_TOKENS.viewport == "#1A1A1A"
+    assert DARK_TOKENS.background == "#000000"
+    assert DARK_TOKENS.viewport == "#090B0E"
+    assert DARK_TOKENS.panel == "#10141A"
+    assert DARK_TOKENS.raised == "#171C23"
+    assert DARK_TOKENS.control == "#1D232C"
     assert LIGHT_TOKENS.viewport == "#FFFFFF"
     assert BRAND_TOKENS.background == "#232323"
     assert BRAND_TOKENS.accent == "#7A7A7A"

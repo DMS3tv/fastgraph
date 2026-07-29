@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -24,6 +23,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSplitter,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
@@ -35,6 +35,8 @@ from PyQt6.QtWidgets import (
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.models import PreferenceBounds
 from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
+from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
@@ -117,9 +119,11 @@ class RnDPlotWidget(QWidget):
         self.bottom_plot = _NoWheelPlotWidget(title="R&D Bottom Measurements")
         _configure_plot(self.top_plot)
         _configure_plot(self.bottom_plot)
-        layout.addWidget(self.top_plot, 1)
+        self.top_frame = RoundedViewportFrame(self.top_plot)
+        self.bottom_frame = RoundedViewportFrame(self.bottom_plot)
+        layout.addWidget(self.top_frame, 1)
         self._between_plots_widget: QWidget | None = None
-        layout.addWidget(self.bottom_plot, 1)
+        layout.addWidget(self.bottom_frame, 1)
         self._items: list[object] = []
 
     def set_between_plots_widget(self, widget: QWidget) -> None:
@@ -500,6 +504,7 @@ class RnDWidget(QWidget):
         self._top_toolbar_layout.setSpacing(10)
 
         measure_controls = QWidget()
+        measure_controls.setProperty("layoutRole", "transparent")
         measure_row = QHBoxLayout(measure_controls)
         measure_row.setContentsMargins(0, 0, 0, 0)
         measure_row.setSpacing(6)
@@ -537,6 +542,7 @@ class RnDWidget(QWidget):
         measure_row.addWidget(self._default_hrtf_combo)
 
         target_controls = QWidget()
+        target_controls.setProperty("layoutRole", "transparent")
         view_controls = QHBoxLayout(target_controls)
         view_controls.setContentsMargins(0, 0, 0, 0)
         view_controls.addWidget(QLabel("Preference Bounds"))
@@ -628,14 +634,20 @@ class RnDWidget(QWidget):
         panel_layout.addWidget(data_box, 1)
 
         notes_panel = QWidget()
+        notes_panel.setProperty("layoutRole", "transparent")
         notes_layout = QVBoxLayout(notes_panel)
         notes_layout.setContentsMargins(0, 0, 0, 0)
         notes_layout.setSpacing(4)
         self._notes_toggle = QToolButton()
+        self._notes_toggle.setObjectName("section_toggle")
         self._notes_toggle.setText("Notes")
         self._notes_toggle.setCheckable(True)
         self._notes_toggle.setChecked(self._notes_expanded)
         self._notes_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._notes_toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self._notes_toggle.clicked.connect(self._on_notes_toggled)
         notes_layout.addWidget(self._notes_toggle)
         self._notes_content = QGroupBox()
@@ -668,6 +680,7 @@ class RnDWidget(QWidget):
         photo_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         photo_scroll.setMaximumHeight(92)
         self._photo_strip = QWidget()
+        self._photo_strip.setProperty("layoutRole", "transparent")
         self._photo_strip_layout = QHBoxLayout(self._photo_strip)
         self._photo_strip_layout.setContentsMargins(2, 2, 2, 2)
         self._photo_strip_layout.setSpacing(5)
@@ -693,12 +706,7 @@ class RnDWidget(QWidget):
         return brand_brand.GRADIENT_ORANGE if self._brand_mode else "#FCBE11"
 
     def _apply_accent_stylesheets(self) -> None:
-        accent = self._accent_color()
-        self._tree.setStyleSheet(
-            "QTreeWidget QScrollBar:vertical { width: 16px; background: rgba(120, 120, 120, 45); }"
-            f"QTreeWidget QScrollBar::handle:vertical {{ min-height: 32px; background: {accent}; border-radius: 6px; }}"
-            "QTreeWidget QScrollBar::add-line:vertical, QTreeWidget QScrollBar::sub-line:vertical { height: 0px; }"
-        )
+        self._tree.setStyleSheet("")
         self._export_btn.setRole("primary")
 
     def _build_footer_controls(self) -> QWidget:
@@ -760,6 +768,7 @@ class RnDWidget(QWidget):
     def _build_interplot_controls(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("rnd_interplot_controls")
+        panel.setProperty("layoutRole", "transparent")
         layout = QHBoxLayout(panel)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(8)

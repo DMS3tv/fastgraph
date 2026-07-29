@@ -37,6 +37,7 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, 
     view_box = window._graph.getPlotItem().getViewBox()
     assert view_box.state["mouseEnabled"] == [False, False]
     assert window._graph_frame.ratio == 16.0 / 9.0
+    assert window._graph_stage._rounded_graph.radius == 10
     assert not hasattr(window, "_visible_check")
     assert not hasattr(window._graph, "_draw_reference_lines")
     assert window.graph_state.aspect_locked_25db is True

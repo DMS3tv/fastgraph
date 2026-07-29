@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QFormLayout,
@@ -35,7 +34,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QStatusBar,
     QTabWidget,
     QKeySequenceEdit,
@@ -47,6 +45,10 @@ from PyQt6.QtWidgets import (
     QApplication,
 )
 from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import (
+    ModernDoubleSpinBox as QDoubleSpinBox,
+    ModernSpinBox as QSpinBox,
+)
 
 from dms.audio_engine import (
     LevelMonitor,
@@ -1697,6 +1699,7 @@ class MainWindow(QMainWindow):
     def _build_measure_plot_controls(self) -> QWidget:
         row_widget = QWidget()
         row_widget.setObjectName("measure_interplot_controls")
+        row_widget.setProperty("layoutRole", "transparent")
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(6, 4, 6, 4)
         row.setSpacing(8)
@@ -1749,6 +1752,7 @@ class MainWindow(QMainWindow):
     def _build_export_controls(self) -> QWidget:
         row_widget = QWidget()
         row_widget.setObjectName("measure_export_controls")
+        row_widget.setProperty("layoutRole", "transparent")
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(6, 4, 6, 4)
         row.setSpacing(8)
@@ -1931,6 +1935,7 @@ class MainWindow(QMainWindow):
         if isinstance(content_widget, QGroupBox):
             content_widget.setTitle("")
         section = QWidget()
+        section.setProperty("layoutRole", "transparent")
         section_layout = QVBoxLayout(section)
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(6)
@@ -1945,8 +1950,13 @@ class MainWindow(QMainWindow):
             Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow
         )
         toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
 
         container = QWidget()
+        container.setProperty("layoutRole", "transparent")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)

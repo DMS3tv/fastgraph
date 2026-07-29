@@ -16,13 +16,16 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QScrollArea,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from dms.theme import application_stylesheet, brand_application_stylesheet
 from dms.ui.modern_button import ModernButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.style_tokens import mode_tokens
 
 
@@ -47,7 +50,7 @@ def build_gallery(mode: str) -> QWidget:
     tokens = mode_tokens(mode)
     root = QWidget()
     root.setWindowTitle(f"FastGraph UI Style - {mode.title()}")
-    root.resize(960, 700)
+    root.resize(960, 820)
     layout = QVBoxLayout(root)
     layout.setContentsMargins(24, 24, 24, 24)
     layout.setSpacing(16)
@@ -85,7 +88,28 @@ def build_gallery(mode: str) -> QWidget:
     combo = QComboBox()
     combo.addItems(["1/48 smoothing", "1/24 smoothing", "1/12 smoothing"])
     controls_layout.addWidget(combo)
+    integer = ModernSpinBox()
+    integer.setRange(1, 100)
+    integer.setValue(5)
+    controls_layout.addWidget(integer)
+    decimal = ModernDoubleSpinBox()
+    decimal.setRange(-20.0, 20.0)
+    decimal.setValue(-6.0)
+    decimal.setSuffix(" dB")
+    controls_layout.addWidget(decimal)
     layout.addWidget(controls)
+
+    section_header = QToolButton()
+    section_header.setObjectName("section_toggle")
+    section_header.setText("Devices")
+    section_header.setCheckable(True)
+    section_header.setChecked(True)
+    section_header.setArrowType(Qt.ArrowType.DownArrow)
+    section_header.setToolButtonStyle(
+        Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    )
+    section_header.setMinimumWidth(320)
+    layout.addWidget(section_header)
 
     buttons = QGroupBox("Button Roles")
     button_layout = QVBoxLayout(buttons)
@@ -93,7 +117,9 @@ def build_gallery(mode: str) -> QWidget:
     first_row.addWidget(_button("Rest", "default"))
     first_row.addWidget(_button("Hover fill", "default", hover=True))
     first_row.addWidget(_button("Click flash", "default", flash=True))
-    first_row.addWidget(_button("Primary", "primary"))
+    start = _button("Start Queue", "primary")
+    start.setObjectName("btn_start")
+    first_row.addWidget(start)
     button_layout.addLayout(first_row)
     second_row = QHBoxLayout()
     second_row.addWidget(_button("Positive", "positive"))
@@ -108,6 +134,15 @@ def build_gallery(mode: str) -> QWidget:
     third_row.addStretch(2)
     button_layout.addLayout(third_row)
     layout.addWidget(buttons)
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(False)
+    scroll.setFixedHeight(74)
+    scroll_content = QWidget()
+    scroll_content.resize(1200, 120)
+    scroll_content.setProperty("surfaceLevel", "raised")
+    scroll.setWidget(scroll_content)
+    layout.addWidget(scroll)
 
     status = QLabel(
         f"Accent {tokens.accent}  |  Button radius {tokens.geometry.radius_button}px"

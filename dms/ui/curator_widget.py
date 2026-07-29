@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QFileDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -42,6 +41,8 @@ from dms.curator.transforms import (
     normalization_offset_at_1khz,
 )
 from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
+from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.brand_brand import default_color_cycle
 from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
@@ -178,7 +179,11 @@ class GraphStage(QWidget):
     def __init__(self, graph: GraphWidget, state: GraphState, on_text_changed) -> None:
         super().__init__()
         self._graph = graph
-        self._graph_frame = AspectRatioWidget(graph, ratio=16.0 / 9.0)
+        self._rounded_graph = RoundedViewportFrame(graph)
+        self._graph_frame = AspectRatioWidget(
+            self._rounded_graph,
+            ratio=16.0 / 9.0,
+        )
         self._graph_frame.setParent(self)
         self._brand_preview = BrandPosterPreview(state, self)
         self._brand_preview.hide()

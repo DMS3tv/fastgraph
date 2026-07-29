@@ -221,6 +221,9 @@ class ModernButton(QPushButton):
         button = well.adjusted(2.0, 2.0, -2.0, -2.0)
         return outer, well, button
 
+    def _has_persistent_outline(self) -> bool:
+        return self.objectName() == "btn_start" or bool(self.property("emphasized"))
+
     def enterEvent(self, event) -> None:
         self._animate_hover(1.0)
         super().enterEvent(event)
@@ -335,6 +338,14 @@ class ModernButton(QPushButton):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(inner_border, 1.0))
         painter.drawRoundedRect(rect, radius, radius)
+
+        if self.isEnabled() and self._has_persistent_outline():
+            painter.setPen(QPen(accent, 1.5))
+            painter.drawRoundedRect(
+                outer.adjusted(1, 1, -1, -1),
+                outer_radius,
+                outer_radius,
+            )
 
         if self.hasFocus():
             painter.setPen(QPen(accent, tokens.geometry.focus_border_px))

@@ -127,6 +127,7 @@ def _stylesheet_body(
     QWidget[surfaceLevel="viewport"] {{ background-color: {c['viewport']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
     QWidget[surfaceLevel="panel"] {{ background-color: {c['panel']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
     QWidget[surfaceLevel="raised"] {{ background-color: {c['raised']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; }}
+    QWidget[layoutRole="transparent"] {{ background-color: transparent; border: none; }}
     QLabel[typographyRole="caption"] {{ font-size: {typography.caption_px}px; color: {c['muted']}; }}
     QLabel[typographyRole="section"] {{ font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.section_px}px; font-weight: 600; }}
     QLabel[typographyRole="screen"] {{ font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.screen_px}px; font-weight: 700; }}
@@ -150,15 +151,18 @@ def _stylesheet_body(
     QPushButton#btn_metadata {{ font-weight: 600; }}
     QPushButton#btn_feedback {{ background-color: {fail_bg}; color: {fail_text}; font-size: 11px; font-weight: 600; min-height: 18px; padding: 2px 10px; border-radius: 10px; }}
     QPushButton#btn_feedback:hover {{ background-color: {fail_hover}; }}
-    QPushButton#btn_export, QToolButton#section_toggle {{ background-color: {amber_bg}; color: {amber_text}; font-weight: 700; }}
-    QPushButton#btn_export:hover, QToolButton#section_toggle:hover {{ background-color: {amber_hover}; }}
+    QPushButton#btn_export {{ background-color: {amber_bg}; color: {amber_text}; font-weight: 700; }}
+    QPushButton#btn_export:hover {{ background-color: {amber_hover}; }}
+    QToolButton#section_toggle {{ background-color: {c['raised']}; color: {amber_text}; border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; padding: 7px 10px; min-height: 24px; font-weight: 700; text-align: left; }}
+    QToolButton#section_toggle:hover {{ background-color: {c['control_hover']}; border-color: {amber_text}; }}
+    QToolButton#section_toggle:checked {{ border-left: 3px solid {amber_text}; }}
     QPushButton#btn_upload, QPushButton#btn_update {{ background-color: {keep_bg}; color: {keep_text}; font-weight: 600; }}
     QPushButton#btn_upload:hover, QPushButton#btn_update:hover {{ background-color: {keep_hover}; }}
     QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {{ background-color: {c['raised']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; padding: 3px 8px; min-height: 24px; selection-background-color: {c['selected']}; }}
+    QSpinBox[modernSpinBox="true"], QDoubleSpinBox[modernSpinBox="true"] {{ padding-right: 30px; }}
     QComboBox::drop-down {{ border: none; width: 20px; }}
     QComboBox QAbstractItemView {{ background-color: {c['base']}; color: {c['text']}; selection-background-color: {c['selected']}; }}
     QSpinBox#queue_count_spin {{ font-size: 15px; font-weight: 700; color: {c['accent']}; padding-right: 34px; }}
-    QSpinBox#queue_count_spin::up-button, QSpinBox#queue_count_spin::down-button {{ width: 22px; margin: 2px; border: 1px solid {c['border']}; background-color: {c['control']}; border-radius: 6px; }}
     QLabel#label_channel_active {{ color: {c['accent']}; font-weight: bold; font-size: 14px; }}
     QLabel[tone="muted"] {{ color: {c['muted']}; }}
     QLabel[tone="error"] {{ color: {fail_text}; }}
@@ -168,9 +172,14 @@ def _stylesheet_body(
     QLabel#diagnostic_details {{ color: {c['muted']}; background-color: {c['raised']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_field}px; padding: 8px; font-family: '{typography.technical_family}', monospace; }}
     QGroupBox {{ border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; margin-top: 14px; padding-top: 10px; background-color: {group_bg}; }}
     QGroupBox::title {{ color: {c['muted']}; subcontrol-origin: margin; left: 12px; padding: 0 5px; font-family: '{typography.heading_family}', '{typography.ui_family}', sans-serif; font-size: {typography.section_px}px; font-weight: 600; }}
-    QScrollArea, QScrollBar {{ background-color: {c['window']}; }}
-    QScrollBar:vertical {{ width: 8px; }}
-    QScrollBar::handle:vertical {{ background: {c['border']}; border-radius: 4px; }}
+    QScrollArea {{ background-color: transparent; border: none; }}
+    QScrollBar:vertical {{ width: 12px; margin: 2px; background: {c['alternate']}; border-radius: 6px; }}
+    QScrollBar:horizontal {{ height: 12px; margin: 2px; background: {c['alternate']}; border-radius: 6px; }}
+    QScrollBar::handle:vertical {{ min-height: 32px; background: {c['border']}; border-radius: 4px; }}
+    QScrollBar::handle:horizontal {{ min-width: 32px; background: {c['border']}; border-radius: 4px; }}
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: {c['accent']}; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ width: 0px; height: 0px; background: transparent; border: none; }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
     QTabWidget::pane {{ background: {c['viewport']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_surface}px; top: -1px; }}
     QTabBar::tab {{ background: {tab_bg}; padding: 7px 16px; margin-right: 3px; border: 1px solid {c['border']}; border-bottom: 2px solid {c['border']}; border-top-left-radius: {geometry.radius_tab}px; border-top-right-radius: {geometry.radius_tab}px; color: {c['text']}; }}
     QTabBar::tab:hover {{ background: {c['control_hover']}; }}

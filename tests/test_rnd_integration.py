@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QAbstractItemView, QApplication
+from PyQt6.QtWidgets import QAbstractItemView, QApplication, QToolButton
 
 import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
@@ -17,6 +17,7 @@ from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
 from dms.ui.main_window import AppState, MainWindow, RnDReviewDialog
+from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +71,19 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_p
     assert window._rnd_widget._top_toolbar.objectName() == "rnd_top_toolbar"
     assert window._rnd_widget._export_btn.parent().objectName() == "rnd_footer_controls"
     assert window._rnd_widget._notes_toggle.text() == "Notes"
+    assert window._rnd_widget._notes_toggle.objectName() == "section_toggle"
+    section_titles = {
+        toggle.text()
+        for toggle in window.findChildren(QToolButton, "section_toggle")
+    }
+    assert {"Devices", "Queue", "Notes"} <= section_titles
+    assert window._start_queue_btn._has_persistent_outline() is True
+    assert window._rnd_widget._measure_btn._has_persistent_outline() is True
+    assert isinstance(window._queue_n_spin, ModernSpinBox)
+    assert isinstance(window._queue_level_spin, ModernDoubleSpinBox)
+    assert isinstance(window._rnd_widget._target_offset_spin, ModernDoubleSpinBox)
+    assert window._plots._top_frame.radius == 10
+    assert window._rnd_widget._plots.top_frame.radius == 10
     window._rnd_widget._notes_toggle.setChecked(False)
     window._rnd_widget._notes_toggle.clicked.emit(False)
     assert window._settings.get("rnd_notes_expanded") is False
@@ -481,7 +495,9 @@ def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, monkeypatch, tmp_p
 
     assert window._rnd_widget._tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window._rnd_widget._tree.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert "QScrollBar:vertical" in window._rnd_widget._tree.styleSheet()
+    assert window._rnd_widget._tree.styleSheet() == ""
+    assert "QScrollBar:vertical" in qapp.styleSheet()
+    assert "QScrollBar:horizontal" in qapp.styleSheet()
     window.close()
 
 

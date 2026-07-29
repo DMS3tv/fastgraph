@@ -4,7 +4,6 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -27,6 +26,7 @@ from dms.shortcuts import (
     shortcut_bindings_from_settings,
 )
 from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 
 
 class SettingsWidget(QWidget):

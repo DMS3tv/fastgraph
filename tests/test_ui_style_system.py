@@ -1,9 +1,11 @@
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from dms.theme import DARK, LIGHT, ThemeController, application_stylesheet
 from dms.ui.modern_button import ModernButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
+from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import DARK_TOKENS, BRAND_TOKENS, LIGHT_TOKENS, tokens_for
 
 
@@ -35,11 +37,12 @@ def test_style_tokens_define_the_documented_scale() -> None:
 
 
 def test_theme_surface_tokens_and_brand_values() -> None:
-    assert DARK_TOKENS.background == "#000000"
-    assert DARK_TOKENS.viewport == "#090B0E"
-    assert DARK_TOKENS.panel == "#10141A"
-    assert DARK_TOKENS.raised == "#171C23"
-    assert DARK_TOKENS.control == "#1D232C"
+    assert DARK_TOKENS.background == "#07090C"
+    assert DARK_TOKENS.viewport == "#0C1015"
+    assert DARK_TOKENS.panel == "#121820"
+    assert DARK_TOKENS.raised == "#18212B"
+    assert DARK_TOKENS.control == "#1E2833"
+    assert DARK_TOKENS.plot_bg == "#1A1A1A"
     assert LIGHT_TOKENS.viewport == "#FFFFFF"
     assert BRAND_TOKENS.background == "#232323"
     assert BRAND_TOKENS.accent == "#7A7A7A"
@@ -53,8 +56,13 @@ def test_stylesheet_exposes_surface_and_tab_hierarchy() -> None:
     stylesheet = application_stylesheet(DARK)
     assert 'QWidget[surfaceLevel="viewport"]' in stylesheet
     assert 'QWidget[surfaceLevel="panel"]' in stylesheet
+    assert 'QWidget[layoutRole="transparent"]' in stylesheet
     assert "border-top-left-radius: 8px" in stylesheet
     assert "border-bottom: 2px solid #66ccff" in stylesheet
+    assert "QScrollBar:horizontal" in stylesheet
+    assert "QScrollBar::add-line, QScrollBar::sub-line" in stylesheet
+    assert "width: 0px; height: 0px" in stylesheet
+    assert "QToolButton#section_toggle" in stylesheet
 
 
 def test_modern_button_roles_cover_semantic_actions() -> None:
@@ -67,6 +75,13 @@ def test_modern_button_roles_cover_semantic_actions() -> None:
     button = ModernButton("Custom")
     button.setRole("ghost")
     assert button.role() == "ghost"
+
+    measure = ModernButton("Measure")
+    measure.setObjectName("btn_start")
+    start_queue = ModernButton("Start Queue")
+    start_queue.setObjectName("btn_start")
+    assert measure._has_persistent_outline() is True
+    assert start_queue._has_persistent_outline() is True
 
 
 def test_modern_button_hover_and_press_endpoints() -> None:
@@ -160,3 +175,39 @@ def test_palette_change_refreshes_button_mode() -> None:
     app.setProperty("fastgraphVisualMode", "brand")
     QApplication.sendEvent(button, QEvent(QEvent.Type.ApplicationPaletteChange))
     assert button._tokens() is BRAND_TOKENS
+
+
+def test_rounded_viewport_keeps_the_plot_as_a_direct_capture_target() -> None:
+    app = _app()
+    child = QWidget()
+    frame = RoundedViewportFrame(child)
+    frame.resize(320, 180)
+    frame.show()
+    app.processEvents()
+    assert frame.radius == 10
+    assert frame.child is child
+    assert child.parentWidget() is frame
+    assert frame._overlay.geometry() == frame.rect()
+
+
+def test_modern_spin_boxes_preserve_value_behaviour() -> None:
+    app = _app()
+    integer = ModernSpinBox()
+    integer.setRange(1, 5)
+    integer.setValue(2)
+    integer.resize(110, 36)
+    integer.show()
+    app.processEvents()
+    QTest.mouseClick(integer._step_up_button, Qt.MouseButton.LeftButton)
+    assert integer.value() == 3
+    QTest.keyClick(integer, Qt.Key.Key_Down)
+    assert integer.value() == 2
+
+    decimal = ModernDoubleSpinBox()
+    decimal.setRange(-20.0, 20.0)
+    decimal.setSingleStep(0.5)
+    decimal.setSuffix(" dB")
+    decimal.setValue(0.0)
+    QTest.mouseClick(decimal._step_down_button, Qt.MouseButton.LeftButton)
+    assert decimal.value() == -0.5
+    assert decimal.suffix() == " dB"

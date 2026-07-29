@@ -20,6 +20,7 @@ from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
 from dms import brand_brand
 from dms.theme import LIGHT, brand_theme_colors, normalize_theme, theme_colors
+from dms.ui.rounded_viewport import RoundedViewportFrame
 
 
 pg.setConfigOption("background", "#1a1a1a")
@@ -148,8 +149,10 @@ class DualPlotWidget(QWidget):
         self._setup_plot_context_menu(self._top_plot, "top_plot")
         self._setup_plot_context_menu(self._bot_plot, "bottom_plot")
 
-        layout.addWidget(self._top_plot, 1)
-        layout.addWidget(self._bot_plot, 1)
+        self._top_frame = RoundedViewportFrame(self._top_plot)
+        self._bot_frame = RoundedViewportFrame(self._bot_plot)
+        layout.addWidget(self._top_frame, 1)
+        layout.addWidget(self._bot_frame, 1)
         self._between_plots_widget: Optional[QWidget] = None
         self._footer_widget: Optional[QWidget] = None
 

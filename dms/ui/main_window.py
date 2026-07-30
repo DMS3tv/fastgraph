@@ -8,6 +8,7 @@ import sys
 import shlex
 import tempfile
 import json
+import os
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -106,9 +107,15 @@ from dms.rnd.models import (
     measurement_session_data,
     session_snapshot,
 )
+from dms.rnd.persistence import (
+    load_rnd_session,
+    save_rnd_session,
+    session_snapshot as rnd_persistence_snapshot,
+)
+from dms.rnd.recovery import RecoveryCandidate, RnDRecoveryManager
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
-from dms.settings_manager import SettingsManager
+from dms.settings_manager import SettingsManager, config_dir
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
 from dms.squiglink import (
     PHONE_BOOK_REMOTE_PATH,
@@ -148,6 +155,50 @@ _MEASUREMENT_F_MAX = 20000.0
 _DISPLAY_AVG_POINTS = 1200
 _DISPLAY_AVG_SMOOTHING = 48
 _METER_UPDATE_MS = 140
+
+
+class RnDRecoveryDialog(QDialog):
+    """Select and act on a recoverable R&D session."""
+
+    RESTORE = "restore"
+    DISCARD = "discard"
+    KEEP = "keep"
+
+    def __init__(self, candidates: list[RecoveryCandidate], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Recover R&D Session")
+        self.setModal(True)
+        self.action = self.KEEP
+        self._candidates = candidates
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "Fastgraph found R&D session data that was not cleared during a normal exit."
+        ))
+        self._candidate_combo = QComboBox()
+        for candidate in candidates:
+            self._candidate_combo.addItem(candidate.label, candidate)
+        layout.addWidget(self._candidate_combo)
+
+        row = QHBoxLayout()
+        restore = QPushButton("Restore Session")
+        restore.clicked.connect(lambda: self._finish(self.RESTORE))
+        discard = QPushButton("Discard")
+        discard.clicked.connect(lambda: self._finish(self.DISCARD))
+        keep = QPushButton("Keep for Later")
+        keep.clicked.connect(lambda: self._finish(self.KEEP))
+        row.addWidget(restore)
+        row.addWidget(discard)
+        row.addStretch(1)
+        row.addWidget(keep)
+        layout.addLayout(row)
+
+    def selected_candidate(self) -> RecoveryCandidate:
+        return self._candidate_combo.currentData()
+
+    def _finish(self, action: str) -> None:
+        self.action = action
+        self.accept()
 _MAX_SWEEP_ATTEMPTS = 3
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -754,6 +805,8 @@ class MainWindow(QMainWindow):
         self._console_events = ConsoleEventStore(parent=self)
         self._automation_running = False
         self._keyboard_shortcuts: list[QShortcut] = []
+        self._rnd_dirty = False
+        self._restored_recovery_candidate: RecoveryCandidate | None = None
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -763,6 +816,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 700)
 
         self._build_ui()
+        self._rnd_recovery = RnDRecoveryManager(
+            config_dir() / "recovery" / "rnd",
+            self._rnd_recovery_snapshot,
+            parent=self,
+        )
+        self._rnd_recovery.save_succeeded.connect(self._on_rnd_recovery_saved)
+        self._rnd_recovery.save_failed.connect(self._on_rnd_recovery_failed)
+        self._rnd_widget.state_changed.connect(self._on_rnd_state_changed)
+        self._rnd_widget.selection_changed.connect(self._on_rnd_selection_changed)
         self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if self._theme_controller.brand_mode:
@@ -781,7 +843,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_update_check()
         self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
-        QTimer.singleShot(0, lambda: self._run_automation_trigger("app_start"))
+        QTimer.singleShot(0, self._initialize_rnd_recovery)
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -1064,6 +1126,8 @@ class MainWindow(QMainWindow):
                 else ""
             )
         self._on_theme_changed(self._theme_controller.theme, log=False)
+        if hasattr(self, "_upload_btn"):
+            self._sync_export_button()
         if hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "brand mode changed", brand_mode=enabled)
 
@@ -1708,7 +1772,7 @@ class MainWindow(QMainWindow):
         input_label.setProperty("tone", "muted")
         row.addWidget(input_label)
         self._level_meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
-        self._level_meter.setMinimumWidth(120)
+        self._level_meter.setMinimumWidth(160)
         row.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
         self._level_status_label = QLabel("RMS")
         self._level_status_label.setProperty("tone", "muted")
@@ -1780,7 +1844,7 @@ class MainWindow(QMainWindow):
 
         self._upload_btn = QPushButton("Upload to Squiglink")
         self._upload_btn.setObjectName("btn_upload")
-        self._upload_btn.clicked.connect(self._upload_to_squiglink)
+        self._upload_btn.clicked.connect(self._run_measure_upload_action)
         row.addWidget(self._upload_btn)
         return row_widget
 
@@ -3353,24 +3417,32 @@ class MainWindow(QMainWindow):
         self._average = (freqs, mag_db)
 
     def _recompute_variation(self) -> None:
-        if not self._kept_curves:
-            self._variation = None
-            return
+        active_hrtf = self._hrtf if self._is_hrtf_active() else None
+        self._variation = self._variation_from_kept_curves(hrtf=active_hrtf)
 
-        base = self._bottom_curve_for_display()
-        if base is None:
-            self._variation = None
-            return
+    def _variation_from_kept_curves(
+        self,
+        *,
+        hrtf: HRTFCurve | None,
+    ) -> Optional[
+        tuple[
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+        ]
+    ]:
+        if not self._kept_curves or self._average is None:
+            return None
 
-        base_freqs, _ = base
+        base_freqs = self._average[0]
         rows: list[np.ndarray] = []
         for freqs, mag in self._kept_curves:
             values = np.interp(base_freqs, freqs, mag)
-            if self._is_hrtf_active():
-                values = self._hrtf.apply(
-                    base_freqs,
-                    values,
-                )
+            if hrtf is not None and not getattr(hrtf, "is_variation", False):
+                values = hrtf.apply(base_freqs, values)
             _, values = smooth_fractional_octave(
                 base_freqs,
                 values,
@@ -3379,8 +3451,7 @@ class MainWindow(QMainWindow):
             rows.append(values)
 
         if not rows:
-            self._variation = None
-            return
+            return None
 
         mat = np.vstack(rows)
         p10 = np.percentile(mat, 10, axis=0)
@@ -3388,23 +3459,33 @@ class MainWindow(QMainWindow):
         p75 = np.percentile(mat, 75, axis=0)
         p90 = np.percentile(mat, 90, axis=0)
         median = np.percentile(mat, 50, axis=0)
-        self._variation = (base_freqs, p10, p25, p75, p90, median)
+        if hrtf is not None and getattr(hrtf, "is_variation", False):
+            p10, p25, median, p75, p90 = hrtf.apply_to_variation(
+                base_freqs,
+                p10,
+                p25,
+                median,
+                p75,
+                p90,
+            )
+        return (base_freqs, p10, p25, p75, p90, median)
+
+    def _average_curve_with_hrtf(
+        self,
+        hrtf: HRTFCurve | None,
+    ) -> Optional[tuple[np.ndarray, np.ndarray]]:
+        if self._average is None:
+            return None
+        freqs, mag_db = self._average
+        if hrtf is None:
+            return freqs, mag_db
+        return freqs, hrtf.apply(freqs, mag_db)
 
     def _bottom_curve_for_display_and_export(
         self,
     ) -> Optional[tuple[np.ndarray, np.ndarray]]:
-        if self._average is None:
-            return None
-
-        freqs, mag_db = self._average
-        if self._is_hrtf_active():
-            corrected = self._hrtf.apply(
-                freqs,
-                mag_db,
-            )
-            return freqs, corrected
-
-        return freqs, mag_db
+        active_hrtf = self._hrtf if self._is_hrtf_active() else None
+        return self._average_curve_with_hrtf(active_hrtf)
 
     def _bottom_curve_for_display(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
         curve = self._bottom_curve_for_display_and_export()
@@ -3436,6 +3517,11 @@ class MainWindow(QMainWindow):
         self._sync_export_button()
 
     def _bottom_view_mode(self) -> str:
+        if (
+            getattr(self, "_is_hrtf_active", lambda: False)()
+            and getattr(getattr(self, "_hrtf", None), "is_variation", False)
+        ):
+            return "variation"
         return "variation" if self._variation_toggle.isChecked() else "average"
 
     def _on_bottom_view_changed(self, *_args) -> None:
@@ -3456,8 +3542,11 @@ class MainWindow(QMainWindow):
             self._settings.set("hrtf_path", path)
             self._sync_hrtf_ui()
             self._hrtf_toggle.setChecked(True)
+            if self._hrtf.is_variation and hasattr(self, "_variation_toggle"):
+                self._variation_toggle.setChecked(True)
             self._update_plots()
-            self._statusbar.showMessage(f"Loaded HRTF: {Path(path).name}")
+            kind = "population variation compensation" if self._hrtf.is_variation else "HRTF"
+            self._statusbar.showMessage(f"Loaded {kind}: {Path(path).name}")
         except Exception as exc:
             QMessageBox.warning(self, "HRTF Load Error", str(exc))
             self._hrtf = None
@@ -3821,8 +3910,15 @@ class MainWindow(QMainWindow):
         if mode == "variation":
             if self._variation is None:
                 raise ValueError("No variation band is available to send.")
-            freqs, p10, p25, p75, p90, median = self._variation
-            if active_hrtf is not None:
+            source_variation = None
+            if active_hrtf is not None and getattr(active_hrtf, "is_variation", False):
+                source_variation = self._variation_from_kept_curves(
+                    hrtf=None,
+                )
+            freqs, p10, p25, p75, p90, median = (
+                source_variation if source_variation is not None else self._variation
+            )
+            if active_hrtf is not None and not getattr(active_hrtf, "is_variation", False):
                 correction = active_hrtf.evaluate(freqs)
             curve = CurveData(
                 kind="variation",
@@ -4129,6 +4225,69 @@ class MainWindow(QMainWindow):
         documents = Path.home() / "Documents"
         return documents if documents.exists() else Path.home()
 
+    def _initialize_rnd_recovery(self) -> None:
+        try:
+            candidates = self._rnd_recovery.candidates()
+            if candidates:
+                dialog = RnDRecoveryDialog(candidates, self)
+                dialog.exec()
+                candidate = dialog.selected_candidate()
+                if dialog.action == RnDRecoveryDialog.RESTORE:
+                    session, missing_photos = self._rnd_recovery.load_candidate(
+                        candidate,
+                        self._rnd_widget.photo_store,
+                    )
+                    self._rnd_widget.replace_session(session)
+                    self._tabs.setCurrentWidget(self._rnd_widget)
+                    self._rnd_dirty = not session.is_empty()
+                    self._restored_recovery_candidate = (
+                        candidate if candidate.kind == "deferred" else None
+                    )
+                    if missing_photos:
+                        QMessageBox.warning(
+                            self,
+                            "Missing R&D Photos",
+                            f"{len(missing_photos)} recovered photo attachment(s) could not be found.",
+                        )
+                elif dialog.action == RnDRecoveryDialog.DISCARD:
+                    self._rnd_recovery.discard(candidate)
+                else:
+                    self._rnd_recovery.keep_for_later(candidate)
+        except Exception as exc:
+            self._on_rnd_recovery_failed(str(exc))
+        finally:
+            self._rnd_recovery.enable()
+            if self._rnd_dirty:
+                self._rnd_recovery.schedule()
+            self._run_automation_trigger("app_start")
+
+    def _rnd_recovery_snapshot(self):
+        self._rnd_widget.session.saved_app_version = __version__
+        return rnd_persistence_snapshot(
+            self._rnd_widget.session,
+            self._rnd_widget.photo_store,
+        )
+
+    def _on_rnd_state_changed(self) -> None:
+        if self._rnd_widget.session.is_empty():
+            self._rnd_dirty = False
+        else:
+            self._rnd_dirty = True
+        self._rnd_recovery.schedule()
+
+    def _on_rnd_selection_changed(self) -> None:
+        self._rnd_recovery.schedule()
+
+    def _on_rnd_recovery_saved(self) -> None:
+        self._rnd_widget.set_recovery_warning("")
+        if self._restored_recovery_candidate is not None:
+            self._rnd_recovery.discard(self._restored_recovery_candidate)
+            self._restored_recovery_candidate = None
+
+    def _on_rnd_recovery_failed(self, error: str) -> None:
+        self._rnd_widget.set_recovery_warning("R&D recovery save failed")
+        self._log_event("ERROR", "rnd", "R&D recovery save failed", error=error)
+
     def _save_rnd_session(self) -> bool:
         default_dir = self._rnd_default_dir()
         default_path = default_dir / "fastgraph-rnd-session.fastgraph-rnd.json"
@@ -4147,11 +4306,10 @@ class MainWindow(QMainWindow):
             path = path.with_suffix(".fastgraph-rnd.json")
         self._rnd_widget.session.saved_app_version = __version__
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._rnd_widget.photo_store.save_session(self._rnd_widget.session, path)
-            path.write_text(
-                json.dumps(self._rnd_widget.session.to_dict(), indent=2),
-                encoding="utf-8",
+            save_rnd_session(
+                self._rnd_widget.session,
+                self._rnd_widget.photo_store,
+                path,
             )
         except Exception as exc:
             QMessageBox.warning(self, "Save Failed", f"Could not save the R&D session.\n\n{exc}")
@@ -4160,6 +4318,7 @@ class MainWindow(QMainWindow):
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Saved R&D session: {path}")
         self._log_event("INFO", "rnd", "R&D session saved", path=str(path))
+        self._rnd_dirty = False
         return True
 
     def _load_rnd_session(self) -> None:
@@ -4174,8 +4333,10 @@ class MainWindow(QMainWindow):
             return
         try:
             session_path = Path(path_str)
-            incoming = RnDSession.from_dict(json.loads(session_path.read_text(encoding="utf-8")))
-            missing_photos = self._rnd_widget.photo_store.hydrate_session(incoming, session_path)
+            incoming, missing_photos = load_rnd_session(
+                session_path,
+                self._rnd_widget.photo_store,
+            )
         except Exception as exc:
             QMessageBox.warning(self, "Load Failed", f"Could not load R&D session.\n\n{exc}")
             return
@@ -4199,8 +4360,10 @@ class MainWindow(QMainWindow):
                 if save_choice == QMessageBox.StandardButton.Yes and not self._save_rnd_session():
                     return
             self._rnd_widget.replace_session(incoming)
+            self._rnd_dirty = False
         else:
             self._rnd_widget.merge_session(incoming)
+            self._rnd_dirty = not self._rnd_widget.session.is_empty()
         self._settings.set("rnd_session_directory", str(Path(path_str).parent))
         self._settings_widget.refresh_from_settings()
         self._statusbar.showMessage(f"Loaded R&D session: {path_str}")
@@ -4343,6 +4506,177 @@ class MainWindow(QMainWindow):
                 self._log_event("ERROR", "export", f"Variation export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
 
+    def _run_measure_upload_action(self) -> None:
+        if self._brand_mode_active():
+            self._export_all_measure_outputs()
+            return
+        self._upload_to_squiglink()
+
+    def _brand_mode_active(self) -> bool:
+        controller = getattr(self, "_theme_controller", None)
+        return bool(controller is not None and controller.brand_mode)
+
+    def _export_all_unavailable_reason(self) -> str:
+        if self._state != AppState.IDLE:
+            return "Export All is available while Measure is idle."
+        if self._average is None:
+            return "Keep at least one measurement to create the average."
+        if len(self._kept_curves) < 2:
+            return "Keep at least two measurements to create variation files."
+        if self._hrtf is None:
+            return "Select an HRTF to create the COMP files."
+        return ""
+
+    def _measure_export_directory(self) -> Path | None:
+        configured = self._export_dir_input.text().strip()
+        if configured:
+            path = Path(configured).expanduser()
+            if path.is_dir():
+                return path
+        saved = str(self._settings.get("export_directory") or "").strip()
+        start = Path(saved).expanduser() if saved else Path.home()
+        if not start.is_dir():
+            start = start.parent if start.parent.is_dir() else Path.home()
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Export All Directory",
+            str(start),
+        )
+        if not selected:
+            return None
+        directory = Path(selected)
+        self._export_dir_input.setText(str(directory))
+        self._settings.set("export_directory", str(directory))
+        return directory
+
+    def _confirm_export_all_overwrite(self, conflicts: list[Path]) -> bool:
+        if not conflicts:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Overwrite Export Files?")
+        dialog.setText(
+            f"{len(conflicts)} Export All file(s) already exist in the selected directory."
+        )
+        dialog.setInformativeText(
+            "\n".join(path.name for path in conflicts)
+        )
+        overwrite = dialog.addButton(
+            "Overwrite All",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        return dialog.clickedButton() is overwrite
+
+    def _export_all_measure_outputs(self) -> None:
+        reason = self._export_all_unavailable_reason()
+        if reason:
+            QMessageBox.information(self, "Export All Unavailable", reason)
+            return
+        directory = self._measure_export_directory()
+        if directory is None:
+            return
+
+        hrtf = self._hrtf
+        raw_average = self._average_curve_with_hrtf(None)
+        comp_average = self._average_curve_with_hrtf(hrtf)
+        raw_variation = self._variation_from_kept_curves(hrtf=None)
+        comp_variation = self._variation_from_kept_curves(hrtf=hrtf)
+        if (
+            hrtf is None
+            or raw_average is None
+            or comp_average is None
+            or raw_variation is None
+            or comp_variation is None
+        ):
+            QMessageBox.warning(
+                self,
+                "Export All Failed",
+                "Fastgraph could not prepare all four Measure exports.",
+            )
+            return
+
+        filenames = [
+            build_filename(self._session, compensated=False),
+            build_filename(self._session, compensated=True),
+            build_variation_filename(self._session, compensated=False),
+            build_variation_filename(self._session, compensated=True),
+        ]
+        destinations = [directory / name for name in filenames]
+        conflicts = [path for path in destinations if path.exists()]
+        if not self._confirm_export_all_overwrite(conflicts):
+            return
+
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix=".fastgraph-export-",
+                dir=directory,
+            ) as temp_name:
+                temp_dir = Path(temp_name)
+                raw_freqs, raw_mag = raw_average
+                comp_freqs, comp_mag = comp_average
+                export_curve(
+                    freqs=raw_freqs,
+                    mag_db=raw_mag,
+                    session=self._session,
+                    output_path=temp_dir / filenames[0],
+                    compensated=False,
+                    hrtf=None,
+                    n_sweeps=len(self._kept_curves),
+                )
+                export_curve(
+                    freqs=comp_freqs,
+                    mag_db=comp_mag,
+                    session=self._session,
+                    output_path=temp_dir / filenames[1],
+                    compensated=True,
+                    hrtf=hrtf,
+                    n_sweeps=len(self._kept_curves),
+                )
+                for index, variation, compensated in (
+                    (2, raw_variation, False),
+                    (3, comp_variation, True),
+                ):
+                    freqs, p10, p25, p75, p90, median = variation
+                    export_variation(
+                        freqs=freqs,
+                        p10_db=p10,
+                        p25_db=p25,
+                        median_db=median,
+                        p75_db=p75,
+                        p90_db=p90,
+                        session=self._session,
+                        output_path=temp_dir / filenames[index],
+                        compensated=compensated,
+                        hrtf=hrtf if compensated else None,
+                        n_sweeps=len(self._kept_curves),
+                        smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                    )
+                for name, destination in zip(filenames, destinations):
+                    os.replace(temp_dir / name, destination)
+        except Exception as exc:
+            self._log_event("ERROR", "export", "Export All failed", error=str(exc))
+            QMessageBox.warning(self, "Export All Failed", str(exc))
+            return
+
+        self._export_dir_input.setText(str(directory))
+        self._settings.set("export_directory", str(directory))
+        self._statusbar.showMessage(f"Exported all Measure files: {directory}")
+        self._log_event(
+            "INFO",
+            "export",
+            "Export All completed",
+            directory=str(directory),
+            files=filenames,
+        )
+        self._run_automation_trigger("export_complete")
+        QMessageBox.information(
+            self,
+            "Export All Complete",
+            f"Exported to:\n{directory}\n\n" + "\n".join(filenames),
+        )
+
     def _export_console_log(self, requested_path: Optional[str] = None) -> None:
         path = self._resolve_export_path(
             requested_path,
@@ -4371,11 +4705,29 @@ class MainWindow(QMainWindow):
                 "Export averaged FR as a REW-style TXT file."
             )
             export_enabled = idle and self._average is not None
-        upload_enabled = idle and self._average is not None
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
-        self._upload_btn.setEnabled(upload_enabled)
+        if MainWindow._brand_mode_active(self):
+            self._upload_btn.setText("Export All…")
+            if hasattr(self._upload_btn, "setObjectName"):
+                self._upload_btn.setObjectName("btn_export")
+            if hasattr(self._upload_btn, "setRole"):
+                self._upload_btn.setRole("primary")
+            unavailable = self._export_all_unavailable_reason()
+            self._upload_btn.setEnabled(not unavailable)
+            self._upload_btn.setToolTip(
+                unavailable
+                or "Export RAW AVG, COMP AVG, RAW VAR, and COMP VAR to one directory."
+            )
+        else:
+            self._upload_btn.setText("Upload to Squiglink")
+            if hasattr(self._upload_btn, "setObjectName"):
+                self._upload_btn.setObjectName("btn_upload")
+            if hasattr(self._upload_btn, "setRole"):
+                self._upload_btn.setRole("positive")
+            self._upload_btn.setEnabled(idle and self._average is not None)
+            self._upload_btn.setToolTip("Upload the current average to Squiglink.")
         if hasattr(self, "_undo_btn"):
             self._undo_btn.setEnabled(idle and bool(self._kept_curves))
         if hasattr(self, "_clear_btn"):
@@ -4578,6 +4930,10 @@ class MainWindow(QMainWindow):
             transport.close()
 
     def closeEvent(self, event) -> None:
+        if not self._confirm_rnd_close():
+            event.ignore()
+            return
+
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
         try:
@@ -4602,7 +4958,33 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        try:
+            self._rnd_recovery.shutdown_clean()
+        except Exception as exc:
+            self._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
+
         super().closeEvent(event)
+
+    def _confirm_rnd_close(self) -> bool:
+        if self._rnd_widget.session.is_empty() or not self._rnd_dirty:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Save R&D Session?")
+        dialog.setText("The current R&D session has unsaved changes.")
+        dialog.setInformativeText("Save the R&D session before Fastgraph closes?")
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(QMessageBox.StandardButton.Save)
+        result = dialog.exec()
+        if result == QMessageBox.StandardButton.Cancel:
+            return False
+        if result == QMessageBox.StandardButton.Save:
+            return self._save_rnd_session()
+        return result == QMessageBox.StandardButton.Discard
 
     def _refresh_session_labels(self) -> None:
         summary = f"{self._session.display_name()} · {self._session.rig}"

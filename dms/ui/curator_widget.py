@@ -107,7 +107,11 @@ class LayerListRow(QWidget):
         )
         top.addWidget(self.name_edit, 1)
 
-        kind = QLabel("VAR" if layer.curve.kind == "variation" else "FR")
+        displays_variation = (
+            layer.curve.kind == "variation"
+            or getattr(layer.hrtf, "is_variation", False)
+        )
+        kind = QLabel("VAR" if displays_variation else "FR")
         kind.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: 700;")
         top.addWidget(kind)
         if layer.is_combined:

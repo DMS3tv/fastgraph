@@ -10,6 +10,7 @@ from dms.curator.transforms import (
     normalization_offset_at_1khz,
     visible_display_layers,
 )
+from dms.hrtf import HRTFCurve
 
 
 class _FakeHrtf:
@@ -86,6 +87,71 @@ def test_hrtf_and_offset_apply_to_every_variation_column() -> None:
     assert np.allclose(transformed.median_db, [-1.0, 7.0])
     assert np.allclose(transformed.p75_db, [0.0, 8.0])
     assert np.allclose(transformed.p90_db, [1.0, 9.0])
+
+
+def test_variation_hrtf_turns_one_fr_line_into_a_variation_band(
+    tmp_path: Path,
+) -> None:
+    hrtf_path = tmp_path / "population.txt"
+    hrtf_path.write_text(
+        "100 1 2 3 4 5\n"
+        "1000 10 20 30 40 50\n",
+        encoding="utf-8",
+    )
+    layer = LayerState(
+        curve=CurveData(
+            kind="fr",
+            freqs=np.array([100.0, 1000.0]),
+            mag_db=np.array([10.0, 100.0]),
+        ),
+        source_path=Path("curve.txt"),
+        name="curve",
+        hrtf=HRTFCurve(str(hrtf_path)),
+    )
+
+    transformed = apply_layer_transform(layer)
+
+    assert transformed.kind == "variation"
+    assert transformed.mag_db is None
+    assert np.allclose(transformed.p10_db, [5.0, 50.0])
+    assert np.allclose(transformed.p25_db, [6.0, 60.0])
+    assert np.allclose(transformed.median_db, [7.0, 70.0])
+    assert np.allclose(transformed.p75_db, [8.0, 80.0])
+    assert np.allclose(transformed.p90_db, [9.0, 90.0])
+
+
+def test_variation_hrtf_expands_an_existing_variation_band(
+    tmp_path: Path,
+) -> None:
+    hrtf_path = tmp_path / "population.txt"
+    hrtf_path.write_text(
+        "100 1 2 3 4 5\n"
+        "1000 10 20 30 40 50\n",
+        encoding="utf-8",
+    )
+    layer = LayerState(
+        curve=CurveData(
+            kind="variation",
+            freqs=np.array([100.0, 1000.0]),
+            p10_db=np.array([0.0, 0.0]),
+            p25_db=np.array([2.0, 20.0]),
+            median_db=np.array([4.0, 40.0]),
+            p75_db=np.array([6.0, 60.0]),
+            p90_db=np.array([8.0, 80.0]),
+        ),
+        source_path=Path("variation.txt"),
+        name="variation",
+        hrtf=HRTFCurve(str(hrtf_path)),
+    )
+
+    transformed = apply_layer_transform(layer)
+
+    assert transformed.kind == "variation"
+    assert np.allclose(transformed.p10_db, [-5.0, -50.0])
+    assert np.allclose(transformed.p25_db, [-2.0, -20.0])
+    assert np.allclose(transformed.median_db, [1.0, 10.0])
+    assert np.allclose(transformed.p75_db, [4.0, 40.0])
+    assert np.allclose(transformed.p90_db, [7.0, 70.0])
 
 
 def test_hidden_layers_are_excluded_from_visible_display_layers() -> None:

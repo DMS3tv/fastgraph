@@ -44,7 +44,7 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert DARK_TOKENS.control == "#1E2833"
     assert DARK_TOKENS.plot_bg == "#1A1A1A"
     assert LIGHT_TOKENS.viewport == "#FFFFFF"
-    assert BRAND_TOKENS.background == "#232323"
+    assert BRAND_TOKENS.background == DARK_TOKENS.background == "#07090C"
     assert BRAND_TOKENS.accent == "#7A7A7A"
     assert BRAND_TOKENS.danger == "#6E6E6E"
     assert BRAND_TOKENS.typography.heading_family == "Heading"

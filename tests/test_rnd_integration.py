@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QBoxLayout,
+    QMessageBox,
     QToolButton,
     QWidget,
 )
@@ -19,6 +20,8 @@ import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.rnd.models import RnDGroup, RnDMeasurement
+from dms.rnd.persistence import save_rnd_session
+from dms.rnd.photos import RnDPhotoStore
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
@@ -52,11 +55,13 @@ def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
     monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
     settings = SettingsManager()
-    return MainWindow(
+    window = MainWindow(
         SessionData(rig="Rig", brand="DMS", model="Demo"),
         settings,
         ThemeController(qapp, settings),
     )
+    window._confirm_rnd_close = lambda: True
+    return window
 
 
 def test_rnd_tab_and_settings_folder_control(qapp, monkeypatch, tmp_path: Path) -> None:
@@ -139,6 +144,7 @@ def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_pat
     window._output_device_labels_by_index = {2: "Output A"}
     window._in_dev_combo.addItem("Input A", 1)
     window._out_dev_combo.addItem("Output A", 2)
+    window._ch_combo.clear()
     window._ch_combo.addItem("Channel 1", 0)
 
     window._keep_rnd_measurement(change_status="changed", notes="Pad revision")
@@ -184,6 +190,173 @@ def test_rnd_fail_review_does_not_keep(qapp, monkeypatch, tmp_path: Path) -> Non
 
     assert window._rnd_widget.session.measurements == []
     assert window._pending_curve is None
+    window.close()
+
+
+def test_rnd_dirty_state_ignores_selection_and_tracks_content(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window._rnd_recovery.enable()
+
+    window._rnd_widget.add_measurement(_measurement())
+    assert window._rnd_dirty is True
+
+    window._rnd_dirty = False
+    window._rnd_widget.selection_changed.emit()
+    assert window._rnd_dirty is False
+
+    window._rnd_widget._notes_edit.setPlainText("Changed")
+    assert window._rnd_dirty is True
+    window.close()
+
+
+def test_rnd_manual_save_and_load_modes_update_dirty_state(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window._rnd_widget.add_measurement(_measurement("current", "Current"))
+    save_path = tmp_path / "saved.fastgraph-rnd.json"
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(save_path), ""),
+    )
+
+    assert window._save_rnd_session() is True
+    assert window._rnd_dirty is False
+
+    incoming_path = tmp_path / "incoming.fastgraph-rnd.json"
+    incoming = window._rnd_widget.session.__class__(
+        measurements=[_measurement("incoming", "Incoming")],
+        ungrouped_order=["incoming"],
+    )
+    save_rnd_session(incoming, RnDPhotoStore(), incoming_path)
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(incoming_path), ""),
+    )
+    monkeypatch.setattr(window, "_choose_rnd_load_mode", lambda: "clear")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+
+    window._load_rnd_session()
+    assert window._rnd_widget.session.measurements[0].name == "Incoming"
+    assert window._rnd_dirty is False
+
+    merge_path = tmp_path / "merge.fastgraph-rnd.json"
+    merge = window._rnd_widget.session.__class__(
+        measurements=[_measurement("merge", "Merge")],
+        ungrouped_order=["merge"],
+    )
+    save_rnd_session(merge, RnDPhotoStore(), merge_path)
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(merge_path), ""),
+    )
+    monkeypatch.setattr(window, "_choose_rnd_load_mode", lambda: "merge")
+
+    window._load_rnd_session()
+    assert window._rnd_dirty is True
+    window.close()
+
+
+def test_rnd_recovery_warning_persists_until_success(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    window._on_rnd_recovery_failed("disk full")
+    window._rnd_widget.set_status("Ready")
+    assert window._rnd_widget._status_label.text() == "R&D recovery save failed"
+
+    window._on_rnd_recovery_saved()
+    assert window._rnd_widget._status_label.text() == "Ready"
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("result", "save_result", "expected"),
+    [
+        (QMessageBox.StandardButton.Discard, True, True),
+        (QMessageBox.StandardButton.Cancel, True, False),
+        (QMessageBox.StandardButton.Save, True, True),
+        (QMessageBox.StandardButton.Save, False, False),
+    ],
+)
+def test_rnd_close_prompt_paths(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+    result,
+    save_result,
+    expected,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window._rnd_widget.add_measurement(_measurement())
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: result)
+    monkeypatch.setattr(window, "_save_rnd_session", lambda: save_result)
+
+    assert MainWindow._confirm_rnd_close(window) is expected
+    window.close()
+
+
+def test_startup_recovery_restores_before_app_start_automation(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    recovered = _measurement("recovered", "Recovered")
+    session = window._rnd_widget.session.__class__(
+        measurements=[recovered],
+        ungrouped_order=["recovered"],
+    )
+    save_rnd_session(
+        session,
+        RnDPhotoStore(),
+        window._rnd_recovery.current_path,
+        cleanup_stale_photos=False,
+    )
+    events: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        window,
+        "_run_automation_trigger",
+        lambda trigger: events.append((trigger, len(window._rnd_widget.session.measurements))),
+    )
+
+    class RestoreDialog:
+        RESTORE = "restore"
+        DISCARD = "discard"
+        KEEP = "keep"
+        action = RESTORE
+
+        def __init__(self, candidates, parent):
+            self._candidate = candidates[0]
+
+        def exec(self):
+            return 0
+
+        def selected_candidate(self):
+            return self._candidate
+
+    monkeypatch.setattr(main_window_module, "RnDRecoveryDialog", RestoreDialog)
+    window._initialize_rnd_recovery()
+
+    assert window._rnd_widget.session.measurements[0].name == "Recovered"
+    assert window._rnd_dirty is True
+    assert events == [("app_start", 1)]
     window.close()
 
 

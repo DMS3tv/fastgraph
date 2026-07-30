@@ -146,7 +146,7 @@ LIGHT_TOKENS = ThemeTokens(
 
 BRAND_TOKENS = ThemeTokens(
     name="brand",
-    background=brand_brand.BACKGROUND,
+    background=DARK_TOKENS.background,
     viewport="#1C1C1C",
     panel=brand_brand.SURFACE,
     raised="#303030",

@@ -279,6 +279,48 @@ def test_send_variation_offsets_display_with_editable_hrtf(qapp, monkeypatch, tm
     window.close()
 
 
+def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    hrtf_path = tmp_path / "population.txt"
+    hrtf_path.write_text(
+        "100 1 2 3 4 5\n"
+        "1000 10 20 30 40 50\n",
+        encoding="utf-8",
+    )
+    window._hrtf = HRTFCurve(str(hrtf_path))
+    window._hrtf_toggle.setChecked(True)
+    freqs = np.array([100.0, 1000.0])
+    window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
+    window._recompute_average()
+    window._update_plots()
+    expected = tuple(np.array(values, copy=True) for values in window._variation[1:])
+
+    window._send_to_curator()
+
+    layer = window._curator_widget.graph_state.layers[0]
+    displayed = apply_layer_transform(layer)
+    assert layer.name == "DMS Demo COMP VAR"
+    assert layer.hrtf is window._hrtf
+    assert displayed.kind == "variation"
+    median_offset = -float(np.interp(1000.0, displayed.freqs, expected[-1]))
+    for actual, wanted in zip(
+        (
+            displayed.p10_db,
+            displayed.p25_db,
+            displayed.p75_db,
+            displayed.p90_db,
+            displayed.median_db,
+        ),
+        expected,
+    ):
+        assert np.allclose(actual, wanted + median_offset)
+    window.close()
+
+
 def test_send_variation_offsets_to_zero_without_changing_source_shape(
     qapp, monkeypatch, tmp_path: Path
 ) -> None:

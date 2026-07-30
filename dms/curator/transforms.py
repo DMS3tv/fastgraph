@@ -21,16 +21,19 @@ def normalization_offset_at_1khz(curve: CurveData) -> float:
 def apply_layer_transform(layer: LayerState) -> CurveData:
     curve = layer.curve
     if layer.hrtf is not None:
-        correction = layer.hrtf.evaluate(curve.freqs)
-        curve = replace(
-            curve,
-            mag_db=_correct_optional(curve.mag_db, correction),
-            p10_db=_correct_optional(curve.p10_db, correction),
-            p25_db=_correct_optional(curve.p25_db, correction),
-            median_db=_correct_optional(curve.median_db, correction),
-            p75_db=_correct_optional(curve.p75_db, correction),
-            p90_db=_correct_optional(curve.p90_db, correction),
-        )
+        if getattr(layer.hrtf, "is_variation", False):
+            curve = _apply_variation_hrtf(curve, layer.hrtf)
+        else:
+            correction = layer.hrtf.evaluate(curve.freqs)
+            curve = replace(
+                curve,
+                mag_db=_correct_optional(curve.mag_db, correction),
+                p10_db=_correct_optional(curve.p10_db, correction),
+                p25_db=_correct_optional(curve.p25_db, correction),
+                median_db=_correct_optional(curve.median_db, correction),
+                p75_db=_correct_optional(curve.p75_db, correction),
+                p90_db=_correct_optional(curve.p90_db, correction),
+            )
     return curve.shifted(layer.vertical_offset_db)
 
 
@@ -107,6 +110,40 @@ def _correct_optional(values: np.ndarray | None, correction: np.ndarray) -> np.n
     if values is None:
         return None
     return values - correction
+
+
+def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
+    if curve.kind == "fr" and curve.mag_db is not None:
+        p10, p25, median, p75, p90 = hrtf.apply_to_magnitude_as_variation(
+            curve.freqs,
+            curve.mag_db,
+        )
+    elif _is_complete_variation(curve):
+        assert curve.p10_db is not None
+        assert curve.p25_db is not None
+        assert curve.median_db is not None
+        assert curve.p75_db is not None
+        assert curve.p90_db is not None
+        p10, p25, median, p75, p90 = hrtf.apply_to_variation(
+            curve.freqs,
+            curve.p10_db,
+            curve.p25_db,
+            curve.median_db,
+            curve.p75_db,
+            curve.p90_db,
+        )
+    else:
+        return curve
+    return replace(
+        curve,
+        kind="variation",
+        mag_db=None,
+        p10_db=p10,
+        p25_db=p25,
+        median_db=median,
+        p75_db=p75,
+        p90_db=p90,
+    )
 
 
 def _is_complete_variation(curve: CurveData) -> bool:

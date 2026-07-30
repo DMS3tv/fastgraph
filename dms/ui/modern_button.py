@@ -145,6 +145,8 @@ class ModernButton(QPushButton):
         return base, text
 
     def _effective_hover(self) -> float:
+        if not self.isEnabled():
+            return 0.0
         focus_progress = (
             self._tokens().motion.focus_glow_strength
             if self.hasFocus() and self.focusPolicy() != Qt.FocusPolicy.NoFocus
@@ -242,6 +244,11 @@ class ModernButton(QPushButton):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange and not self.isEnabled():
+            self._hover_animation.stop()
+            self._press_animation.stop()
+            self._hover_progress = 0.0
+            self._press_progress = 0.0
         if event.type() in {
             QEvent.Type.EnabledChange,
             QEvent.Type.PaletteChange,

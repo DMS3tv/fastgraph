@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel
@@ -82,6 +84,22 @@ def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(monkeypatch, tmp_path: Path) 
         "Alpha",
         "Beta",
     ]
+
+
+def test_population_average_hrtf_loads_as_a_variation_compensation() -> None:
+    path = Path(main_window_module.HRTF_DIR) / "5128 IEM Population Average.txt"
+    curve = main_window_module.HRTFCurve(str(path))
+
+    assert curve.is_variation
+    assert curve.freqs.size == 1200
+    assert curve.freqs[0] == 20.0
+    assert curve.freqs[-1] == 20000.0
+    variation = curve.evaluate_variation(np.array([1000.0]))
+    assert variation is not None
+    assert np.allclose(
+        [values[0] for values in variation],
+        [1.833821, 1.834518, 1.836500, 1.837123, 1.837518],
+    )
 
 
 def test_selecting_built_in_hrtf_loads_and_enables_compensation(

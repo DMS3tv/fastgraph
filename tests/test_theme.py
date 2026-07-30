@@ -58,7 +58,7 @@ def test_theme_controller_brand_mode_persists_and_signals(monkeypatch, tmp_path:
 
     assert controller.brand_mode is True
     assert settings.get("brand_mode") is True
-    assert "#232323" in app.styleSheet()
+    assert "#07090C" in app.styleSheet()
     assert "#7A7A7A" in app.styleSheet()
     assert received == [True]
 
@@ -76,6 +76,9 @@ def test_theme_controller_brand_mode_persists_and_signals(monkeypatch, tmp_path:
 def test_brand_stylesheet_has_visible_accent_hierarchy() -> None:
     stylesheet = brand_application_stylesheet()
 
+    assert brand_theme_colors()["window"] == "#07090C"
+    assert brand_theme_colors()["panel"] == "#2A2A2A"
+    assert brand_theme_colors()["plot_bg"] == "#232323"
     assert brand_theme_colors()["border"] == "#5C5C5C"
     assert "QGroupBox#brandPosterBox" in stylesheet
     assert "QGroupBox#brandPosterBox QLabel#brandMetadataStatus" in stylesheet

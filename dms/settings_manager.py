@@ -126,3 +126,8 @@ def _config_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "DMSFastgraph"
+
+
+def config_dir() -> Path:
+    """Return Fastgraph's platform-specific local application-data directory."""
+    return _config_dir()

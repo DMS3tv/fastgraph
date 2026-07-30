@@ -75,6 +75,22 @@ inside the recessed well.
 Use cyan light in standard FastGraph. Use orange light in Brand mode. Use red
 light for destructive actions. Disabled buttons have no glow or motion.
 
+## Input Level Meter
+
+Use the shared visual tokens for the input meter in all modes. Draw the meter
+as a recessed, rounded well. Do not use a separate BRAND paint path.
+
+The active light starts at the signal origin and spreads across the well as the
+level rises from -60 dBFS to 0 dBFS. Keep the strongest light at the origin and
+use a soft falloff across the remaining distance. Change the full glow smoothly
+from the mode accent to warning and danger colors as the level approaches
+clipping. Do not split the track into fixed green, yellow, and red areas.
+
+Interpolate the displayed level between audio updates. Use a faster rise and a
+slower fall so signal changes remain smooth. Do not increase the audio sampling
+rate for display motion. Use small scale marks and no peak or RMS tracking
+line.
+
 ## Tabs
 
 Use rounded top corners and a small gap between tabs. The selected tab is one
@@ -85,12 +101,16 @@ mode and orange in Brand mode.
 
 Use these primary brand values:
 
-- Background: `#232323`
+- Curator poster and image-export canvas: `#232323`
 - Off-white: `#F2F1F1`
 - White: `#FFFFFF`
 - Orange: `#7A7A7A`
 - Red: `#6E6E6E`
 - Magenta: `#626262`
+
+Use the standard dark `#07090C` value for the BRAND application backdrop. Keep
+the `#232323` canvas for Curator BRAND previews and image exports. Do not change
+export colors when changing application surfaces.
 
 Use `#1C1C1C`, `#2A2A2A`, `#303030`, and `#333333` only as neutral surface
 steps. Reserve the orange-red-magenta gradient for key Brand accents and primary

@@ -12,6 +12,36 @@ and can export or upload TXT measurements for Squiglink workflows.
 
 Current beta version: `0.3.5`
 
+## Unreleased Changes
+
+Fastgraph now protects active R&D work with local crash recovery. It preserves
+session JSON and photo attachments after R&D changes without overwriting a
+named session file. On the next start after an unclean exit, users can restore,
+discard, or keep each valid recovery bundle for later. A normal close asks the
+user to save only when the R&D session has unsaved content.
+
+brand mode now changes the Measure tab's **Upload to Squiglink** button to
+**Export All…**. One action creates `RAW AVG`, `COMP AVG`, `RAW VAR`, and
+`COMP VAR` TXT files from the same kept measurements. The compensated files use
+the selected HRTF even when HRTF display is off. Standard mode keeps the normal
+Squiglink action.
+
+Fastgraph now supports six-column population HRTF files with frequency, P10,
+P25, median, P75, and P90 data. Population compensation stays a variation band
+in Measure and Curator. The included `5128 IEM Population Average` file uses
+this format.
+
+The interface now uses shared visual tokens for standard dark, light, and brand
+BRAND modes. It adds recessed glowing buttons, rounded plot frames, compact
+controls, and improved toolbar behavior at smaller window sizes. The Measure
+input meter now uses a smooth, animated glow. The glow changes as the input
+approaches clipping and fades smoothly when the signal falls. This display
+animation does not increase the audio sampling rate.
+
+brand mode keeps the standard dark application backdrop while its panels,
+controls, plots, and Curator view retain BRAND styling. Curator BRAND image
+exports keep their separate `#232323` canvas and brand colors.
+
 ## What's New in 0.3.5
 
 The former **Console** tab is now **Automation**. It keeps the diagnostic
@@ -159,13 +189,14 @@ REW-style text is accepted; comments/header rows are skipped when possible.
 
 ## Measure, R&D, Curator, Automation, and Settings Tabs
 
-The **Measure** tab contains the normal measurement interface. Input level,
-bottom-view controls, Undo, and the guarded Clear All action sit between its two
-plots. Export directory, TXT export, Curator transfer, and Squiglink upload sit
-below the bottom plot. **Send to Curator** adds the currently selected average
-or variation view to the Curator workspace and switches to that tab. The new
-layer is offset to 0 dB at 1 kHz without changing its source data or
-frequency-response shape, and its HRTF selection remains editable.
+The **Measure** tab contains the normal measurement interface. The animated
+input glow, bottom-view controls, Undo, and the guarded Clear All action sit
+between its two plots. Export directory, TXT export, Curator transfer, and the
+mode-specific upload or batch-export action sit below the bottom plot. **Send
+to Curator** adds the currently selected average or variation view to the
+Curator workspace and switches to that tab. The new layer is offset to 0 dB at
+1 kHz without changing its source data or frequency-response shape, and its
+HRTF selection remains editable.
 
 The tab header keeps the current headphone and rig visible alongside Headphone
 Metadata, Clear Metadata, and Bluetooth mode controls. These application-wide
@@ -185,6 +216,10 @@ R&D measurement, input-channel, HRTF, target, and bounds controls share a
 responsive toolbar above the plots. Session and export actions sit below the
 bottom viewport, and the Notes panel can be collapsed to give the measurement
 list more room. The R&D and Measure input-channel selectors stay synchronized.
+Fastgraph also keeps a local recovery copy after R&D changes. Recovery starts
+only after the user handles any recovery data found at startup. Manual Save and
+Load continue to use named `.fastgraph-rnd.json` files and their attachment
+folders.
 
 The **Curator** tab is a graph image generation tool. It imports and compares
 two-column frequency-response TXT files and six-column Fastgraph variation
@@ -248,7 +283,21 @@ theme is saved and restored the next time Fastgraph starts.
 
 Enable **brand mode** in Settings to use the BRAND colors and the 3840x2160
 Curator poster export. The Curator preview uses the same layout as the saved
-image.
+image. BRAND mode keeps the normal dark application backdrop. BRAND panels,
+controls, plots, and Curator content keep their mode-specific colors.
+
+In the Measure tab, BRAND mode replaces the visible Squiglink button with
+**Export All…**. The batch needs an average, at least two kept measurements, an
+idle Measure state, and a selected HRTF. It writes four files to one directory:
+
+- `RAW AVG`: the average without HRTF correction.
+- `COMP AVG`: the average with the selected HRTF.
+- `RAW VAR`: variation without HRTF correction.
+- `COMP VAR`: variation with the selected HRTF.
+
+Fastgraph checks all four names before it writes the batch. It uses one
+overwrite prompt if any files already exist. Standard mode keeps Squiglink
+upload in the same button position.
 
 A clean installation starts in the standard FastGraph view. The first BRAND mode
 activation on each computer requires the BRAND access password. FastGraph stores
@@ -267,9 +316,16 @@ uses a visible fallback without bundling licensed font files.
 
 ## HRTF Files
 
-Plain TXT, two columns: `frequency_hz  magnitude_db`
-One header line is OK if it is non-numeric.
-Mono files apply to both ears equally.
+Fastgraph accepts these plain TXT formats:
+
+- Standard: `frequency_hz  magnitude_db`
+- Population variation:
+  `frequency_hz  p10_db  p25_db  median_db  p75_db  p90_db`
+
+One header line is allowed if it is non-numeric. Standard mono files apply to
+both ears equally. Population files produce or expand a percentile variation
+band. Fastgraph uses the median line when an operation needs one compensated
+frequency-response curve.
 
 ## Squiglink Uploads
 

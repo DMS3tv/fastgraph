@@ -344,6 +344,8 @@ class RnDWidget(QWidget):
         self._brand_mode = False
         self._syncing = False
         self._busy = False
+        self._normal_status = "Ready"
+        self._recovery_warning = ""
         self._notes_expanded = bool(notes_expanded)
         self._hrtf_options = self._load_hrtf_options()
         self._preference_bounds = self._load_preference_bounds()
@@ -1840,7 +1842,12 @@ class RnDWidget(QWidget):
         return bounds
 
     def set_status(self, text: str) -> None:
-        self._status_label.setText(text)
+        self._normal_status = text
+        self._status_label.setText(self._recovery_warning or text)
+
+    def set_recovery_warning(self, text: str) -> None:
+        self._recovery_warning = text.strip()
+        self._status_label.setText(self._recovery_warning or self._normal_status)
 
     def _select_id(self, item_id: str) -> None:
         for item in self._walk_items():

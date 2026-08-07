@@ -5,14 +5,21 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
+from importlib import import_module
+from importlib import metadata
+import platform
 from pathlib import Path
+import sys
 from threading import RLock
+import traceback
 from typing import Any, Iterable
+from uuid import uuid4
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
 _SECRET_PARTS = ("password", "credential", "encrypted", "secret", "token")
+_MAX_LOG_BYTES = 2 * 1024 * 1024
 
 
 def _redact(value: Any, key: str = "") -> Any:
@@ -23,6 +30,50 @@ def _redact(value: Any, key: str = "") -> Any:
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
     return value
+
+
+def runtime_diagnostics() -> dict[str, Any]:
+    """Return support details that do not include credentials or user files."""
+    packages: dict[str, str] = {}
+    for name in ("numpy", "scipy", "sounddevice", "paramiko", "cryptography", "PyQt6"):
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            try:
+                module = import_module(name)
+                version = getattr(module, "__version__", None)
+                if name == "PyQt6" and not version:
+                    version = import_module("PyQt6.QtCore").PYQT_VERSION_STR
+                packages[name] = str(version or "bundled")
+            except (ImportError, AttributeError):
+                packages[name] = "not installed"
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "frozen_app": bool(getattr(sys, "frozen", False)),
+        "packages": packages,
+    }
+
+
+def exception_diagnostics(exc: BaseException) -> dict[str, Any]:
+    """Return a compact exception chain and traceback without local variables."""
+    chain: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(f"{type(current).__module__}.{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+    frames = traceback.extract_tb(exc.__traceback__)
+    return {
+        "exception_type": f"{type(exc).__module__}.{type(exc).__name__}",
+        "exception_chain": chain,
+        "traceback": [
+            f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}" for frame in frames[-8:]
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -50,10 +101,17 @@ class ConsoleEventStore(QObject):
     event_added = pyqtSignal(object)
     cleared = pyqtSignal()
 
-    def __init__(self, capacity: int = 5000, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        capacity: int = 5000,
+        parent: QObject | None = None,
+        log_path: Path | None = None,
+    ) -> None:
         super().__init__(parent)
         self._events: deque[ConsoleEvent] = deque(maxlen=max(1, capacity))
         self._lock = RLock()
+        self.session_id = uuid4().hex[:12]
+        self.log_path = log_path
 
     def publish(
         self,
@@ -71,8 +129,26 @@ class ConsoleEventStore(QObject):
         )
         with self._lock:
             self._events.append(event)
+            self._append_persistent(event)
         self.event_added.emit(event)
         return event
+
+    def _append_persistent(self, event: ConsoleEvent) -> None:
+        if self.log_path is None:
+            return
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.log_path.exists() and self.log_path.stat().st_size >= _MAX_LOG_BYTES:
+                rotated = self.log_path.with_suffix(self.log_path.suffix + ".1")
+                self.log_path.replace(rotated)
+            is_new = not self.log_path.exists()
+            with self.log_path.open("a", encoding="utf-8") as stream:
+                if is_new:
+                    stream.write(f"# FastGraph diagnostic log | session={self.session_id}\n")
+                stream.write(event.format() + "\n")
+        except OSError:
+            # Diagnostics must never interrupt measurement or export work.
+            return
 
     def events(self) -> list[ConsoleEvent]:
         with self._lock:
@@ -90,4 +166,3 @@ class ConsoleEventStore(QObject):
     def export(self, path: Path, events: Iterable[ConsoleEvent] | None = None) -> None:
         text = self.formatted(events)
         path.write_text(text + ("\n" if text else ""), encoding="utf-8")
-

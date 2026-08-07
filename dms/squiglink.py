@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import paramiko
 
@@ -10,6 +10,7 @@ from dms.session import SessionData
 
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
 DATA_UPLOAD_DIR = "data"
+SftpDiagnosticCallback = Callable[[str, dict[str, Any]], None]
 
 
 class RemotePhoneBookError(Exception):
@@ -51,6 +52,80 @@ def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
     return f"{base} {modifier}".strip()
 
 
+def _emit_diagnostic(
+    callback: SftpDiagnosticCallback | None,
+    stage: str,
+    **details: Any,
+) -> None:
+    if callback is not None:
+        callback(stage, details)
+
+
+def _transport_diagnostics(transport: paramiko.Transport) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "server_version": getattr(transport, "remote_version", None),
+        "transport_active": bool(getattr(transport, "active", False)),
+        "authenticated": bool(transport.is_authenticated())
+        if hasattr(transport, "is_authenticated")
+        else False,
+        "inbound_cipher": getattr(transport, "remote_cipher", None),
+        "outbound_cipher": getattr(transport, "local_cipher", None),
+    }
+    try:
+        key = transport.get_remote_server_key()
+        result["host_key_type"] = key.get_name()
+        result["host_key_bits"] = key.get_bits()
+        result["host_key_fingerprint_sha256"] = key.fingerprint
+    except Exception:
+        pass
+    return result
+
+
+def open_sftp_connection(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    diagnostic: SftpDiagnosticCallback | None = None,
+) -> tuple[paramiko.Transport, paramiko.SFTPClient]:
+    _emit_diagnostic(
+        diagnostic,
+        "connection_start",
+        host=host,
+        port=int(port),
+        username_length=len(username),
+        username_whitespace_trimmed=username != username.strip(),
+        paramiko_version=paramiko.__version__,
+        authentication_method="password",
+    )
+    transport = paramiko.Transport((host, int(port)))
+    try:
+        _emit_diagnostic(diagnostic, "transport_created")
+        transport.connect(username=username, password=password)
+        _emit_diagnostic(
+            diagnostic,
+            "authentication_succeeded",
+            **_transport_diagnostics(transport),
+        )
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        _emit_diagnostic(
+            diagnostic,
+            "sftp_subsystem_opened",
+            **_transport_diagnostics(transport),
+        )
+        return transport, sftp
+    except Exception as exc:
+        _emit_diagnostic(
+            diagnostic,
+            "connection_failed",
+            exception_type=f"{type(exc).__module__}.{type(exc).__name__}",
+            exception_message=str(exc),
+            **_transport_diagnostics(transport),
+        )
+        transport.close()
+        raise
+
+
 def upload_export_sftp(
     local_path: Path,
     host: str,
@@ -58,18 +133,31 @@ def upload_export_sftp(
     username: str,
     password: str,
     remote_filename: str | None = None,
+    diagnostic: SftpDiagnosticCallback | None = None,
 ) -> None:
     """
     Upload exported file to Squiglink endpoint over SFTP.
     Upload exported file to the account-scoped Squiglink data directory.
     """
-    transport = paramiko.Transport((host, int(port)))
+    transport, sftp = open_sftp_connection(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        diagnostic=diagnostic,
+    )
     try:
-        transport.connect(username=username, password=password)
-        sftp = paramiko.SFTPClient.from_transport(transport)
         try:
             filename = (remote_filename or local_path.name).strip().split("/")[-1]
+            _emit_diagnostic(
+                diagnostic,
+                "measurement_upload_start",
+                remote_directory=DATA_UPLOAD_DIR,
+                filename=filename,
+                bytes=local_path.stat().st_size,
+            )
             sftp.put(str(local_path), f"{DATA_UPLOAD_DIR}/{filename}")
+            _emit_diagnostic(diagnostic, "measurement_upload_complete", filename=filename)
         finally:
             sftp.close()
     finally:

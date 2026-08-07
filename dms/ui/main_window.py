@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
-import paramiko
 import sounddevice as sd
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
@@ -69,7 +68,7 @@ from dms.audio_engine import (
 )
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
-from dms.console import ConsoleEventStore
+from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
 from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
 from dms.curator.parser import parse_measurement_txt
@@ -100,6 +99,7 @@ from dms.processing import (
     smooth_fractional_octave,
 )
 from dms.rnd.models import (
+    RnDGroup,
     RnDMeasurement,
     RnDSession,
     generate_measurement_name,
@@ -108,6 +108,8 @@ from dms.rnd.models import (
     session_snapshot,
 )
 from dms.rnd.persistence import (
+    RND_SESSION_EXTENSION,
+    ensure_rnd_session_extension,
     load_rnd_session,
     save_rnd_session,
     session_snapshot as rnd_persistence_snapshot,
@@ -124,6 +126,7 @@ from dms.squiglink import (
     build_phone_book_name_stem,
     build_upload_name_stem,
     merge_phone_book_entry,
+    open_sftp_connection,
     read_remote_phone_book,
     upload_export_sftp,
     write_remote_phone_book,
@@ -802,7 +805,10 @@ class MainWindow(QMainWindow):
         self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
         self._last_measurement_diagnostics: Optional[object] = None
         self._hrtf_options: list[tuple[str, str]] = []
-        self._console_events = ConsoleEventStore(parent=self)
+        self._console_events = ConsoleEventStore(
+            parent=self,
+            log_path=config_dir() / "logs" / "fastgraph-console.log",
+        )
         self._automation_running = False
         self._keyboard_shortcuts: list[QShortcut] = []
         self._rnd_dirty = False
@@ -825,6 +831,7 @@ class MainWindow(QMainWindow):
         self._rnd_recovery.save_failed.connect(self._on_rnd_recovery_failed)
         self._rnd_widget.state_changed.connect(self._on_rnd_state_changed)
         self._rnd_widget.selection_changed.connect(self._on_rnd_selection_changed)
+        self._rnd_widget.view_state_changed.connect(self._on_rnd_selection_changed)
         self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if self._theme_controller.brand_mode:
@@ -842,7 +849,15 @@ class MainWindow(QMainWindow):
         self._start_level_monitor()
         self._apply_state_ui()
         self._start_update_check()
-        self._log_event("INFO", "application", "Fastgraph ready", version=__version__)
+        self._log_event(
+            "INFO",
+            "application",
+            "Fastgraph ready",
+            version=__version__,
+            session_id=self._console_events.session_id,
+            log_path=str(self._console_events.log_path),
+        )
+        self._log_event("DEBUG", "diagnostics", "Runtime environment", **runtime_diagnostics())
         QTimer.singleShot(0, self._initialize_rnd_recovery)
 
         self._meter_ui_timer = QTimer(self)
@@ -1141,6 +1156,15 @@ class MainWindow(QMainWindow):
         ):
             QTimer.singleShot(0, lambda: self._run_automation_trigger("app_error"))
 
+    def _log_exception(self, source: str, message: str, exc: BaseException, **details) -> None:
+        details.update(exception_diagnostics(exc))
+        self._log_event("ERROR", source, message, **details)
+
+    def _log_sftp_diagnostic(self, stage: str, details: dict) -> None:
+        severity = "WARNING" if stage.endswith("failed") else "DEBUG"
+        message = stage.replace("_", " ").capitalize()
+        self._log_event(severity, "squiglink", message, stage=stage, **details)
+
     def _command_reply(self, message: str, error: bool = False) -> None:
         self._log_event("ERROR" if error else "INFO", "console", message)
 
@@ -1382,6 +1406,15 @@ class MainWindow(QMainWindow):
                 self._command_reply(self._console_devices())
             elif args[0] == "settings":
                 self._run_settings_command(args[1:])
+            elif args == ["diagnostics", "system"]:
+                self._log_event(
+                    "INFO",
+                    "diagnostics",
+                    "System information",
+                    session_id=self._console_events.session_id,
+                    persistent_log=str(self._console_events.log_path),
+                    **runtime_diagnostics(),
+                )
             elif args == ["diagnostics", "last"]:
                 if self._last_measurement_diagnostics is None:
                     self._command_reply("No measurement diagnostics are available yet.")
@@ -1412,7 +1445,7 @@ class MainWindow(QMainWindow):
     def _console_help() -> str:
         return "\n".join((
             "Commands:",
-            "  help | clear | status | devices | diagnostics last",
+            "  help | clear | status | devices | diagnostics system | diagnostics last",
             "  settings list | settings get <name> | settings set <name> <value>",
             "  settings save [<name>|all]",
             "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
@@ -1825,10 +1858,16 @@ class MainWindow(QMainWindow):
         self._export_dir_input = QLineEdit()
         self._export_dir_input.setPlaceholderText("Default: choose at export")
         self._export_dir_input.setText(str(self._settings.get("export_directory") or ""))
-        row.addWidget(self._export_dir_input, 1)
+        self._export_dir_input.setMinimumWidth(140)
+        self._export_dir_input.setMaximumWidth(240)
+        row.addWidget(self._export_dir_input)
         export_dir_btn = QPushButton("Browse…")
         export_dir_btn.clicked.connect(self._choose_export_directory)
         row.addWidget(export_dir_btn)
+
+        self._send_to_rnd_btn = QPushButton("Send to R&D")
+        self._send_to_rnd_btn.clicked.connect(self._send_measure_to_rnd)
+        row.addWidget(self._send_to_rnd_btn)
 
         self._export_btn = QPushButton("Export Average…")
         self._export_btn.setObjectName("btn_export")
@@ -3258,6 +3297,7 @@ class MainWindow(QMainWindow):
                 normalize_ref=True,
             )
             self._pending_curve = (freqs_ds, mag_ds)
+            self._rnd_widget.set_review_curve(self._pending_curve)
             self._state = AppState.PASS_FAIL
             self._apply_state_ui()
             self._rnd_widget.set_status("Sweep complete. Waiting for review.")
@@ -3270,6 +3310,7 @@ class MainWindow(QMainWindow):
         self._log_event("ERROR", "rnd", message)
         self._cleanup_sweep_thread()
         self._close_rnd_review_dialog()
+        self._rnd_widget.set_review_curve(None)
         self._pending_curve = None
         failure_reason = None
         if self._last_measurement_diagnostics is not None:
@@ -3327,6 +3368,7 @@ class MainWindow(QMainWindow):
             self._rnd_review_dialog = None
         choice = dlg.choice()
         if choice == RnDReviewDialog.FAIL:
+            self._rnd_widget.set_review_curve(None)
             self._pending_curve = None
             self._state = AppState.IDLE
             self._apply_state_ui()
@@ -3367,6 +3409,7 @@ class MainWindow(QMainWindow):
             top_visible=True,
             pinned=False,
         )
+        self._rnd_widget.set_review_curve(None)
         self._rnd_widget.add_measurement(measurement)
         self._pending_curve = None
         self._rnd_sweep_active = False
@@ -3383,6 +3426,7 @@ class MainWindow(QMainWindow):
     def _cancel_rnd_measurement(self) -> None:
         self._abort_active_sweep()
         self._close_rnd_review_dialog()
+        self._rnd_widget.set_review_curve(None)
         self._pending_curve = None
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
@@ -3985,6 +4029,144 @@ class MainWindow(QMainWindow):
             hrtf=active_hrtf.name if active_hrtf else None,
         )
 
+    @staticmethod
+    def _unique_rnd_transfer_name(base: str, existing: set[str]) -> str:
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} ({suffix})" in existing:
+            suffix += 1
+        return f"{base} ({suffix})"
+
+    def _measure_to_rnd_unavailable_reason(self) -> str:
+        if self._state != AppState.IDLE:
+            return "Measurements can only be sent to R&D while Measure is idle."
+        if self._bottom_view_mode() == "variation":
+            if not self._kept_curves:
+                return "Keep at least one measurement before sending Var to R&D."
+        elif self._average is None:
+            return "Create an average before sending it to R&D."
+        return ""
+
+    def _send_measure_to_rnd(self) -> None:
+        unavailable = self._measure_to_rnd_unavailable_reason()
+        if unavailable:
+            QMessageBox.information(self, "Send to R&D Unavailable", unavailable)
+            return
+
+        active_hrtf = self._hrtf if self._is_hrtf_active() else None
+        hrtf_path = str(active_hrtf.path) if active_hrtf is not None else ""
+        hrtf_name = active_hrtf.name if active_hrtf is not None else ""
+        metadata = session_snapshot(self._session)
+        input_label = self._current_input_device_label()
+        output_label = self._current_output_device_label()
+        input_channel_index = self._current_input_channel()
+        channel_label = (
+            self._ch_combo.currentText().strip()
+            or f"Channel {input_channel_index + 1}"
+        )
+        identity = self._session.asset_tag.strip() or " ".join(
+            part
+            for part in (self._session.brand.strip(), self._session.model.strip())
+            if part
+        )
+        identity = identity or "Fastgraph"
+
+        if self._bottom_view_mode() == "variation":
+            group_name = self._unique_rnd_transfer_name(
+                f"{identity} VAR",
+                {group.name for group in self._rnd_widget.session.groups},
+            )
+            existing_names = {
+                measurement.name for measurement in self._rnd_widget.session.measurements
+            }
+            measurements: list[RnDMeasurement] = []
+            for index, (freqs, mag_db) in enumerate(self._kept_curves, start=1):
+                name = self._unique_rnd_transfer_name(
+                    f"{group_name} Sweep {index}",
+                    existing_names,
+                )
+                existing_names.add(name)
+                measurements.append(
+                    RnDMeasurement(
+                        name=name,
+                        freqs=np.array(freqs, dtype=float, copy=True),
+                        mag_db=np.array(mag_db, dtype=float, copy=True),
+                        metadata=dict(metadata),
+                        rig=self._session.rig,
+                        input_device_label=input_label,
+                        input_channel_index=input_channel_index,
+                        input_channel_label=channel_label,
+                        output_device_label=output_label,
+                        top_visible=True,
+                        pinned=False,
+                        hrtf_path=hrtf_path,
+                        hrtf_name=hrtf_name,
+                    )
+                )
+            group = RnDGroup(
+                name=group_name,
+                expanded=True,
+                visible=True,
+                pinned=False,
+                variation_enabled=True,
+            )
+            self._rnd_widget.add_measurement_batch(
+                measurements,
+                group=group,
+                inherit_default_hrtf=False,
+            )
+            transferred_name = group_name
+            transferred_count = len(measurements)
+            transfer_mode = "variation"
+        else:
+            assert self._average is not None
+            freqs, mag_db = self._average
+            name = self._unique_rnd_transfer_name(
+                f"{identity} AVG",
+                {
+                    measurement.name
+                    for measurement in self._rnd_widget.session.measurements
+                },
+            )
+            measurement = RnDMeasurement(
+                name=name,
+                freqs=np.array(freqs, dtype=float, copy=True),
+                mag_db=np.array(mag_db, dtype=float, copy=True),
+                metadata=dict(metadata),
+                rig=self._session.rig,
+                input_device_label=input_label,
+                input_channel_index=input_channel_index,
+                input_channel_label=channel_label,
+                output_device_label=output_label,
+                top_visible=True,
+                pinned=False,
+                hrtf_path=hrtf_path,
+                hrtf_name=hrtf_name,
+            )
+            self._rnd_widget.add_measurement_batch(
+                [measurement],
+                inherit_default_hrtf=False,
+            )
+            transferred_name = name
+            transferred_count = 1
+            transfer_mode = "average"
+
+        self._tabs.setCurrentWidget(self._rnd_widget)
+        self._statusbar.showMessage(
+            f"Sent to R&D: {transferred_name} ({transferred_count} measurement"
+            f"{'s' if transferred_count != 1 else ''})"
+        )
+        self._log_event(
+            "INFO",
+            "rnd",
+            "Measure view sent to R&D",
+            name=transferred_name,
+            mode=transfer_mode,
+            measurement_count=transferred_count,
+            hrtf=hrtf_name or None,
+        )
+
     def _send_rnd_to_curator(self) -> None:
         if self._state != AppState.IDLE:
             return
@@ -4290,20 +4472,16 @@ class MainWindow(QMainWindow):
 
     def _save_rnd_session(self) -> bool:
         default_dir = self._rnd_default_dir()
-        default_path = default_dir / "fastgraph-rnd-session.fastgraph-rnd.json"
+        default_path = default_dir / f"fastgraph-rnd-session{RND_SESSION_EXTENSION}"
         path_str, _ = QFileDialog.getSaveFileName(
             self,
             "Save R&D Session",
             str(default_path),
-            "Fastgraph R&D Session (*.fastgraph-rnd.json);;JSON Files (*.json);;All Files (*)",
+            f"Fastgraph R&D Session (*{RND_SESSION_EXTENSION});;JSON Files (*.json);;All Files (*)",
         )
         if not path_str:
             return False
-        path = Path(path_str)
-        if path.suffix.lower() == ".json" and not path.name.endswith(".fastgraph-rnd.json"):
-            path = path.with_name(path.stem + ".fastgraph-rnd.json")
-        elif path.suffix == "":
-            path = path.with_suffix(".fastgraph-rnd.json")
+        path = ensure_rnd_session_extension(Path(path_str))
         self._rnd_widget.session.saved_app_version = __version__
         try:
             save_rnd_session(
@@ -4708,6 +4886,13 @@ class MainWindow(QMainWindow):
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
+        if hasattr(self, "_send_to_rnd_btn"):
+            unavailable = self._measure_to_rnd_unavailable_reason()
+            self._send_to_rnd_btn.setEnabled(not unavailable)
+            self._send_to_rnd_btn.setToolTip(
+                unavailable
+                or "Send the current average or all kept Var measurements to R&D."
+            )
         if MainWindow._brand_mode_active(self):
             self._upload_btn.setText("Export All…")
             if hasattr(self._upload_btn, "setObjectName"):
@@ -4820,6 +5005,7 @@ class MainWindow(QMainWindow):
                 username=username,
                 password=password,
                 remote_filename=filename,
+                diagnostic=self._log_sftp_diagnostic,
             )
             phone_book_status = self._sync_remote_phone_book(
                 host=host,
@@ -4837,7 +5023,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
-            self._log_event("ERROR", "upload", f"Squiglink upload failed: {exc}")
+            self._log_exception("upload", "Squiglink upload failed", exc)
             QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
         finally:
             if tmp_path is not None:
@@ -4904,11 +5090,21 @@ class MainWindow(QMainWindow):
         password: str,
         phone_book_stem: str,
     ) -> str:
-        transport = paramiko.Transport((host, int(port)))
+        transport, sftp = open_sftp_connection(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            diagnostic=self._log_sftp_diagnostic,
+        )
         try:
-            transport.connect(username=username, password=password)
-            sftp = paramiko.SFTPClient.from_transport(transport)
             try:
+                self._log_event(
+                    "DEBUG",
+                    "squiglink",
+                    "Phone book read start",
+                    remote_path=PHONE_BOOK_REMOTE_PATH,
+                )
                 try:
                     phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
                 except (RemotePhoneBookMissingError, RemotePhoneBookInvalidError) as exc:
@@ -4923,6 +5119,13 @@ class MainWindow(QMainWindow):
 
                 merge_phone_book_entry(phone_book, self._session, phone_book_stem)
                 write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
+                self._log_event(
+                    "DEBUG",
+                    "squiglink",
+                    "Phone book update complete",
+                    remote_path=PHONE_BOOK_REMOTE_PATH,
+                    entries=len(phone_book),
+                )
                 return "Phone book updated successfully."
             finally:
                 sftp.close()

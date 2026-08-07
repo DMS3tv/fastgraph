@@ -92,8 +92,7 @@ an available HRTF or `None`.
 R&D **Var** behavior is stricter: when a group has **Var** enabled, its original
 traces are hidden even if there are not yet enough measurements to draw the
 band. The status line reports that the group needs at least two measurements.
-The group **Bottom** toggle continues to show the full group in the bottom
-viewport.
+The group **View 2** checkbox continues to show the full group in View 2.
 
 ## What's New in 0.3.2
 
@@ -118,14 +117,14 @@ and bounds off.
 Fastgraph now includes an **R&D** tab for exploratory single-sweep measurement
 sessions. R&D measurements are kept as individual named entries with metadata,
 input/channel identity, notes, milestone flags, per-measurement HRTF selection,
-top-view visibility, and bottom-view visibility. Measurements can be
-organized into named groups with group notes, show/pin controls, milestone
-marking, and optional group variation bands.
+View 1 visibility, and View 2 visibility. Measurements can be organized into
+named groups with group notes, view checkboxes, milestone marking, and optional
+group variation bands.
 
-R&D group variation follows the viewports where the group is visible: **Show**
-controls top-viewport group visibility, **Bottom** controls bottom-viewport
-group visibility, and **Var** adds the variation band only to those active
-group viewports. R&D sessions can be saved and loaded as `.fastgraph-rnd.json`
+R&D group variation follows the viewports where the group is visible.
+**View 1** and **View 2** control group visibility in each viewport. **Var**
+adds the variation band only to those active group viewports. R&D sessions can be saved
+and loaded as `.fastgraph-rnd.json`
 files; Settings includes a default folder for those session files.
 
 Selected R&D measurements and groups can also keep photo notes. Use **Capture**
@@ -193,10 +192,10 @@ The **Measure** tab contains the normal measurement interface. The animated
 input glow, bottom-view controls, Undo, and the guarded Clear All action sit
 between its two plots. Export directory, TXT export, Curator transfer, and the
 mode-specific upload or batch-export action sit below the bottom plot. **Send
-to Curator** adds the currently selected average or variation view to the
-Curator workspace and switches to that tab. The new layer is offset to 0 dB at
-1 kHz without changing its source data or frequency-response shape, and its
-HRTF selection remains editable.
+to R&D** sends one average as an ungrouped R&D measurement, or sends all kept
+curves from the Var view into one Var-enabled R&D group. **Send to Curator**
+adds the selected average or variation view to Curator. Both transfers keep
+source data unchanged and retain active HRTF selection as an editable setting.
 
 The tab header keeps the current headphone and rig visible alongside Headphone
 Metadata, Clear Metadata, and Bluetooth mode controls. These application-wide
@@ -204,13 +203,13 @@ controls remain available while moving between Measure, R&D, Curator,
 Automation, and Settings.
 
 The **R&D** tab is a single-sweep exploratory measurement workspace. New kept
-measurements default to the top viewport, can be shown in the bottom viewport,
-and can be grouped for product-development comparisons. Groups support notes,
-show/bottom toggles, milestone marking, drag/drop organization, optional
-confidence-style variation bands, and additive dB offsets. Each measurement can
-choose its own HRTF from the shared HRTF library and can be shifted with its own
-dB offset. R&D sessions save processed measurement curves and workspace state to
-JSON; raw recordings are not saved.
+measurements default to View 1, can be shown in View 2, and can be grouped for
+product-development comparisons. The measurement list uses compact View 1,
+View 2, Var, and Milestone checkboxes. Groups also support notes, drag/drop
+organization, optional confidence-style variation bands, and additive dB
+offsets. Each measurement can choose its own HRTF from the shared HRTF library
+and can be shifted with its own dB offset. R&D sessions save processed
+measurement curves and workspace state to JSON; raw recordings are not saved.
 
 R&D measurement, input-channel, HRTF, target, and bounds controls share a
 responsive toolbar above the plots. Session and export actions sit below the
@@ -237,11 +236,14 @@ The **Automation** tab shows live application, device, sweep, processing,
 Curator, automation, and timing diagnostics in the left console pane. The right
 Events pane manages local automation JSON files, row-based workflow steps, and
 manual/app-event triggered runs. The Guide button swaps the console pane for an
-in-app cheat-sheet and examples until it is closed. Console history is kept in
-memory only for the current launch.
+in-app cheat-sheet and examples until it is closed. The console keeps up to
+5,000 live events and writes a rotating diagnostic log to the application data
+folder. The log does not include passwords, credentials, tokens, or secrets.
+Use **System Info** to add the app, operating system, Python, and dependency
+versions to a support report.
 
 Type `help` in the Automation console for safe Fastgraph commands. Available commands can
-inspect status, devices, settings, and the latest diagnostics; apply temporary
+inspect status, devices, settings, system information, and the latest diagnostics; apply temporary
 measurement-setting overrides; start/cancel a queue; pass or fail a pending
 measurement; export average/variation TXT files; and launch Squiglink upload.
 Temporary settings are persisted only with `settings save`.

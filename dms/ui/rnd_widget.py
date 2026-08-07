@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -115,8 +116,8 @@ class RnDPlotWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        self.top_plot = _NoWheelPlotWidget(title="R&D Visible Measurements")
-        self.bottom_plot = _NoWheelPlotWidget(title="R&D Bottom Measurements")
+        self.top_plot = _NoWheelPlotWidget(title="View 1")
+        self.bottom_plot = _NoWheelPlotWidget(title="View 2")
         _configure_plot(self.top_plot)
         _configure_plot(self.bottom_plot)
         self.top_frame = RoundedViewportFrame(self.top_plot)
@@ -143,7 +144,7 @@ class RnDPlotWidget(QWidget):
                 axis = plot.getAxis(axis_name)
                 axis.setPen(pg.mkPen(colors["plot_fg"]))
                 axis.setTextPen(pg.mkPen(colors["plot_fg"]))
-            plot.getPlotItem().titleLabel.setAttr("color", colors["plot_fg"])
+            plot.getPlotItem().titleLabel.setAttr("color", colors["accent"])
 
     def _accent_color(self) -> str:
         return brand_brand.GRADIENT_ORANGE if self._brand_mode else VARIATION_COLOR
@@ -160,6 +161,7 @@ class RnDPlotWidget(QWidget):
         delta_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] | None = None,
         preference_bounds: PreferenceBounds | None = None,
         target_curve: tuple[str, np.ndarray, np.ndarray] | None = None,
+        review_curve: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
         for item in self._items:
             try:
@@ -179,6 +181,15 @@ class RnDPlotWidget(QWidget):
             )
             self._items.append(item)
             top_curves.append((measurement.freqs, mag_db))
+        if review_curve is not None:
+            freqs, mag_db = review_curve
+            color = QColor(self._accent_color())
+            glow_color = QColor(color)
+            glow_color.setAlpha(72)
+            glow = self.top_plot.plot(freqs, mag_db, pen=pg.mkPen(glow_color, width=8.0))
+            item = self.top_plot.plot(freqs, mag_db, pen=pg.mkPen(color, width=2.5))
+            self._items.extend([glow, item])
+            top_curves.append((freqs, mag_db))
         delta_measurements = delta_measurements or []
         delta_group_variations = delta_group_variations or []
         if delta_mode_active:
@@ -332,6 +343,7 @@ class RnDWidget(QWidget):
     save_requested = pyqtSignal()
     load_requested = pyqtSignal()
     selection_changed = pyqtSignal()
+    view_state_changed = pyqtSignal()
     state_changed = pyqtSignal()
     input_channel_changed = pyqtSignal(int)
     notes_expanded_changed = pyqtSignal(bool)
@@ -350,6 +362,7 @@ class RnDWidget(QWidget):
         self._hrtf_options = self._load_hrtf_options()
         self._preference_bounds = self._load_preference_bounds()
         self._missing_hrtf_names: set[str] = set()
+        self._review_curve: tuple[np.ndarray, np.ndarray] | None = None
         self._build_ui()
         self._sync_tree()
         self.apply_theme(self._theme)
@@ -380,18 +393,59 @@ class RnDWidget(QWidget):
         self._sync_photo_panel()
 
     def add_measurement(self, measurement: RnDMeasurement) -> None:
+        self.add_measurement_batch([measurement])
+
+    def set_review_curve(self, curve: tuple[np.ndarray, np.ndarray] | None) -> None:
+        """Show a temporary measurement in View 1 without changing the session."""
+        if curve is None:
+            self._review_curve = None
+        else:
+            freqs, mag_db = curve
+            self._review_curve = (
+                np.array(freqs, dtype=float, copy=True),
+                np.array(mag_db, dtype=float, copy=True),
+            )
+        self._redraw()
+
+    def add_measurement_batch(
+        self,
+        measurements: Iterable[RnDMeasurement],
+        *,
+        group: RnDGroup | None = None,
+        inherit_default_hrtf: bool = True,
+    ) -> None:
+        measurements = list(measurements)
+        if not measurements:
+            return
         colors = default_color_cycle(self._brand_mode)
-        measurement.color = colors[len(self.session.measurements) % len(colors)]
-        if not measurement.hrtf_path and self.session.hrtf_path:
-            measurement.hrtf_path = str(self.session.hrtf_path)
-            measurement.hrtf_name = self.session.hrtf_name or self._hrtf_label(measurement.hrtf_path, "")
-        elif measurement.hrtf_path and not measurement.hrtf_name:
-            measurement.hrtf_name = self._hrtf_label(measurement.hrtf_path, "")
-        self.session.measurements.append(measurement)
-        self.session.ungrouped_order.append(measurement.id)
-        self.session.selected_id = measurement.id
+        start_index = len(self.session.measurements)
+        for index, measurement in enumerate(measurements):
+            measurement.color = colors[(start_index + index) % len(colors)]
+            if inherit_default_hrtf and not measurement.hrtf_path and self.session.hrtf_path:
+                measurement.hrtf_path = str(self.session.hrtf_path)
+                measurement.hrtf_name = self.session.hrtf_name or self._hrtf_label(
+                    measurement.hrtf_path,
+                    "",
+                )
+            elif measurement.hrtf_path and not measurement.hrtf_name:
+                measurement.hrtf_name = self._hrtf_label(measurement.hrtf_path, "")
+            self.session.measurements.append(measurement)
+        if group is None:
+            self.session.ungrouped_order.extend(item.id for item in measurements)
+            selected_id = measurements[-1].id
+        else:
+            group.measurement_ids = [item.id for item in measurements]
+            self.session.groups.append(group)
+            selected_id = group.id
+        self.session.selected_id = selected_id
+        self.session.repair_ordering()
         self._sync_tree()
-        self._select_id(measurement.id)
+        signals_blocked = self._tree.blockSignals(True)
+        try:
+            self._select_id(selected_id)
+        finally:
+            self._tree.blockSignals(signals_blocked)
+        self._sync_detail_panel()
         self._redraw()
         self.state_changed.emit()
 
@@ -608,22 +662,28 @@ class RnDWidget(QWidget):
         panel_layout.setContentsMargins(8, 8, 8, 8)
         panel_layout.setSpacing(8)
         splitter.addWidget(panel)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
         QTimer.singleShot(0, self._apply_default_splitter_sizes)
 
         data_box = QGroupBox("Measurements")
         data_layout = QVBoxLayout(data_box)
         self._tree = _RnDTree()
-        self._tree.setHeaderLabels(["Name", "Top", "Bottom", "Show", "Var", "Milestone", "Offset", "HRTF"])
-        self._tree.setColumnWidth(0, 310)
-        self._tree.setColumnWidth(1, 72)
-        self._tree.setColumnWidth(2, 82)
-        self._tree.setColumnWidth(3, 72)
-        self._tree.setColumnWidth(4, 72)
-        self._tree.setColumnWidth(5, 96)
-        self._tree.setColumnWidth(6, 100)
-        self._tree.setColumnWidth(7, 112)
+        self._tree.setHeaderLabels(
+            ["Name", "View 1", "View 2", "Var", "Milestone", "Offset", "HRTF"]
+        )
+        header = self._tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column, width in {
+            1: 56,
+            2: 56,
+            3: 48,
+            4: 80,
+            5: 96,
+            6: 108,
+        }.items():
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self._tree.setColumnWidth(column, width)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -631,6 +691,12 @@ class RnDWidget(QWidget):
         self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
+        self._tree.itemExpanded.connect(
+            lambda item: self._on_group_expansion_changed(item, True)
+        )
+        self._tree.itemCollapsed.connect(
+            lambda item: self._on_group_expansion_changed(item, False)
+        )
         self._tree.structure_changed.connect(self._on_tree_structure_changed)
         data_layout.addWidget(self._tree, 1)
 
@@ -838,7 +904,8 @@ class RnDWidget(QWidget):
         width = self._splitter.width()
         if width <= 0:
             return
-        self._splitter.setSizes([max(1, int(width * 0.6)), max(1, int(width * 0.4))])
+        half = max(1, int(width * 0.5))
+        self._splitter.setSizes([half, half])
         self._splitter_initialized = True
 
     def _sync_tree(self) -> None:
@@ -874,7 +941,7 @@ class RnDWidget(QWidget):
                 group.color = colors[index % len(colors)]
 
     def _measurement_item(self, measurement: RnDMeasurement) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([measurement.name, "", "", "", "", "", "", ""])
+        item = QTreeWidgetItem([measurement.name, "", "", "", "", "", ""])
         item.setData(0, ROLE_KIND, KIND_MEASUREMENT)
         item.setData(0, ROLE_ID, measurement.id)
         item.setFlags(
@@ -887,14 +954,13 @@ class RnDWidget(QWidget):
         item.setText(3, "")
         item.setText(4, "")
         item.setText(5, "")
-        item.setText(6, "")
         if measurement.notes:
             item.setToolTip(0, measurement.notes)
         return item
 
     def _group_item(self, group: RnDGroup) -> QTreeWidgetItem:
         label = f"{group.name} ({len(group.measurement_ids)})"
-        item = QTreeWidgetItem([label, "", "", "", "", "", "", ""])
+        item = QTreeWidgetItem([label, "", "", "", "", "", ""])
         item.setData(0, ROLE_KIND, KIND_GROUP)
         item.setData(0, ROLE_ID, group.id)
         item.setFlags(
@@ -907,8 +973,6 @@ class RnDWidget(QWidget):
         item.setText(3, "")
         item.setText(4, "")
         item.setText(5, "")
-        item.setText(6, "")
-        item.setText(7, "")
         if group.notes:
             item.setToolTip(0, group.notes)
         return item
@@ -917,25 +981,25 @@ class RnDWidget(QWidget):
         self._tree.setItemWidget(
             item,
             1,
-            self._toggle_cell(
+            self._checkbox_cell(
                 measurement.top_visible,
                 lambda checked, measurement_id=measurement.id: self._set_measurement_top_visible(measurement_id, checked),
-                "Show this measurement in the top viewport",
+                "Show this measurement in View 1",
             ),
         )
         self._tree.setItemWidget(
             item,
             2,
-            self._toggle_cell(
+            self._checkbox_cell(
                 measurement.pinned,
                 lambda checked, measurement_id=measurement.id: self._set_measurement_pinned(measurement_id, checked),
-                "Show this measurement in the bottom viewport",
+                "Show this measurement in View 2",
             ),
         )
         self._tree.setItemWidget(
             item,
-            5,
-            self._toggle_cell(
+            4,
+            self._checkbox_cell(
                 measurement.milestone,
                 lambda checked, measurement_id=measurement.id: self._set_measurement_milestone(measurement_id, checked),
                 "Mark this measurement as a milestone",
@@ -943,37 +1007,37 @@ class RnDWidget(QWidget):
         )
         self._tree.setItemWidget(
             item,
-            6,
+            5,
             self._offset_cell(
                 measurement.vertical_offset_db,
                 lambda value, measurement_id=measurement.id: self._set_measurement_offset(measurement_id, value),
             ),
         )
-        self._tree.setItemWidget(item, 7, self._hrtf_cell(measurement))
+        self._tree.setItemWidget(item, 6, self._hrtf_cell(measurement))
 
     def _install_group_toggles(self, item: QTreeWidgetItem, group: RnDGroup) -> None:
         self._tree.setItemWidget(
             item,
+            1,
+            self._checkbox_cell(
+                group.visible,
+                lambda checked, group_id=group.id: self._set_group_visible(group_id, checked),
+                "Show this whole group in View 1",
+            ),
+        )
+        self._tree.setItemWidget(
+            item,
             2,
-            self._toggle_cell(
+            self._checkbox_cell(
                 group.pinned,
                 lambda checked, group_id=group.id: self._set_group_pinned(group_id, checked),
-                "Show this whole group in the bottom viewport",
+                "Show this whole group in View 2",
             ),
         )
         self._tree.setItemWidget(
             item,
             3,
-            self._toggle_cell(
-                group.visible,
-                lambda checked, group_id=group.id: self._set_group_visible(group_id, checked),
-                "Show or hide this whole group",
-            ),
-        )
-        self._tree.setItemWidget(
-            item,
-            4,
-            self._toggle_cell(
+            self._checkbox_cell(
                 group.variation_enabled,
                 lambda checked, group_id=group.id: self._set_group_variation(group_id, checked),
                 "Show this group's variation band",
@@ -981,8 +1045,8 @@ class RnDWidget(QWidget):
         )
         self._tree.setItemWidget(
             item,
-            5,
-            self._toggle_cell(
+            4,
+            self._checkbox_cell(
                 group.milestone,
                 lambda checked, group_id=group.id: self._set_group_milestone(group_id, checked),
                 "Mark this group as a milestone",
@@ -990,7 +1054,7 @@ class RnDWidget(QWidget):
         )
         self._tree.setItemWidget(
             item,
-            6,
+            5,
             self._offset_cell(
                 group.vertical_offset_db,
                 lambda value, group_id=group.id: self._set_group_offset(group_id, value),
@@ -999,18 +1063,18 @@ class RnDWidget(QWidget):
         label = QLabel("Group")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setProperty("tone", "muted")
-        self._tree.setItemWidget(item, 7, label)
+        self._tree.setItemWidget(item, 6, label)
 
-    def _toggle_cell(self, checked: bool, callback, tooltip: str) -> QWidget:
+    def _checkbox_cell(self, checked: bool, callback, tooltip: str) -> QWidget:
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(3, 1, 3, 1)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        toggle = ToggleSwitch()
-        toggle.setToolTip(tooltip)
-        toggle.setChecked(checked)
-        toggle.stateChanged.connect(lambda _state: callback(toggle.isChecked()))
-        layout.addWidget(toggle)
+        checkbox = QCheckBox()
+        checkbox.setToolTip(tooltip)
+        checkbox.setChecked(checked)
+        checkbox.stateChanged.connect(lambda _state: callback(checkbox.isChecked()))
+        layout.addWidget(checkbox)
         return container
 
     def _offset_cell(self, value: float, callback) -> QWidget:
@@ -1129,6 +1193,19 @@ class RnDWidget(QWidget):
         self._redraw()
         self.state_changed.emit()
 
+    def _on_group_expansion_changed(
+        self,
+        item: QTreeWidgetItem,
+        expanded: bool,
+    ) -> None:
+        if self._syncing or item.data(0, ROLE_KIND) != KIND_GROUP:
+            return
+        group = self.session.group_by_id(item.data(0, ROLE_ID))
+        if group is None or group.expanded == expanded:
+            return
+        group.expanded = expanded
+        self.view_state_changed.emit()
+
     def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if self._syncing:
             return
@@ -1152,6 +1229,8 @@ class RnDWidget(QWidget):
         self.state_changed.emit()
 
     def _on_selection_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
+        if self._syncing:
+            return
         self.session.selected_id = current.data(0, ROLE_ID) if current is not None else None
         self._sync_detail_panel()
         self.selection_changed.emit()
@@ -1658,6 +1737,7 @@ class RnDWidget(QWidget):
             delta_group_variations=delta_variations,
             preference_bounds=self._preference_bounds if self.session.preference_bounds_enabled else None,
             target_curve=target_curve,
+            review_curve=self._review_curve,
         )
         if self._missing_hrtf_names:
             missing = ", ".join(sorted(self._missing_hrtf_names))

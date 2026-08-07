@@ -168,6 +168,7 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
         lambda _transport: _FakeSFTP(),
     )
 
+    diagnostics = []
     upload_export_sftp(
         local_path=local,
         host="h",
@@ -175,6 +176,16 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
         username="u",
         password="p",
         remote_filename="Apple AirPods Pro 2 L0.txt",
+        diagnostic=lambda stage, details: diagnostics.append((stage, details)),
     )
     assert calls["local"] == str(local)
     assert calls["remote"] == "data/Apple AirPods Pro 2 L0.txt"
+    assert [stage for stage, _details in diagnostics] == [
+        "connection_start",
+        "transport_created",
+        "authentication_succeeded",
+        "sftp_subsystem_opened",
+        "measurement_upload_start",
+        "measurement_upload_complete",
+    ]
+    assert all("password" not in details for _stage, details in diagnostics)

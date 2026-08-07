@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.console import ConsoleEvent, ConsoleEventStore
+from dms.console import ConsoleEvent, ConsoleEventStore, runtime_diagnostics
 from dms.ui.modern_button import ModernButton as QPushButton
 
 
@@ -87,6 +87,9 @@ class ConsoleWidget(QWidget):
         copy_btn = QPushButton("Copy")
         copy_btn.clicked.connect(self._copy)
         tools.addWidget(copy_btn)
+        info_btn = QPushButton("System Info")
+        info_btn.clicked.connect(self._system_info)
+        tools.addWidget(info_btn)
         save_btn = QPushButton("Save As…")
         save_btn.clicked.connect(self._save_as)
         tools.addWidget(save_btn)
@@ -168,6 +171,12 @@ class ConsoleWidget(QWidget):
             text = self._store.formatted(self.filtered_events())
         from PyQt6.QtWidgets import QApplication
         QApplication.clipboard().setText(text)
+
+    def _system_info(self) -> None:
+        details = runtime_diagnostics()
+        details["session_id"] = self._store.session_id
+        details["persistent_log"] = str(self._store.log_path or "disabled")
+        self._store.publish("INFO", "diagnostics", "System information", details)
 
     def _save_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

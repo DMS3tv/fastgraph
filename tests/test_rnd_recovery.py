@@ -10,7 +10,11 @@ from PyQt6.QtWidgets import QApplication
 
 import dms.rnd.persistence as persistence
 from dms.rnd.models import RnDGroup, RnDMeasurement, RnDSession
-from dms.rnd.persistence import load_rnd_session, save_rnd_session
+from dms.rnd.persistence import (
+    ensure_rnd_session_extension,
+    load_rnd_session,
+    save_rnd_session,
+)
 from dms.rnd.photos import RnDPhotoStore, attachment_directory
 from dms.rnd.recovery import RnDRecoveryManager
 
@@ -52,6 +56,23 @@ def _session(name: str = "One") -> RnDSession:
         smoothing_fraction=24,
         delta_mode_enabled=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("selected_name", "expected_name"),
+    [
+        ("prototype", "prototype.fastgraph-rnd.json"),
+        ("prototype.fastgraph-rnd", "prototype.fastgraph-rnd.json"),
+        ("prototype.json", "prototype.fastgraph-rnd.json"),
+        ("prototype.txt", "prototype.txt.fastgraph-rnd.json"),
+        ("prototype.FASTGRAPH-RND.JSON", "prototype.fastgraph-rnd.json"),
+    ],
+)
+def test_rnd_session_extension_is_complete(
+    selected_name: str,
+    expected_name: str,
+) -> None:
+    assert ensure_rnd_session_extension(Path(selected_name)).name == expected_name
 
 
 def test_atomic_session_save_round_trips_state_and_photos(tmp_path: Path) -> None:

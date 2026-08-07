@@ -14,6 +14,21 @@ from dms.rnd.models import RnDSession
 from dms.rnd.photos import RnDPhotoStore, attachment_directory, session_photos
 
 _MANAGED_JPEG = re.compile(r"^[0-9a-f]{32}\.jpg$", re.IGNORECASE)
+RND_SESSION_EXTENSION = ".fastgraph-rnd.json"
+
+
+def ensure_rnd_session_extension(path: Path) -> Path:
+    """Return a session path with the full canonical R&D extension."""
+    path = Path(path)
+    name = path.name
+    lower_name = name.lower()
+    if lower_name.endswith(RND_SESSION_EXTENSION):
+        return path.with_name(name[: -len(RND_SESSION_EXTENSION)] + RND_SESSION_EXTENSION)
+    if lower_name.endswith(".fastgraph-rnd"):
+        return path.with_name(name + ".json")
+    if lower_name.endswith(".json"):
+        return path.with_name(name[:-5] + RND_SESSION_EXTENSION)
+    return path.with_name(name + RND_SESSION_EXTENSION)
 
 
 def session_snapshot(

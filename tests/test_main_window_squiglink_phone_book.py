@@ -26,15 +26,17 @@ def _fake_self(mode: str):
     return SimpleNamespace(
         _session=SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L"),
         _ask_phone_book_fallback_mode=lambda _msg: mode,
+        _log_sftp_diagnostic=lambda *_args, **_kwargs: None,
+        _log_event=lambda *_args, **_kwargs: None,
     )
+
+
+def _fake_connection(**_kwargs):
+    return _FakeTransport(None), _FakeSFTP()
 
 
 def test_sync_remote_phone_book_missing_create_fresh(monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.paramiko.Transport", _FakeTransport)
-    monkeypatch.setattr(
-        "dms.ui.main_window.paramiko.SFTPClient.from_transport",
-        lambda _transport: _FakeSFTP(),
-    )
+    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
@@ -70,11 +72,7 @@ def test_sync_remote_phone_book_missing_create_fresh(monkeypatch) -> None:
 
 
 def test_sync_remote_phone_book_missing_skip(monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.paramiko.Transport", _FakeTransport)
-    monkeypatch.setattr(
-        "dms.ui.main_window.paramiko.SFTPClient.from_transport",
-        lambda _transport: _FakeSFTP(),
-    )
+    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
@@ -106,11 +104,7 @@ def test_sync_remote_phone_book_missing_skip(monkeypatch) -> None:
 
 
 def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.paramiko.Transport", _FakeTransport)
-    monkeypatch.setattr(
-        "dms.ui.main_window.paramiko.SFTPClient.from_transport",
-        lambda _transport: _FakeSFTP(),
-    )
+    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(ValueError("bad json")),

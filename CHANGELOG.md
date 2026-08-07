@@ -6,6 +6,7 @@
 
 - Local R&D crash recovery with two active generations, deferred bundles,
   attachment recovery, startup restore choices, and normal-close dirty checks.
+- Measure-to-R&D transfer for one average or a grouped set of kept Var curves.
 - A BRAND Measure batch that exports `RAW AVG`, `COMP AVG`, `RAW VAR`, and
   `COMP VAR` without changing the active graph state.
 - Six-column population HRTF support for P10, P25, median, P75, and P90
@@ -15,11 +16,16 @@
 
 ### Improved
 
+- Expanded the diagnostic console with a persistent rotating log, a system
+  report, compact exception chains, and detailed Squiglink SFTP stages. Secret
+  values remain redacted.
 - Replaced the Measure input bar with a smooth, token-based glow meter. Its
   display animation now softens rise and fall changes without increasing the
   audio sampling rate.
 - Improved compact R&D toolbar layout and the surface order for dark, light,
   and brand modes.
+- Replaced R&D list toggles with View 1 and View 2 checkboxes, preserved group
+  collapse state, and changed the initial workspace split to 50/50.
 - Kept the standard dark application backdrop in BRAND mode while retaining
   BRAND panel, control, graph, and viewport colors.
 - Added BRAND Curator poster layout, metadata controls, font checks, access
@@ -30,8 +36,8 @@
 - Manual R&D saves now use atomic JSON replacement and share the recovery
   persistence path.
 - Existing two-column HRTF files remain supported.
-- Standard mode keeps Squiglink upload. Its console and automation interfaces
-  are unchanged.
+- Standard mode keeps Squiglink upload and adds password-safe connection
+  diagnostics to its console.
 - Curator BRAND image exports keep the existing `#232323` canvas and brand
   colors.
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dms.console import ConsoleEventStore
+from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
 from dms.ui.main_window import MainWindow
 
 
@@ -29,6 +29,32 @@ def test_console_setting_validation() -> None:
     assert MainWindow._parse_console_setting("latency", "HIGH") == "high"
 
 
+def test_console_persistent_log_is_written_and_redacted(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "fastgraph-console.log"
+    store = ConsoleEventStore(log_path=log_path)
+    store.publish("ERROR", "upload", "failed", {"password": "private", "stage": "auth"})
+
+    text = log_path.read_text(encoding="utf-8")
+    assert store.session_id in text
+    assert "stage='auth'" in text
+    assert "private" not in text
+    assert "<redacted>" in text
+
+
+def test_runtime_and_exception_diagnostics_are_support_safe() -> None:
+    runtime = runtime_diagnostics()
+    assert runtime["python"]
+    assert runtime["packages"]["paramiko"]
+
+    try:
+        raise ValueError("sample failure")
+    except ValueError as exc:
+        details = exception_diagnostics(exc)
+    assert details["exception_type"].endswith("ValueError")
+    assert any("sample failure" in item for item in details["exception_chain"])
+    assert details["traceback"]
+
+
 def test_console_help_contains_review_and_export_commands() -> None:
     help_text = MainWindow._console_help()
     assert "measure pass" in help_text
@@ -36,4 +62,3 @@ def test_console_help_contains_review_and_export_commands() -> None:
     assert "export average" in help_text
     assert "export variation" in help_text
     assert "export squiglink" in help_text
-

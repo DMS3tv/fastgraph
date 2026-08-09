@@ -75,6 +75,9 @@ inside the recessed well.
 Use cyan light in standard FastGraph. Use orange light in Brand mode. Use red
 light for destructive actions. Disabled buttons have no glow or motion.
 
+The global Inputs button uses purple `#A970FF` in the standard dark theme. It
+uses the normal mode accent in the standard light and brand themes.
+
 ## Input Level Meter
 
 Use the shared visual tokens for the input meter in all modes. Draw the meter
@@ -96,6 +99,13 @@ line.
 Use rounded top corners and a small gap between tabs. The selected tab is one
 surface level above the others and has a 2 px accent edge. Use cyan in standard
 mode and orange in Brand mode.
+
+## Measure Layout
+
+Keep the queue bar directly above the top viewport. Keep the input level meter,
+Variation controls, and HRTF controls between the two viewports. Keep export
+controls below the bottom viewport. The queue bar can move its progress displays
+to a second row at narrow widths.
 
 ## brand
 

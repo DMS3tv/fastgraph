@@ -288,9 +288,6 @@ class GraphWidget(LockedPlotWidget):
             freqs, mag = _trim_series(curve.freqs, curve.mag_db, progress)
             if len(freqs) < 2:
                 return
-            glow = QColor(color)
-            glow.setAlpha(58)
-            self._items.append(self.plot(freqs, mag, pen=pg.mkPen(glow, width=7.0)))
             self._items.append(self.plot(freqs, mag, pen=pg.mkPen(color, width=2.0)))
             return
         if curve.kind != "variation":
@@ -319,11 +316,8 @@ class GraphWidget(LockedPlotWidget):
         lower25 = self.plot(freqs, p25, pen=pg.mkPen((0, 0, 0, 0)))
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         self.addItem(fill75)
-        glow = QColor(qcolor)
-        glow.setAlpha(58)
-        median_glow = self.plot(freqs, median_values, pen=pg.mkPen(glow, width=7.0))
         median = self.plot(freqs, median_values, pen=pg.mkPen(qcolor, width=2.2))
-        self._items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median_glow, median])
+        self._items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median])
 
 
 def _has_variation(curve: CurveData) -> bool:

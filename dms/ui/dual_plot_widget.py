@@ -153,6 +153,7 @@ class DualPlotWidget(QWidget):
         self._bot_frame = RoundedViewportFrame(self._bot_plot)
         layout.addWidget(self._top_frame, 1)
         layout.addWidget(self._bot_frame, 1)
+        self._header_widget: Optional[QWidget] = None
         self._between_plots_widget: Optional[QWidget] = None
         self._footer_widget: Optional[QWidget] = None
 
@@ -261,7 +262,17 @@ class DualPlotWidget(QWidget):
             self.layout().removeWidget(self._between_plots_widget)
             self._between_plots_widget.setParent(None)
         self._between_plots_widget = widget
-        self.layout().insertWidget(1, widget, 0)
+        top_index = self.layout().indexOf(self._top_frame)
+        self.layout().insertWidget(top_index + 1, widget, 0)
+
+    def set_header_widget(self, widget: QWidget) -> None:
+        """Insert application controls immediately above the top viewport."""
+        if self._header_widget is not None:
+            self.layout().removeWidget(self._header_widget)
+            self._header_widget.setParent(None)
+        self._header_widget = widget
+        top_index = self.layout().indexOf(self._top_frame)
+        self.layout().insertWidget(top_index, widget, 0)
 
     def set_footer_widget(self, widget: QWidget) -> None:
         """Insert application controls immediately below the bottom viewport."""

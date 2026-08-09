@@ -27,6 +27,7 @@ _DEFAULTS: dict[str, Any] = {
     "export_directory": "",
     "rnd_session_directory": "",
     "rnd_notes_expanded": True,
+    "rnd_splitter_ratio": 0.5,
     "automation_directory": "",
     "shortcut_bindings": dict(DEFAULT_SHORTCUT_BINDINGS),
     "hrtf_path": None,

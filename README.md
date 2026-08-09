@@ -10,9 +10,9 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
-Current beta version: `0.3.5`
+Current beta version: `0.4.0`
 
-## Unreleased Changes
+## What's New in 0.4.0
 
 Fastgraph now protects active R&D work with local crash recovery. It preserves
 session JSON and photo attachments after R&D changes without overwriting a
@@ -41,6 +41,14 @@ animation does not increase the audio sampling rate.
 brand mode keeps the standard dark application backdrop while its panels,
 controls, plots, and Curator view retain BRAND styling. Curator BRAND image
 exports keep their separate `#232323` canvas and brand colors.
+
+Curator previews and PNG exports now draw each frequency-response or variation
+median curve with one clean solid stroke. The Measure tab moves its queue
+controls into a responsive bar above the top graph. A shared **Inputs** button
+opens the device controls from every tab and keeps those controls read-only
+during a measurement. The standard dark theme gives Inputs a purple accent.
+The level meter, Variation, and HRTF controls remain between the Measure
+viewports.
 
 ## What's New in 0.3.5
 
@@ -210,6 +218,18 @@ organization, optional confidence-style variation bands, and additive dB
 offsets. Each measurement can choose its own HRTF from the shared HRTF library
 and can be shifted with its own dB offset. R&D sessions save processed
 measurement curves and workspace state to JSON; raw recordings are not saved.
+
+In brand mode, Curator includes a **Clean Slate** option. It disables all
+editable poster text and removes the header, guide box, and text footer from
+the BRAND PNG. The export keeps the graph and BRAND logo. It also keeps colored
+layer names when **Show Names** is enabled.
+
+The Curator **View** and **BRAND Poster Text** sections can be collapsed below
+the Data list. Curator preserves the layer-list and control-panel scroll
+positions when a layer setting changes.
+
+The R&D workspace starts with an equal list-to-viewport split at every window
+size. Moving the splitter saves the new ratio for later launches.
 
 R&D measurement, input-channel, HRTF, target, and bounds controls share a
 responsive toolbar above the plots. Session and export actions sit below the
@@ -463,11 +483,11 @@ GitHub Actions builds release packages for Apple Silicon macOS, Windows x64, and
 Linux x64. Update `dms/version.py` and `CHANGELOG.md`, push the release commit
 to `main`, then choose one of these release paths:
 
-- Push a tag such as `v0.3.5`; the workflow builds all three packages and
+- Push a tag such as `v0.4.0`; the workflow builds all three packages and
   publishes a GitHub release automatically.
 - In **Actions → Release builds → Run workflow**, choose the source ref, enable
   **Create or update a GitHub release**, and enter a release tag such as
-  `v0.3.5`. This creates the tag at the selected ref and publishes the release.
+  `v0.4.0`. This creates the tag at the selected ref and publishes the release.
 
 Leaving **Create or update a GitHub release** disabled runs a build-only job.
 Its downloadable artifacts are useful for testing before publishing. Release
@@ -503,8 +523,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.3.5",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.3.5",
-  "summary": "Adds Automation tab event builder"
+  "version": "0.4.0",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.4.0",
+  "summary": "Adds R&D recovery, BRAND exports, and the revised Measure interface"
 }
 ```

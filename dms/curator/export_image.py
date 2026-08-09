@@ -233,10 +233,6 @@ def _draw_curve_data(
 ) -> None:
     if curve.kind == "fr" and curve.mag_db is not None:
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        glow = QColor(color)
-        glow.setAlpha(58)
-        painter.setPen(QPen(glow, 10))
-        painter.drawPath(_curve_path(rect, curve.freqs, curve.mag_db, y_min, y_max))
         painter.setPen(QPen(color, 3))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(_curve_path(rect, curve.freqs, curve.mag_db, y_min, y_max))
@@ -261,10 +257,6 @@ def _draw_variation_band(
     _fill_between(painter, rect, curve.freqs, curve.p90_db, curve.p10_db, color, 50, y_min, y_max)
     _fill_between(painter, rect, curve.freqs, curve.p75_db, curve.p25_db, color, 85, y_min, y_max)
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    glow = QColor(color)
-    glow.setAlpha(58)
-    painter.setPen(QPen(glow, 10))
-    painter.drawPath(_curve_path(rect, curve.freqs, curve.median_db, y_min, y_max))
     painter.setPen(QPen(color, 3))
     painter.drawPath(_curve_path(rect, curve.freqs, curve.median_db, y_min, y_max))
 

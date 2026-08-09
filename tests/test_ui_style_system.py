@@ -84,6 +84,19 @@ def test_modern_button_roles_cover_semantic_actions() -> None:
     assert start_queue._has_persistent_outline() is True
 
 
+def test_modern_button_can_use_a_dark_mode_only_accent() -> None:
+    app = _app()
+    button = ModernButton("Inputs")
+    button.setProperty("darkAccentColor", "#A970FF")
+
+    app.setProperty("fastgraphVisualMode", "dark")
+    assert button._accent(button._tokens()).name().upper() == "#A970FF"
+    app.setProperty("fastgraphVisualMode", "light")
+    assert button._accent(button._tokens()).name().upper() == LIGHT_TOKENS.accent
+    app.setProperty("fastgraphVisualMode", "brand")
+    assert button._accent(button._tokens()).name().upper() == BRAND_TOKENS.accent
+
+
 def test_modern_button_hover_and_press_endpoints() -> None:
     app = _app()
     app.setProperty("fastgraphVisualMode", "dark")

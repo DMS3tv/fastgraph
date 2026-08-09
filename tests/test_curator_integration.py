@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 from PyQt6.QtTest import QTest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import QApplication, QGroupBox, QToolButton
 
 import dms.settings_manager as settings_module
@@ -15,7 +15,7 @@ from dms.hrtf import HRTFCurve
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
-from dms.ui.main_window import MainWindow
+from dms.ui.main_window import AppState, MainWindow
 
 
 @pytest.fixture(scope="module")
@@ -50,6 +50,14 @@ def test_measure_controls_are_embedded_around_plots(qapp, monkeypatch, tmp_path:
 
     assert window._plots._between_plots_widget.objectName() == "measure_interplot_controls"
     assert window._plots._footer_widget.objectName() == "measure_export_controls"
+    plot_layout = window._plots.layout()
+    assert [plot_layout.itemAt(index).widget() for index in range(plot_layout.count())] == [
+        window._plots._header_widget,
+        window._plots._top_frame,
+        window._plots._between_plots_widget,
+        window._plots._bot_frame,
+        window._plots._footer_widget,
+    ]
     assert window._clear_btn.objectName() == "btn_danger"
     assert window._level_meter.parent() is window._plots._between_plots_widget
     assert window._export_dir_input.parent() is window._plots._footer_widget
@@ -75,7 +83,9 @@ def test_session_and_bluetooth_controls_precede_tabs(
     assert window._clear_metadata_btn.parent() is header
     assert window._clear_metadata_btn.objectName() == "btn_danger"
     assert window._bluetooth_mode_toggle.parent() is header
-    assert window._session_summary_label.text() == "DMS Demo · Test Rig"
+    assert window._inputs_btn.parent() is header
+    assert window._inputs_btn.text() == "Inputs"
+    assert window._inputs_btn.property("emphasized") is True
     assert window._metadata_btn.geometry().bottom() <= header.rect().bottom()
     assert window._clear_metadata_btn.geometry().bottom() <= header.rect().bottom()
 
@@ -87,6 +97,95 @@ def test_session_and_bluetooth_controls_precede_tabs(
     window._tabs.setCurrentWidget(window._console_widget)
     qapp.processEvents()
     assert header.isVisible()
+    window.close()
+
+
+def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    measure = window._tabs.widget(0)
+
+    assert measure.layout().count() == 1
+    assert window._plots._header_widget.objectName() == "measure_queue_bar"
+    assert window._queue_primary_layout.itemAt(0).widget() is window._start_queue_btn
+    assert window._start_queue_btn.text() == "Measure"
+    assert not hasattr(window, "_queue_hint_label")
+
+    window._set_queue_bar_compact(False)
+    assert window._queue_progress_bar.parent() is window._queue_primary_widget
+    assert not window._queue_progress_widget.isVisible()
+
+    window._set_queue_bar_compact(True)
+    assert window._queue_progress_bar.parent() is window._queue_progress_widget
+    window.close()
+
+
+def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    window._open_inputs_overlay()
+    window._inputs_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+    assert window._inputs_overlay.isVisible()
+    assert window._inputs_overlay.height() > 0
+    assert window._inputs_overlay.parent() is window._tabs
+    assert window._inputs_overlay.geometry().right() <= window._tabs.rect().right()
+    assert window._inputs_overlay.geometry().bottom() <= window._tabs.rect().bottom()
+    assert window._inputs_btn.role() == "primary"
+    assert window._inputs_btn._has_persistent_outline()
+
+    window._state = AppState.QUEUE_RUNNING
+    window._apply_state_ui()
+    assert window._inputs_btn.isEnabled()
+    assert not window._out_dev_combo.isEnabled()
+    assert not window._in_dev_combo.isEnabled()
+    assert not window._ch_combo.isEnabled()
+    assert not window._refresh_devices_btn.isEnabled()
+
+    QTest.keyClick(window, Qt.Key.Key_Escape)
+    window._inputs_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+    assert not window._inputs_overlay.isVisible()
+    window.close()
+
+
+def test_inputs_overlay_closes_after_an_outside_click(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    window._open_inputs_overlay()
+    window._inputs_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+
+    QTest.mouseClick(
+        window._plots._bot_plot.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=QPoint(8, 8),
+    )
+    window._inputs_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+
+    assert not window._inputs_overlay.isVisible()
+    window.close()
+
+
+def test_inputs_overlay_closes_on_tab_change(qapp, monkeypatch, tmp_path: Path) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.show()
+    window._open_inputs_overlay()
+    window._inputs_overlay_animation.setCurrentTime(180)
+    window._tabs.setCurrentWidget(window._rnd_widget)
+    window._inputs_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+    assert not window._inputs_overlay.isVisible()
     window.close()
 
 
@@ -148,15 +247,13 @@ def test_settings_column_is_compact_and_left_aligned(
     window.close()
 
 
-def test_header_summary_refreshes_when_metadata_is_cleared(
+def test_window_title_refreshes_when_metadata_is_cleared(
     qapp, monkeypatch, tmp_path: Path
 ) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
     monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (True, False))
     window._clear_metadata()
 
-    assert window._session_summary_label.text() == "Unknown Unknown · Unknown Rig"
-    assert "Headphone: Unknown Unknown" in window._session_summary_label.toolTip()
     assert "Unknown Unknown @ Unknown Rig" in window.windowTitle()
     window.close()
 

@@ -22,7 +22,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -338,7 +340,7 @@ class CuratorWidget(QWidget):
             )
         self._graph.apply_theme(theme, brand_mode=self._brand_mode)
         self._export_btn.setText("Export 4K PNG..." if self._brand_mode else "Export 1080p PNG...")
-        self._brand_poster_box.setVisible(self._brand_mode)
+        self._brand_poster_section.setVisible(self._brand_mode)
         self._graph_stage.set_brand_mode(self._brand_mode)
         if self._brand_mode:
             self._apply_auto_export_text()
@@ -624,6 +626,7 @@ class CuratorWidget(QWidget):
         controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         controls_scroll.setMinimumWidth(410)
         controls_scroll.setWidget(self._build_panel())
+        self._controls_scroll = controls_scroll
         splitter.addWidget(controls_scroll)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -704,7 +707,11 @@ class CuratorWidget(QWidget):
         self._export_btn.setObjectName("exportButton")
         self._export_btn.clicked.connect(self._choose_export_path)
         view_form.addRow("Export", self._export_btn)
-        layout.addWidget(view_box, 0)
+        self._view_section, self._view_section_toggle = self._make_collapsible_section(
+            "View",
+            view_box,
+        )
+        layout.addWidget(self._view_section, 0)
 
         self._brand_poster_box = QGroupBox("BRAND Poster Text")
         self._brand_poster_box.setObjectName("brandPosterBox")
@@ -732,6 +739,16 @@ class CuratorWidget(QWidget):
         self._brand_fill_metadata_btn = QPushButton("Fill from Metadata")
         self._brand_fill_metadata_btn.clicked.connect(self._fill_from_metadata)
         brand_form.addRow("Automatic text", self._brand_fill_metadata_btn)
+
+        self._brand_clean_slate_enabled = ToggleSwitch()
+        self._brand_clean_slate_enabled.stateChanged.connect(
+            self._on_brand_clean_slate_changed
+        )
+        self._brand_clean_slate_enabled.setToolTip(
+            "Hide all BRAND poster text and guide boxes. Keep the graph, BRAND logo, "
+            "and optional layer names."
+        )
+        brand_form.addRow("Clean Slate", self._brand_clean_slate_enabled)
 
         self._brand_metadata_status = QLabel("Field status: All fields are automatic.")
         self._brand_metadata_status.setObjectName("brandMetadataStatus")
@@ -773,9 +790,45 @@ class CuratorWidget(QWidget):
         brand_form.addRow("Footer line 2", self._brand_footer2_edit)
         brand_form.addRow("Legend: bounds", self._brand_legend_bounds_edit)
         brand_form.addRow("Legend: variation", self._brand_legend_variation_edit)
-        self._brand_poster_box.setVisible(False)
-        layout.addWidget(self._brand_poster_box, 0)
+        self._brand_poster_section, self._brand_poster_section_toggle = (
+            self._make_collapsible_section("BRAND Poster Text", self._brand_poster_box)
+        )
+        self._brand_poster_section.setVisible(False)
+        layout.addWidget(self._brand_poster_section, 0)
         return panel
+
+    def _make_collapsible_section(
+        self,
+        title: str,
+        content: QWidget,
+    ) -> tuple[QWidget, QToolButton]:
+        content.setTitle("")
+        section = QWidget()
+        section.setProperty("layoutRole", "transparent")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(6)
+
+        toggle = QToolButton()
+        toggle.setObjectName("section_toggle")
+        toggle.setText(title)
+        toggle.setCheckable(True)
+        toggle.setChecked(True)
+        toggle.setArrowType(Qt.ArrowType.DownArrow)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        def on_toggle(expanded: bool) -> None:
+            toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+            )
+            content.setVisible(expanded)
+
+        toggle.toggled.connect(on_toggle)
+        section_layout.addWidget(toggle)
+        section_layout.addWidget(content)
+        return section, toggle
 
     def _configure_export_fields(self) -> None:
         self._export_field_widgets: dict[str, QLineEdit] = {
@@ -928,6 +981,17 @@ class CuratorWidget(QWidget):
         self._graph_stage.refresh_preview()
 
     def _sync_ui(self) -> None:
+        layer_scroll = self._layer_list.verticalScrollBar().value()
+        panel_scroll = (
+            self._controls_scroll.verticalScrollBar().value()
+            if hasattr(self, "_controls_scroll")
+            else 0
+        )
+        selected_ids = {
+            item.data(256)
+            for item in self._layer_list.selectedItems()
+            if item.data(256)
+        }
         self._layer_list.blockSignals(True)
         self._layer_list.clear()
         selected_row = -1
@@ -946,6 +1010,7 @@ class CuratorWidget(QWidget):
             item.setSizeHint(row.sizeHint())
             self._layer_list.addItem(item)
             self._layer_list.setItemWidget(item, row)
+            item.setSelected(layer.id in selected_ids)
             if layer.id == self._selected_layer_id:
                 selected_row = index
         if selected_row >= 0:
@@ -969,8 +1034,28 @@ class CuratorWidget(QWidget):
         self._show_names_enabled.blockSignals(True)
         self._show_names_enabled.setChecked(self._state.show_layer_names)
         self._show_names_enabled.blockSignals(False)
+        self._brand_clean_slate_enabled.blockSignals(True)
+        self._brand_clean_slate_enabled.setChecked(self._state.brand_clean_slate)
+        self._brand_clean_slate_enabled.blockSignals(False)
+        self._sync_brand_text_controls()
         self._sync_combine_button()
         self._refresh_metadata_source_combo()
+        self._restore_curator_scroll_positions(layer_scroll, panel_scroll)
+
+    def _restore_curator_scroll_positions(
+        self,
+        layer_scroll: int,
+        panel_scroll: int,
+    ) -> None:
+        def restore() -> None:
+            try:
+                self._layer_list.verticalScrollBar().setValue(layer_scroll)
+                self._controls_scroll.verticalScrollBar().setValue(panel_scroll)
+            except RuntimeError:
+                return
+
+        restore()
+        QTimer.singleShot(0, restore)
 
     def _sync_bounds_controls(self) -> None:
         self._bounds_enabled.blockSignals(True)
@@ -1320,6 +1405,19 @@ class CuratorWidget(QWidget):
         self._state.show_layer_names = self._show_names_enabled.isChecked()
         self._redraw()
         self._log("INFO", "Layer names changed", visible=self._state.show_layer_names)
+
+    def _on_brand_clean_slate_changed(self, _state: int) -> None:
+        self._state.brand_clean_slate = self._brand_clean_slate_enabled.isChecked()
+        self._sync_brand_text_controls()
+        self._redraw()
+        self._log("INFO", "BRAND clean slate changed", enabled=self._state.brand_clean_slate)
+
+    def _sync_brand_text_controls(self) -> None:
+        enabled = not self._state.brand_clean_slate
+        for editor in self._export_field_widgets.values():
+            editor.setEnabled(enabled)
+        self._brand_metadata_source_combo.setEnabled(enabled and bool(self._state.layers))
+        self._brand_fill_metadata_btn.setEnabled(enabled)
 
     def _reset_view(self) -> None:
         self._state.aspect_locked_25db = True

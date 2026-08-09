@@ -1,5 +1,4 @@
 from PyQt6.QtCore import Qt
-from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from dms.ui.level_meter import LevelMeterWidget
@@ -54,13 +53,15 @@ def test_level_meter_interpolates_samples_and_fades_smoothly() -> None:
     meter.show()
     app.processEvents()
     meter.set_level(-6.0)
-    QTest.qWait(meter._RISE_MS + 30)
+    meter._level_animation.setCurrentTime(meter._RISE_MS // 2)
+    assert -60.0 < meter._display_db < -6.0
+    meter._level_animation.setCurrentTime(meter._RISE_MS)
     assert abs(meter._display_db - (-6.0)) < 0.2
 
     meter.set_level(-60.0)
-    QTest.qWait(40)
+    meter._level_animation.setCurrentTime(40)
     assert -60.0 < meter._display_db < -6.0
-    QTest.qWait(meter._FALL_MS + 30)
+    meter._level_animation.setCurrentTime(meter._FALL_MS)
     assert abs(meter._display_db - (-60.0)) < 0.2
     assert not hasattr(meter, "_peak_db")
 
@@ -72,6 +73,6 @@ def test_level_meter_clamps_level_and_renders_vertically() -> None:
     meter.resize(32, 180)
     meter.set_level(-0.2)
     assert meter._level_db == -0.2
-    QTest.qWait(meter._RISE_MS + 30)
+    meter._level_animation.setCurrentTime(meter._RISE_MS)
     assert "dBFS" in meter.toolTip()
     assert not meter.grab().toImage().isNull()

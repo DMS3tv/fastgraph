@@ -1,10 +1,15 @@
 from pathlib import Path
 
+import numpy as np
+import pyqtgraph as pg
 import pytest
-from PyQt6.QtGui import QImage
+from PyQt6.QtCore import QRectF
+from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox, QPushButton, QWidget
 
 from dms.curator.export_image import ACCENT_COLOR, FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS, export_graph_image, fit_title
+import dms.curator.export_image as export_image_module
+from dms.curator.models import CurveData
 from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 import dms.ui.curator_widget as main_window_module
 from dms.ui.curator_widget import CuratorWidget
@@ -38,6 +43,22 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, 
     assert view_box.state["mouseEnabled"] == [False, False]
     assert window._graph_frame.ratio == 16.0 / 9.0
     assert window._graph_stage._rounded_graph.radius == 10
+
+
+def test_curator_preview_curves_have_no_glow_items(qapp) -> None:
+    window = CuratorWidget(ConsoleEventStore())
+    fr = CurveData(
+        kind="fr",
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([1.0, 0.0]),
+    )
+    window.add_curve(fr, "FR", animate=False)
+    window._redraw()
+
+    curves = [item for item in window._graph._items if isinstance(item, pg.PlotDataItem)]
+    assert len(curves) == 1
+    assert curves[0].opts["pen"].widthF() == pytest.approx(2.0)
+    window.close()
     assert not hasattr(window, "_visible_check")
     assert not hasattr(window._graph, "_draw_reference_lines")
     assert window.graph_state.aspect_locked_25db is True
@@ -45,6 +66,46 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, 
     window.set_y_limits(-30.0, 10.0)
     assert window.graph_state.y_min == -30.0
     assert window.graph_state.y_max == 10.0
+
+
+class _PenRecorder:
+    def __init__(self) -> None:
+        self.widths: list[float] = []
+
+    def setBrush(self, _brush) -> None:
+        pass
+
+    def setPen(self, pen) -> None:
+        if hasattr(pen, "widthF"):
+            self.widths.append(pen.widthF())
+
+    def drawPath(self, _path) -> None:
+        pass
+
+
+def test_standard_export_curve_uses_only_solid_stroke(monkeypatch) -> None:
+    painter = _PenRecorder()
+    curve = CurveData(
+        kind="variation",
+        freqs=np.array([100.0, 1000.0]),
+        p10_db=np.array([-2.0, -1.0]),
+        p25_db=np.array([-1.0, 0.0]),
+        median_db=np.array([0.0, 1.0]),
+        p75_db=np.array([1.0, 2.0]),
+        p90_db=np.array([2.0, 3.0]),
+    )
+    monkeypatch.setattr(export_image_module, "_fill_between", lambda *_args, **_kwargs: None)
+
+    export_image_module._draw_curve_data(
+        painter,
+        QRectF(0.0, 0.0, 100.0, 100.0),
+        curve,
+        QColor("#6E6E6E"),
+        -10.0,
+        10.0,
+    )
+
+    assert painter.widths == [pytest.approx(3.0)]
 
 
 def test_layer_row_checkbox_toggles_visibility(qapp, tmp_path: Path) -> None:
@@ -68,7 +129,7 @@ def test_data_rows_expose_inline_layer_controls(qapp, tmp_path: Path) -> None:
 
     group_titles = {box.title() for box in window.findChildren(QGroupBox)}
     assert "Data" in group_titles
-    assert "View" in group_titles
+    assert window._view_section_toggle.text() == "View"
     assert "Selected Layer" not in group_titles
     assert "Preference Bounds" not in group_titles
     assert "Export Text" not in group_titles
@@ -251,7 +312,7 @@ def test_curator_uses_right_sidebar_and_drop_import(qapp, tmp_path: Path, monkey
     assert len(window.graph_state.layers) == 1
     assert warnings and "unsupported file type" in warnings[0]
     assert window._data_box.parent() is window.findChild(QWidget, "controlPanel")
-    assert window._view_box.parent() is window.findChild(QWidget, "controlPanel")
+    assert window._view_section.parent() is window.findChild(QWidget, "controlPanel")
 
 
 def test_export_title_shrinks_then_elides(qapp) -> None:

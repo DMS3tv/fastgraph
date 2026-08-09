@@ -14,7 +14,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl
+from PyQt6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QRect, QThread, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -754,6 +754,21 @@ class SquiglinkUploadMetadataDialog(QDialog):
         return self._channel_side.currentText().strip().upper()
 
 
+class _ResponsiveQueueBar(QWidget):
+    compact_changed = pyqtSignal(bool)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._compact: bool | None = None
+
+    def resizeEvent(self, event) -> None:
+        compact = event.size().width() < 1250
+        if compact != self._compact:
+            self._compact = compact
+            self.compact_changed.emit(compact)
+        super().resizeEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -875,6 +890,7 @@ class MainWindow(QMainWindow):
             self._build_tab_header(),
             Qt.Corner.TopLeftCorner,
         )
+        self._build_inputs_overlay()
 
         central = QWidget()
         self._tabs.addTab(central, "Measure")
@@ -885,24 +901,15 @@ class MainWindow(QMainWindow):
 
         self._plots = DualPlotWidget()
         self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
+        self._plots.set_header_widget(self._build_measure_queue_bar())
         self._plots.set_between_plots_widget(self._build_measure_plot_controls())
         self._plots.set_footer_widget(self._build_export_controls())
         root.addWidget(self._plots, 1)
 
-        controls_scroll = QScrollArea()
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        controls_scroll.setMinimumWidth(340)
-        controls_scroll.setMaximumWidth(380)
-        controls_scroll.setWidget(self._build_control_panel())
-        root.addWidget(controls_scroll, 0)
-
         self._rnd_widget = RnDWidget(
             parent=self,
             notes_expanded=bool(self._settings.get("rnd_notes_expanded")),
+            splitter_ratio=float(self._settings.get("rnd_splitter_ratio") or 0.5),
         )
         self._rnd_widget.measure_requested.connect(self._start_rnd_measurement)
         self._rnd_widget.cancel_requested.connect(self._cancel_rnd_measurement)
@@ -913,6 +920,9 @@ class MainWindow(QMainWindow):
         self._rnd_widget.input_channel_changed.connect(self._on_rnd_input_channel_changed)
         self._rnd_widget.notes_expanded_changed.connect(
             lambda expanded: self._settings.set("rnd_notes_expanded", bool(expanded))
+        )
+        self._rnd_widget.splitter_ratio_changed.connect(
+            lambda ratio: self._settings.set("rnd_splitter_ratio", float(ratio))
         )
         self._tabs.addTab(self._rnd_widget, "R&&D")
 
@@ -978,8 +988,94 @@ class MainWindow(QMainWindow):
         self._theme_controller.set_theme(DARK if dark else LIGHT)
 
     def _on_tab_changed(self, _index: int) -> None:
+        self._close_inputs_overlay()
         if self._tabs.currentWidget() is self._settings_scroll:
             self._settings_widget.refresh_from_settings()
+
+    def _toggle_inputs_overlay(self) -> None:
+        if self._inputs_overlay_open:
+            self._close_inputs_overlay()
+        else:
+            self._open_inputs_overlay()
+
+    def _open_inputs_overlay(self) -> None:
+        self._inputs_overlay_open = True
+        target = self._inputs_overlay_geometry(
+            max(1, self._inputs_overlay.sizeHint().height())
+        )
+        start = QRect(target.x(), target.y(), target.width(), 0)
+        self._inputs_overlay.setGeometry(start)
+        self._inputs_overlay.show()
+        self._inputs_overlay.raise_()
+        self._inputs_overlay_animation.stop()
+        self._inputs_overlay_animation.setStartValue(start)
+        self._inputs_overlay_animation.setEndValue(target)
+        self._inputs_overlay_animation.start()
+
+    def _close_inputs_overlay(self) -> None:
+        if not getattr(self, "_inputs_overlay_open", False):
+            return
+        self._inputs_overlay_open = False
+        self._inputs_overlay_animation.stop()
+        start = self._inputs_overlay.geometry()
+        self._inputs_overlay_animation.setStartValue(start)
+        self._inputs_overlay_animation.setEndValue(
+            QRect(start.x(), start.y(), start.width(), 0)
+        )
+        self._inputs_overlay_animation.start()
+
+    def _on_inputs_overlay_animation_finished(self) -> None:
+        if not self._inputs_overlay_open:
+            self._inputs_overlay.hide()
+
+    def _position_inputs_overlay(self) -> None:
+        if not hasattr(self, "_inputs_overlay"):
+            return
+        self._inputs_overlay.setGeometry(
+            self._inputs_overlay_geometry(self._inputs_overlay.height())
+        )
+        self._inputs_overlay.raise_()
+
+    def _inputs_overlay_geometry(self, height: int) -> QRect:
+        anchor = self._inputs_btn.mapTo(
+            self._tabs,
+            self._inputs_btn.rect().bottomLeft(),
+        )
+        width = min(520, max(360, self._tabs.width() - 16))
+        x = min(max(8, anchor.x()), max(8, self._tabs.width() - width - 8))
+        y = anchor.y() + 6
+        available_height = max(0, self._tabs.height() - y - 8)
+        return QRect(x, y, width, min(max(0, int(height)), available_height))
+
+    @staticmethod
+    def _global_point_inside(widget: QWidget, global_point) -> bool:
+        return widget.rect().contains(widget.mapFromGlobal(global_point))
+
+    def eventFilter(self, watched, event) -> bool:
+        if getattr(self, "_inputs_overlay_open", False):
+            if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+                self._close_inputs_overlay()
+                return True
+            if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "globalPosition"):
+                point = event.globalPosition().toPoint()
+                if not self._global_point_inside(
+                    self._inputs_overlay,
+                    point,
+                ) and not self._global_point_inside(self._inputs_btn, point):
+                    self._close_inputs_overlay()
+            if watched is self and event.type() == QEvent.Type.WindowDeactivate:
+                self._close_inputs_overlay()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_inputs_overlay"):
+            self._position_inputs_overlay()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if hasattr(self, "_inputs_overlay"):
+            self._position_inputs_overlay()
 
     def _on_settings_tab_changed(self, key: str, _value: object) -> None:
         if key in {"sample_rate", "buffer_size", "latency"}:
@@ -1077,11 +1173,14 @@ class MainWindow(QMainWindow):
         row.setSpacing(6)
         row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
 
-        self._session_summary_label = QLabel()
-        self._session_summary_label.setObjectName("tab_session_summary")
-        self._session_summary_label.setFixedWidth(180)
-        self._session_summary_label.setProperty("tone", "muted")
-        row.addWidget(self._session_summary_label)
+        self._inputs_btn = QPushButton("Inputs")
+        self._inputs_btn.setObjectName("btn_inputs")
+        self._inputs_btn.setRole("primary")
+        self._inputs_btn.setProperty("emphasized", True)
+        self._inputs_btn.setProperty("darkAccentColor", "#A970FF")
+        self._inputs_btn.setFixedHeight(30)
+        self._inputs_btn.clicked.connect(self._toggle_inputs_overlay)
+        row.addWidget(self._inputs_btn)
 
         self._metadata_btn = QPushButton("Headphone Metadata…")
         self._metadata_btn.setObjectName("btn_metadata")
@@ -1887,37 +1986,36 @@ class MainWindow(QMainWindow):
         row.addWidget(self._upload_btn)
         return row_widget
 
-    def _build_control_panel(self) -> QWidget:
-        panel = QWidget()
-        panel.setObjectName("controlPanel")
-        panel.setProperty("surfaceLevel", "panel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+    def _build_inputs_overlay(self) -> None:
+        overlay = QFrame(self._tabs)
+        overlay.setObjectName("inputs_overlay")
+        overlay.setProperty("surfaceLevel", "raised")
+        overlay.setMinimumWidth(430)
+        overlay.hide()
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
 
-        dev_box = QGroupBox("Devices")
-        dev_layout = QVBoxLayout(dev_box)
-
-        dev_layout.addWidget(QLabel("Output Device:"))
+        layout.addWidget(QLabel("Output Device"))
         self._out_dev_combo = QComboBox()
         self._out_dev_combo.currentIndexChanged.connect(
             self._on_output_device_changed
         )
-        dev_layout.addWidget(self._out_dev_combo)
+        layout.addWidget(self._out_dev_combo)
 
-        dev_layout.addWidget(QLabel("Input Device:"))
+        layout.addWidget(QLabel("Input Device"))
         self._in_dev_combo = QComboBox()
         self._in_dev_combo.currentIndexChanged.connect(self._on_input_device_changed)
-        dev_layout.addWidget(self._in_dev_combo)
+        layout.addWidget(self._in_dev_combo)
 
-        dev_layout.addWidget(QLabel("Input Channel:"))
+        layout.addWidget(QLabel("Input Channel"))
         self._ch_combo = QComboBox()
         self._ch_combo.currentIndexChanged.connect(self._on_channel_changed)
-        dev_layout.addWidget(self._ch_combo)
+        layout.addWidget(self._ch_combo)
 
         self._active_ch_label = QLabel("Active input channel: —")
         self._active_ch_label.setObjectName("label_channel_active")
-        dev_layout.addWidget(self._active_ch_label)
+        layout.addWidget(self._active_ch_label)
 
         self._advanced_windows_drivers_toggle = ToggleSwitch("Advanced Windows Drivers")
         self._advanced_windows_drivers_toggle.setChecked(
@@ -1927,34 +2025,69 @@ class MainWindow(QMainWindow):
         self._advanced_windows_drivers_toggle.stateChanged.connect(
             self._on_advanced_windows_drivers_changed
         )
-        dev_layout.addWidget(self._advanced_windows_drivers_toggle)
+        layout.addWidget(self._advanced_windows_drivers_toggle)
 
         self._refresh_devices_btn = QPushButton("Refresh Devices")
         self._refresh_devices_btn.clicked.connect(self._manual_refresh_devices)
-        dev_layout.addWidget(self._refresh_devices_btn)
+        layout.addWidget(self._refresh_devices_btn)
 
-        layout.addWidget(self._make_collapsible_section("Devices", dev_box))
+        self._inputs_overlay = overlay
+        self._inputs_overlay_open = False
+        self._inputs_overlay_animation = QPropertyAnimation(
+            overlay,
+            b"geometry",
+            self,
+        )
+        self._inputs_overlay_animation.setDuration(180)
+        self._inputs_overlay_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._inputs_overlay_animation.finished.connect(self._on_inputs_overlay_animation_finished)
+        QApplication.instance().installEventFilter(self)
 
-        queue_box = QGroupBox("Queue")
-        queue_layout = QVBoxLayout(queue_box)
+    def _build_measure_queue_bar(self) -> QWidget:
+        bar = _ResponsiveQueueBar()
+        bar.setObjectName("measure_queue_bar")
+        bar.setProperty("surfaceLevel", "raised")
+        outer = QVBoxLayout(bar)
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(4)
 
-        n_layout = QHBoxLayout()
-        n_label = QLabel("Number of measurements:")
+        primary_widget = QWidget()
+        primary_widget.setProperty("layoutRole", "transparent")
+        primary = QHBoxLayout(primary_widget)
+        primary.setContentsMargins(0, 0, 0, 0)
+        primary.setSpacing(8)
+        progress_widget = QWidget()
+        progress_widget.setProperty("layoutRole", "transparent")
+        progress = QHBoxLayout(progress_widget)
+        progress.setContentsMargins(0, 0, 0, 0)
+        progress.setSpacing(8)
+        outer.addWidget(primary_widget)
+        outer.addWidget(progress_widget)
+
+        self._start_queue_btn = QPushButton("Measure")
+        self._start_queue_btn.setObjectName("btn_start")
+        self._start_queue_btn.clicked.connect(self._start_queue)
+        primary.addWidget(self._start_queue_btn)
+
+        self._cancel_queue_btn = QPushButton("Cancel Queue")
+        self._cancel_queue_btn.setObjectName("btn_cancel")
+        self._cancel_queue_btn.clicked.connect(self._cancel_queue)
+        primary.addWidget(self._cancel_queue_btn)
+
+        n_label = QLabel("Count")
         n_label.setProperty("tone", "accent")
-        n_layout.addWidget(n_label)
+        primary.addWidget(n_label)
         self._queue_n_spin = QSpinBox()
         self._queue_n_spin.setObjectName("queue_count_spin")
         self._queue_n_spin.setRange(1, 100)
         self._queue_n_spin.setValue(int(self._settings.get("queue_count") or 5))
         self._queue_n_spin.setFixedWidth(110)
         self._queue_n_spin.valueChanged.connect(self._on_queue_count_changed)
-        n_layout.addWidget(self._queue_n_spin)
-        queue_layout.addLayout(n_layout)
+        primary.addWidget(self._queue_n_spin)
 
-        level_layout = QHBoxLayout()
-        level_label = QLabel("Output level:")
+        level_label = QLabel("Output")
         level_label.setProperty("tone", "accent")
-        level_layout.addWidget(level_label)
+        primary.addWidget(level_label)
         self._queue_level_spin = QDoubleSpinBox()
         self._queue_level_spin.setRange(-120.0, 0.0)
         self._queue_level_spin.setSingleStep(0.5)
@@ -1967,67 +2100,75 @@ class MainWindow(QMainWindow):
             initial_output_level = -6.0
         self._queue_level_spin.setValue(max(-120.0, min(0.0, initial_output_level)))
         self._queue_level_spin.valueChanged.connect(self._on_queue_level_changed)
-        level_layout.addWidget(self._queue_level_spin)
+        primary.addWidget(self._queue_level_spin)
         self._queue_level_persist_toggle = ToggleSwitch("")
         self._queue_level_persist_toggle.setChecked(persist_output_level)
         self._queue_level_persist_toggle.stateChanged.connect(
             self._on_queue_level_persist_changed
         )
-        persist_layout = QHBoxLayout()
-        persist_layout.setContentsMargins(0, 0, 0, 0)
-        persist_layout.setSpacing(8)
-        persist_layout.addWidget(
+        primary.addWidget(
             self._queue_level_persist_toggle,
             0,
             Qt.AlignmentFlag.AlignVCenter,
         )
-        self._queue_level_persist_label = QLabel("Remember this level")
-        self._queue_level_persist_label.setMinimumWidth(145)
+        self._queue_level_persist_label = QLabel("Remember")
         self._queue_level_persist_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
-        persist_layout.addWidget(self._queue_level_persist_label)
-        level_layout.addStretch(1)
-        queue_layout.addLayout(level_layout)
-        persist_layout.addStretch(1)
-        queue_layout.addLayout(persist_layout)
+        primary.addWidget(self._queue_level_persist_label)
+        primary.addStretch(1)
 
         self._queue_progress_label = QLabel("Kept: 0")
-        queue_layout.addWidget(self._queue_progress_label)
+        progress.addWidget(self._queue_progress_label)
 
         self._queue_progress_bar = QProgressBar()
         self._queue_progress_bar.setRange(0, 1)
         self._queue_progress_bar.setValue(0)
-        queue_layout.addWidget(self._queue_progress_bar)
+        self._queue_progress_bar.setMinimumWidth(120)
+        progress.addWidget(self._queue_progress_bar, 1)
 
-        btn_row = QHBoxLayout()
-        self._start_queue_btn = QPushButton("Start Queue")
-        self._start_queue_btn.setObjectName("btn_start")
-        self._start_queue_btn.clicked.connect(self._start_queue)
-        btn_row.addWidget(self._start_queue_btn)
-
-        self._cancel_queue_btn = QPushButton("Cancel Queue")
-        self._cancel_queue_btn.setObjectName("btn_cancel")
-        self._cancel_queue_btn.clicked.connect(self._cancel_queue)
-        btn_row.addWidget(self._cancel_queue_btn)
-        queue_layout.addLayout(btn_row)
-
+        sweep_label = QLabel("Sweep")
+        self._queue_sweep_label = sweep_label
+        progress.addWidget(sweep_label)
         self._sweep_progress = QProgressBar()
         self._sweep_progress.setRange(0, 100)
         self._sweep_progress.setValue(0)
-        queue_layout.addWidget(self._sweep_progress)
+        self._sweep_progress.setMinimumWidth(120)
+        progress.addWidget(self._sweep_progress, 1)
 
-        self._queue_hint_label = QLabel(
-            "After each sweep, pass/fail opens in a review popup."
+        self._queue_primary_widget = primary_widget
+        self._queue_primary_layout = primary
+        self._queue_progress_widget = progress_widget
+        self._queue_progress_layout = progress
+        bar.compact_changed.connect(self._set_queue_bar_compact)
+        self._queue_bar_compact = True
+        self._set_queue_bar_compact(True)
+        return bar
+
+    def _set_queue_bar_compact(self, compact: bool) -> None:
+        self._queue_bar_compact = bool(compact)
+        widgets = (
+            self._queue_progress_label,
+            self._queue_progress_bar,
+            self._queue_sweep_label,
+            self._sweep_progress,
         )
-        self._queue_hint_label.setWordWrap(True)
-        self._queue_hint_label.setProperty("tone", "muted")
-        queue_layout.addWidget(self._queue_hint_label)
-
-        layout.addWidget(self._make_collapsible_section("Queue", queue_box))
-
-        layout.addStretch(1)
-        return panel
+        if compact:
+            for widget in widgets:
+                self._queue_primary_layout.removeWidget(widget)
+            self._queue_progress_layout.addWidget(self._queue_progress_label)
+            self._queue_progress_layout.addWidget(self._queue_progress_bar, 1)
+            self._queue_progress_layout.addWidget(self._queue_sweep_label)
+            self._queue_progress_layout.addWidget(self._sweep_progress, 1)
+            self._queue_progress_widget.setVisible(True)
+            return
+        for widget in widgets:
+            self._queue_progress_layout.removeWidget(widget)
+        self._queue_primary_layout.addWidget(self._queue_progress_label)
+        self._queue_primary_layout.addWidget(self._queue_progress_bar, 1)
+        self._queue_primary_layout.addWidget(self._queue_sweep_label)
+        self._queue_primary_layout.addWidget(self._sweep_progress, 1)
+        self._queue_progress_widget.setVisible(False)
 
     def _make_collapsible_section(
         self,
@@ -2428,6 +2569,8 @@ class MainWindow(QMainWindow):
 
         self._apply_state_ui()
         self._start_level_monitor()
+        if hasattr(self, "_refresh_session_labels"):
+            self._refresh_session_labels()
 
     def _manual_refresh_devices(self) -> None:
         previous_out = self._current_output_device()
@@ -2561,6 +2704,7 @@ class MainWindow(QMainWindow):
 
     def _on_output_device_changed(self) -> None:
         self._settings.set("output_device", self._current_output_device_setting())
+        self._refresh_session_labels()
         self._apply_state_ui()
         if (
             is_windows_audio_host()
@@ -2578,6 +2722,7 @@ class MainWindow(QMainWindow):
         self._refresh_channels()
         self._start_level_monitor()
         self._apply_state_ui()
+        self._refresh_session_labels()
 
     def _on_advanced_windows_drivers_changed(self) -> None:
         enabled = self._use_advanced_windows_drivers()
@@ -2600,6 +2745,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_rnd_widget"):
             self._rnd_widget.set_input_channel(self._current_input_channel())
         self._start_level_monitor()
+        self._refresh_session_labels()
 
     def _on_rnd_input_channel_changed(self, channel: int) -> None:
         index = self._ch_combo.findData(int(channel))
@@ -5166,6 +5312,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
 
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def _confirm_rnd_close(self) -> bool:
@@ -5190,10 +5339,15 @@ class MainWindow(QMainWindow):
         return result == QMessageBox.StandardButton.Discard
 
     def _refresh_session_labels(self) -> None:
-        summary = f"{self._session.display_name()} · {self._session.rig}"
-        self._session_summary_label.setText(summary)
-        self._session_summary_label.setToolTip(
-            f"Headphone: {self._session.display_name()}\nRig: {self._session.rig}"
+        if not hasattr(self, "_inputs_btn"):
+            return
+        output = self._current_output_device_label() if hasattr(self, "_out_dev_combo") else "Not selected"
+        input_name = self._current_input_device_label() if hasattr(self, "_in_dev_combo") else "Not selected"
+        channel = self._current_input_channel() + 1 if hasattr(self, "_ch_combo") else 1
+        self._inputs_btn.setToolTip(
+            f"Output: {output or 'Not selected'}\n"
+            f"Input: {input_name or 'Not selected'}\n"
+            f"Channel: {channel}"
         )
 
     def _refresh_window_title(self) -> None:

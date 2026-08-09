@@ -1,12 +1,20 @@
 # Changelog
 
-## [Unreleased] - 2026-07-30
+## [0.4.0] - 2026-08-08
 
 ### Added
 
 - Local R&D crash recovery with two active generations, deferred bundles,
   attachment recovery, startup restore choices, and normal-close dirty checks.
 - Measure-to-R&D transfer for one average or a grouped set of kept Var curves.
+- A Curator BRAND Clean Slate export with only the graph, BRAND logo, and optional
+  layer names.
+- Collapsible Curator controls with stable list and panel scroll positions.
+- A display-independent 50/50 R&D splitter default with a saved user ratio.
+- A shared animated Inputs panel that makes device controls available from
+  every main tab.
+- A responsive Measure queue bar above the top viewport, with device controls
+  removed from the old sidebar.
 - A BRAND Measure batch that exports `RAW AVG`, `COMP AVG`, `RAW VAR`, and
   `COMP VAR` without changing the active graph state.
 - Six-column population HRTF support for P10, P25, median, P75, and P90
@@ -22,6 +30,13 @@
 - Replaced the Measure input bar with a smooth, token-based glow meter. Its
   display animation now softens rise and fall changes without increasing the
   audio sampling rate.
+- Moved the Measure queue controls into a responsive bar above the top graph
+  and renamed Start Queue to Measure. The level meter, Variation, and HRTF
+  controls remain between the two viewports.
+- Added a purple Inputs accent for the standard dark theme while keeping the
+  standard light and brand accents unchanged.
+- Removed the translucent curve halo from Curator previews and PNG exports in
+  standard and brand modes.
 - Improved compact R&D toolbar layout and the surface order for dark, light,
   and brand modes.
 - Replaced R&D list toggles with View 1 and View 2 checkboxes, preserved group
@@ -40,6 +55,12 @@
   diagnostics to its console.
 - Curator BRAND image exports keep the existing `#232323` canvas and brand
   colors.
+
+### Notes
+
+- This release covers all user-facing changes since v0.3.5.
+- Release packages are built for Apple Silicon macOS, Windows x64, and Linux
+  x64.
 
 ## [0.3.5] - 2026-07-19
 

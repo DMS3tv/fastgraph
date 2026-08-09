@@ -347,8 +347,15 @@ class RnDWidget(QWidget):
     state_changed = pyqtSignal()
     input_channel_changed = pyqtSignal(int)
     notes_expanded_changed = pyqtSignal(bool)
+    splitter_ratio_changed = pyqtSignal(float)
 
-    def __init__(self, parent=None, *, notes_expanded: bool = True) -> None:
+    def __init__(
+        self,
+        parent=None,
+        *,
+        notes_expanded: bool = True,
+        splitter_ratio: float = 0.5,
+    ) -> None:
         super().__init__(parent)
         self.session = RnDSession()
         self.photo_store = RnDPhotoStore()
@@ -359,6 +366,14 @@ class RnDWidget(QWidget):
         self._normal_status = "Ready"
         self._recovery_warning = ""
         self._notes_expanded = bool(notes_expanded)
+        self._splitter_ratio = min(0.8, max(0.2, float(splitter_ratio)))
+        self._applying_splitter_ratio = False
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(250)
+        self._splitter_save_timer.timeout.connect(
+            lambda: self.splitter_ratio_changed.emit(self._splitter_ratio)
+        )
         self._hrtf_options = self._load_hrtf_options()
         self._preference_bounds = self._load_preference_bounds()
         self._missing_hrtf_names: set[str] = set()
@@ -545,10 +560,12 @@ class RnDWidget(QWidget):
         splitter.setChildrenCollapsible(False)
         root.addWidget(splitter, 1)
         self._splitter = splitter
-        self._splitter_initialized = False
+        splitter.splitterMoved.connect(self._on_splitter_moved)
 
         viewport_panel = QWidget()
+        viewport_panel.setMinimumWidth(360)
         viewport_panel.setProperty("surfaceLevel", "viewport")
+        self._viewport_panel = viewport_panel
         viewport_layout = QVBoxLayout(viewport_panel)
         viewport_layout.setContentsMargins(8, 8, 8, 8)
         viewport_layout.setSpacing(6)
@@ -664,7 +681,7 @@ class RnDWidget(QWidget):
         splitter.addWidget(panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        QTimer.singleShot(0, self._apply_default_splitter_sizes)
+        QTimer.singleShot(0, self._apply_splitter_ratio)
 
         data_box = QGroupBox("Measurements")
         data_layout = QVBoxLayout(data_box)
@@ -876,10 +893,11 @@ class RnDWidget(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        QTimer.singleShot(0, self._apply_default_splitter_sizes)
+        QTimer.singleShot(0, self._apply_splitter_ratio)
 
     def resizeEvent(self, event) -> None:
-        stacked = event.size().width() < 1500
+        intended_viewport_width = event.size().width() * self._splitter_ratio
+        stacked = intended_viewport_width < 1100
         direction = (
             QBoxLayout.Direction.TopToBottom
             if stacked
@@ -897,16 +915,29 @@ class RnDWidget(QWidget):
         self._top_toolbar_layout.invalidate()
         self._top_toolbar.updateGeometry()
         super().resizeEvent(event)
+        QTimer.singleShot(0, self._apply_splitter_ratio)
 
-    def _apply_default_splitter_sizes(self) -> None:
-        if self._splitter_initialized:
+    def _apply_splitter_ratio(self) -> None:
+        available = self._splitter.width() - self._splitter.handleWidth()
+        if available <= 1:
             return
-        width = self._splitter.width()
-        if width <= 0:
+        first = max(1, int(round(available * self._splitter_ratio)))
+        second = max(1, available - first)
+        self._applying_splitter_ratio = True
+        try:
+            self._splitter.setSizes([first, second])
+        finally:
+            self._applying_splitter_ratio = False
+
+    def _on_splitter_moved(self, _position: int, _index: int) -> None:
+        if self._applying_splitter_ratio:
             return
-        half = max(1, int(width * 0.5))
-        self._splitter.setSizes([half, half])
-        self._splitter_initialized = True
+        sizes = self._splitter.sizes()
+        total = sum(sizes)
+        if len(sizes) < 2 or total <= 0:
+            return
+        self._splitter_ratio = min(0.8, max(0.2, sizes[0] / total))
+        self._splitter_save_timer.start()
 
     def _sync_tree(self) -> None:
         self._syncing = True

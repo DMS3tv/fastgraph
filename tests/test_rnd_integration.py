@@ -89,7 +89,11 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_p
         toggle.text()
         for toggle in window.findChildren(QToolButton, "section_toggle")
     }
-    assert {"Devices", "Queue", "Notes"} <= section_titles
+    assert "Notes" in section_titles
+    assert "Devices" not in section_titles
+    assert "Queue" not in section_titles
+    assert window._plots._header_widget.objectName() == "measure_queue_bar"
+    assert window._start_queue_btn.text() == "Measure"
     assert window._start_queue_btn._has_persistent_outline() is True
     assert window._rnd_widget._measure_btn._has_persistent_outline() is True
     assert isinstance(window._queue_n_spin, ModernSpinBox)
@@ -130,7 +134,7 @@ def test_rnd_toolbar_uses_compact_stacked_rows(qapp, monkeypatch, tmp_path: Path
     measure_left = window._rnd_widget._measure_btn.geometry().left()
     assert measure_left - status_right <= 24
 
-    window.resize(1800, 1100)
+    window.resize(2400, 1100)
     qapp.processEvents()
     assert layout.direction() == QBoxLayout.Direction.LeftToRight
     assert layout.stretch(0) == 1
@@ -1169,7 +1173,7 @@ def test_rnd_group_collapse_survives_tree_rebuilds_without_dirtying(
     window.close()
 
 
-def test_rnd_view_titles_use_mode_accent_and_splitter_defaults_to_half(
+def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
     qapp,
     monkeypatch,
     tmp_path: Path,
@@ -1193,10 +1197,58 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_defaults_to_half(
     splitter.resize(1400, 600)
     size_calls: list[list[int]] = []
     monkeypatch.setattr(splitter, "setSizes", lambda sizes: size_calls.append(list(sizes)))
-    window._rnd_widget._splitter_initialized = False
-    window._rnd_widget._apply_default_splitter_sizes()
-    assert size_calls == [[700, 700]]
+    window._rnd_widget._splitter_ratio = 0.5
+    window._rnd_widget._apply_splitter_ratio()
+    available = splitter.width() - splitter.handleWidth()
+    assert size_calls == [[round(available * 0.5), available - round(available * 0.5)]]
 
-    window._rnd_widget._apply_default_splitter_sizes()
-    assert size_calls == [[700, 700]]
+    size_calls.clear()
+    window._rnd_widget._splitter_ratio = 0.63
+    window._rnd_widget._apply_splitter_ratio()
+    assert size_calls == [[round(available * 0.63), available - round(available * 0.63)]]
+    window.close()
+
+
+def test_rnd_splitter_user_ratio_is_saved_and_reused(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    splitter = window._rnd_widget._splitter
+    splitter.resize(1400, 600)
+    monkeypatch.setattr(splitter, "sizes", lambda: [560, 840])
+    window._rnd_widget._on_splitter_moved(560, 1)
+    window._rnd_widget._splitter_save_timer.stop()
+    window._rnd_widget.splitter_ratio_changed.emit(window._rnd_widget._splitter_ratio)
+
+    assert window._rnd_widget._splitter_ratio == pytest.approx(0.4, abs=0.01)
+    assert window._settings.get("rnd_splitter_ratio") == pytest.approx(0.4, abs=0.01)
+
+    splitter.resize(1800, 600)
+    size_calls: list[list[int]] = []
+    monkeypatch.setattr(splitter, "setSizes", lambda sizes: size_calls.append(list(sizes)))
+    window._rnd_widget._apply_splitter_ratio()
+    applied = size_calls[-1]
+    assert applied[0] / sum(applied) == pytest.approx(0.4, abs=0.01)
+    window.close()
+
+
+@pytest.mark.parametrize("width", [1200, 1800, 2600])
+def test_rnd_default_splitter_stays_half_across_window_sizes(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+    width: int,
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window._rnd_widget._splitter_ratio = 0.5
+    window.resize(width, 900)
+    window.show()
+    qapp.processEvents()
+    window._rnd_widget._apply_splitter_ratio()
+    qapp.processEvents()
+
+    sizes = window._rnd_widget._splitter.sizes()
+    assert sizes[0] / sum(sizes) == pytest.approx(0.5, abs=0.02)
     window.close()

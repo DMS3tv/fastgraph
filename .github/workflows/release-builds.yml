@@ -17,7 +17,7 @@ on:
         default: false
         type: boolean
       release_tag:
-        description: "Release tag when publishing manually (for example, v0.3.5)"
+        description: "Release tag when publishing manually (for example, v0.4.0)"
         required: false
         type: string
 

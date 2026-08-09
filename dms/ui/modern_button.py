@@ -124,6 +124,9 @@ class ModernButton(QPushButton):
         return mode_tokens(mode)
 
     def _accent(self, tokens: ThemeTokens) -> QColor:
+        dark_accent = str(self.property("darkAccentColor") or "").strip()
+        if tokens.name == "dark" and dark_accent:
+            return QColor(dark_accent)
         role = self.role()
         if role == "danger":
             return QColor(tokens.danger)

@@ -83,6 +83,7 @@ class GraphState:
     aspect_locked_25db: bool = True
     smoothing_fraction: int = 48
     show_layer_names: bool = True
+    brand_clean_slate: bool = False
     export_text: ExportText = field(default_factory=ExportText)
 
 

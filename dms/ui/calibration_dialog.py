@@ -101,13 +101,23 @@ class CalibrationDialog(QDialog):
         if dev is None:
             self._status.setText("Error: device not found.")
             self._start_btn.setEnabled(True)
+            self._capturing = False
             return
 
         n_ch = dev["max_input_channels"]
+        if self._channel < 0 or self._channel >= n_ch:
+            self._status.setText(
+                f"Error: channel {self._channel} is not available on "
+                f"{self._device_label}."
+            )
+            self._start_btn.setEnabled(True)
+            self._capturing = False
+            return
+
         try:
             self._stream = sd.InputStream(
                 device=self._device_index,
-                channels=n_ch,
+                channels=self._channel + 1,
                 samplerate=self._fs,
                 blocksize=self._buf,
                 dtype="float32",

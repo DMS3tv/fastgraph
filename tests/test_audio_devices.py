@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from dms import audio_engine
 from dms.measurement_alignment import MeasurementDiagnostics
@@ -253,3 +254,68 @@ def test_level_monitor_passes_numeric_portaudio_index(monkeypatch) -> None:
 
     assert stream_calls
     assert stream_calls[0]["device"] == 43
+    assert stream_calls[0]["channels"] == 1
+
+
+def test_level_monitor_opens_only_through_selected_channel(monkeypatch) -> None:
+    stream_calls = []
+
+    class _FakeInputStream:
+        def __init__(self, **kwargs):
+            stream_calls.append(kwargs)
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        audio_engine,
+        "device_by_index",
+        lambda device_index, kind="input": {"max_input_channels": 128},
+    )
+    monkeypatch.setattr(audio_engine.sd, "InputStream", _FakeInputStream)
+
+    monitor = audio_engine.LevelMonitor()
+    monitor.start(
+        device_index=8,
+        device_label="pipewire (ALSA)",
+        channel_index=1,
+        fs=48000,
+        buffer_size=256,
+    )
+
+    assert stream_calls
+    assert stream_calls[0]["device"] == 8
+    assert stream_calls[0]["channels"] == 2
+
+
+@pytest.mark.parametrize("channel_index", [-1, 128])
+def test_level_monitor_rejects_invalid_channel(monkeypatch, channel_index) -> None:
+    stream_calls = []
+    errors = []
+
+    monkeypatch.setattr(
+        audio_engine,
+        "device_by_index",
+        lambda device_index, kind="input": {"max_input_channels": 128},
+    )
+    monkeypatch.setattr(
+        audio_engine.sd,
+        "InputStream",
+        lambda **kwargs: stream_calls.append(kwargs),
+    )
+
+    monitor = audio_engine.LevelMonitor()
+    monitor.error_occurred.connect(errors.append)
+    monitor.start(
+        device_index=8,
+        device_label="pipewire (ALSA)",
+        channel_index=channel_index,
+        fs=48000,
+        buffer_size=256,
+    )
+
+    assert stream_calls == []
+    assert errors == [
+        f"Channel {channel_index} not available on pipewire (ALSA)"
+    ]
+    assert monitor._running is False

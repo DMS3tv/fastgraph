@@ -313,10 +313,14 @@ class LevelMonitor(QObject):
         try:
             dev = device_by_index(device_index, kind="input")
             if dev is None:
+                with self._lock:
+                    self._running = False
                 self.error_occurred.emit(f"Device not found: {device_label}")
                 return
             n_ch = dev["max_input_channels"]
-            if channel_index >= n_ch:
+            if channel_index < 0 or channel_index >= n_ch:
+                with self._lock:
+                    self._running = False
                 self.error_occurred.emit(
                     f"Channel {channel_index} not available on {device_label}"
                 )
@@ -324,7 +328,7 @@ class LevelMonitor(QObject):
 
             self._stream = sd.InputStream(
                 device=device_index,
-                channels=n_ch,
+                channels=channel_index + 1,
                 samplerate=fs,
                 blocksize=buffer_size,
                 dtype="float32",
@@ -334,7 +338,8 @@ class LevelMonitor(QObject):
             )
             self._stream.start()
         except Exception as e:
-            self._running = False
+            with self._lock:
+                self._running = False
             self.error_occurred.emit(f"Level monitor error: {e}")
 
     def stop(self) -> None:

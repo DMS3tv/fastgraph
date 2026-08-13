@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Prevented Linux PipeWire startup and calibration crashes by opening only
+  enough input channels to include the selected channel.
+
 ## [0.4.0] - 2026-08-08
 
 ### Added

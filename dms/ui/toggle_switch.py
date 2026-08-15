@@ -8,7 +8,9 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPalette
-from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QWidget
+
+from dms.ui.style_tokens import mode_tokens
 
 
 class ToggleSwitch(QCheckBox):
@@ -50,6 +52,12 @@ class ToggleSwitch(QCheckBox):
         return self.rect().contains(pos)
 
     def _animate_to_state(self, checked: bool) -> None:
+        app = QApplication.instance()
+        mode = app.property("fastgraphVisualMode") if app is not None else "dark"
+        if mode_tokens(mode).classic_controls:
+            self._anim.stop()
+            self.set_offset(1.0 if checked else 0.0)
+            return
         self._anim.stop()
         self._anim.setStartValue(self._offset)
         self._anim.setEndValue(1.0 if checked else 0.0)
@@ -65,6 +73,12 @@ class ToggleSwitch(QCheckBox):
     offset = pyqtProperty(float, get_offset, set_offset)
 
     def paintEvent(self, event) -> None:
+        app = QApplication.instance()
+        mode = app.property("fastgraphVisualMode") if app is not None else "dark"
+        tokens = mode_tokens(mode)
+        if tokens.classic_controls:
+            self._paint_fastgraph95(tokens)
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -105,6 +119,77 @@ class ToggleSwitch(QCheckBox):
         p.drawText(text_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), self.text())
 
         p.end()
+
+    def _paint_fastgraph95(self, tokens) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        track_w = self._TRACK_WIDTH
+        track_h = 20
+        margin = self._HORIZONTAL_MARGIN
+        text_gap = self._TEXT_GAP
+        y = int((self.height() - track_h) / 2.0)
+        track = QRectF(margin, y, track_w, track_h).toRect()
+
+        dark_variant = tokens.dark_bevel
+        terminal_variant = tokens.terminal_chrome
+        terminal_edge = tokens.accent if self.isChecked() else tokens.border
+        painter.fillRect(track, QColor(tokens.raised if dark_variant else "#FFFFFF"))
+        painter.setPen(QPen(QColor("#000000"), 1))
+        painter.drawLine(track.left(), track.bottom(), track.left(), track.top())
+        painter.drawLine(track.left(), track.top(), track.right(), track.top())
+        painter.setPen(
+            QPen(
+                QColor(
+                    terminal_edge
+                    if terminal_variant
+                    else ("#8F8F8F" if dark_variant else "#FFFFFF")
+                ),
+                1,
+            )
+        )
+        painter.drawLine(track.left(), track.bottom(), track.right(), track.bottom())
+        painter.drawLine(track.right(), track.top(), track.right(), track.bottom())
+
+        inner = track.adjusted(2, 2, -2, -2)
+        if self.isChecked():
+            painter.fillRect(inner, QColor(tokens.selected))
+        else:
+            painter.fillRect(inner, QColor(tokens.panel))
+
+        knob_width = 13
+        knob_x = inner.left() if self._offset < 0.5 else inner.right() - knob_width + 1
+        knob = QRectF(knob_x, inner.top(), knob_width, inner.height()).toRect()
+        painter.fillRect(knob, QColor(tokens.control))
+        painter.setPen(
+            QPen(
+                QColor(
+                    terminal_edge
+                    if terminal_variant
+                    else ("#8F8F8F" if dark_variant else "#FFFFFF")
+                ),
+                1,
+            )
+        )
+        painter.drawLine(knob.left(), knob.bottom(), knob.left(), knob.top())
+        painter.drawLine(knob.left(), knob.top(), knob.right(), knob.top())
+        painter.setPen(QPen(QColor("#000000"), 1))
+        painter.drawLine(knob.left(), knob.bottom(), knob.right(), knob.bottom())
+        painter.drawLine(knob.right(), knob.top(), knob.right(), knob.bottom())
+
+        text_rect = QRectF(
+            margin + track_w + text_gap,
+            0,
+            self.width() - (margin + track_w + text_gap),
+            self.height(),
+        )
+        color = QColor(tokens.text if self.isEnabled() else tokens.disabled)
+        painter.setPen(color)
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            self.text(),
+        )
+        painter.end()
 
 
 class _ThemeIcon(QWidget):

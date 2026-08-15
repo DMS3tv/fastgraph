@@ -10,7 +10,13 @@ from PyQt6.QtWidgets import QWidget
 
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
-from dms.theme import brand_theme_colors, theme_colors
+from dms.graph_display import retro_step_group, retro_step_series, uses_retro_steps
+from dms.theme import (
+    ensure_graph_color,
+    brand_theme_colors,
+    normalize_theme,
+    theme_colors,
+)
 
 
 FREQ_MIN = 20.0
@@ -99,6 +105,8 @@ class LockedPlotWidget(pg.PlotWidget):
 class GraphWidget(LockedPlotWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._theme = "dark"
+        self._brand_mode = False
         self._items: list[object] = []
         self._state: GraphState | None = None
         self._wipe_progress = 1.0
@@ -124,12 +132,21 @@ class GraphWidget(LockedPlotWidget):
         self._render()
 
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
+        self._theme = normalize_theme(theme)
+        self._brand_mode = bool(brand_mode)
         colors = brand_theme_colors() if brand_mode else theme_colors(theme)
         for name in ("bottom", "left"):
             axis = self.getAxis(name)
             axis.setPen(pg.mkPen(colors["plot_fg"]))
             axis.setTextPen(pg.mkPen(colors["plot_fg"]))
         self._render()
+
+    def _uses_retro_steps(self) -> bool:
+        return uses_retro_steps(self._theme, brand_mode=self._brand_mode)
+
+    def _display_color(self, color: object) -> QColor:
+        background = self._state.background if self._state is not None else "#1a1a1a"
+        return ensure_graph_color(color, background)
 
     @pyqtProperty(float)
     def wipeProgress(self) -> float:
@@ -277,9 +294,20 @@ class GraphWidget(LockedPlotWidget):
         )
         if len(freqs) < 2:
             return
-        upper_item = self.plot(freqs, upper_mag, pen=pg.mkPen((150, 150, 150, 185), width=1.5))
-        lower_item = self.plot(freqs, lower_mag, pen=pg.mkPen((150, 150, 150, 185), width=1.5))
-        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(150, 150, 150, 102))
+        if self._uses_retro_steps():
+            freqs, upper_mag, lower_mag = retro_step_group(freqs, (upper_mag, lower_mag))
+        bounds_color = self._display_color("#969696")
+        bounds_pen = QColor(bounds_color)
+        bounds_pen.setAlpha(185)
+        bounds_fill = QColor(bounds_color)
+        bounds_fill.setAlpha(102)
+        upper_item = self.plot(
+            freqs, upper_mag, pen=pg.mkPen(bounds_pen, width=1.5), antialias=True
+        )
+        lower_item = self.plot(
+            freqs, lower_mag, pen=pg.mkPen(bounds_pen, width=1.5), antialias=True
+        )
+        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(bounds_fill))
         self.addItem(fill)
         self._items.extend([upper_item, lower_item, fill])
 
@@ -288,13 +316,22 @@ class GraphWidget(LockedPlotWidget):
             freqs, mag = _trim_series(curve.freqs, curve.mag_db, progress)
             if len(freqs) < 2:
                 return
-            self._items.append(self.plot(freqs, mag, pen=pg.mkPen(color, width=2.0)))
+            if self._uses_retro_steps():
+                freqs, mag = retro_step_series(freqs, mag)
+            self._items.append(
+                self.plot(
+                    freqs,
+                    mag,
+                    pen=pg.mkPen(self._display_color(color), width=2.0),
+                    antialias=True,
+                )
+            )
             return
         if curve.kind != "variation":
             return
         if not _has_variation(curve):
             return
-        qcolor = QColor(color)
+        qcolor = self._display_color(color)
         outer = QColor(qcolor)
         outer.setAlpha(55)
         inner = QColor(qcolor)
@@ -308,15 +345,22 @@ class GraphWidget(LockedPlotWidget):
         )
         if len(freqs) < 2:
             return
-        upper90 = self.plot(freqs, p90, pen=pg.mkPen((0, 0, 0, 0)))
-        lower10 = self.plot(freqs, p10, pen=pg.mkPen((0, 0, 0, 0)))
+        if self._uses_retro_steps():
+            freqs, p10, p25, median_values, p75, p90 = retro_step_group(
+                freqs, (p10, p25, median_values, p75, p90)
+            )
+        antialias = True
+        upper90 = self.plot(freqs, p90, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
+        lower10 = self.plot(freqs, p10, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
         fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
         self.addItem(fill90)
-        upper75 = self.plot(freqs, p75, pen=pg.mkPen((0, 0, 0, 0)))
-        lower25 = self.plot(freqs, p25, pen=pg.mkPen((0, 0, 0, 0)))
+        upper75 = self.plot(freqs, p75, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
+        lower25 = self.plot(freqs, p25, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         self.addItem(fill75)
-        median = self.plot(freqs, median_values, pen=pg.mkPen(qcolor, width=2.2))
+        median = self.plot(
+            freqs, median_values, pen=pg.mkPen(qcolor, width=2.2), antialias=antialias
+        )
         self._items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median])
 
 

@@ -38,6 +38,7 @@ from dms.curator.models import PreferenceBounds
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.style_tokens import tokens_for
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
@@ -50,8 +51,15 @@ from dms.rnd.models import (
 from dms.rnd.photos import RnDPhotoStore
 from dms.hrtf import HRTFCurve
 from dms import brand_brand
-from dms.brand_brand import default_color_cycle
-from dms.theme import LIGHT, brand_theme_colors, normalize_theme, theme_colors
+from dms.graph_display import retro_step_series, uses_retro_steps
+from dms.theme import (
+    LIGHT,
+    ensure_graph_color,
+    brand_theme_colors,
+    normalize_theme,
+    theme_colors,
+    theme_trace_palette,
+)
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
 
@@ -124,6 +132,7 @@ class RnDPlotWidget(QWidget):
         self.bottom_frame = RoundedViewportFrame(self.bottom_plot)
         layout.addWidget(self.top_frame, 1)
         self._between_plots_widget: QWidget | None = None
+        self._curve_sources: dict[pg.PlotDataItem, tuple[np.ndarray, np.ndarray]] = {}
         layout.addWidget(self.bottom_frame, 1)
         self._items: list[object] = []
 
@@ -145,9 +154,37 @@ class RnDPlotWidget(QWidget):
                 axis.setPen(pg.mkPen(colors["plot_fg"]))
                 axis.setTextPen(pg.mkPen(colors["plot_fg"]))
             plot.getPlotItem().titleLabel.setAttr("color", colors["accent"])
+        for item, (freqs, values) in self._curve_sources.items():
+            display_freqs, display_values = self._display_curve(freqs, values)
+            item.setData(display_freqs, display_values, antialias=True)
 
     def _accent_color(self) -> str:
-        return brand_brand.GRADIENT_ORANGE if self._brand_mode else VARIATION_COLOR
+        if self._brand_mode:
+            return brand_brand.GRADIENT_ORANGE
+        palette = theme_trace_palette(self._theme)
+        return palette[0] if tokens_for(self._theme).trace_palette else VARIATION_COLOR
+
+    def _display_color(self, color: object) -> QColor:
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        return ensure_graph_color(color, colors["plot_bg"])
+
+    def _uses_retro_steps(self) -> bool:
+        return uses_retro_steps(self._theme, brand_mode=self._brand_mode)
+
+    def _display_curve(
+        self, freqs: np.ndarray, values: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self._uses_retro_steps():
+            return retro_step_series(freqs, values)
+        return freqs, values
+
+    def _plot_curve(self, plot: pg.PlotWidget, freqs, values, *, pen) -> pg.PlotDataItem:
+        source_freqs = np.asarray(freqs, dtype=float)
+        source_values = np.asarray(values, dtype=float)
+        display_freqs, display_values = self._display_curve(source_freqs, source_values)
+        item = plot.plot(display_freqs, display_values, pen=pen, antialias=True)
+        self._curve_sources[item] = (source_freqs, source_values)
+        return item
 
     def redraw(
         self,
@@ -170,34 +207,47 @@ class RnDPlotWidget(QWidget):
             except Exception:
                 pass
         self._items.clear()
+        self._curve_sources.clear()
 
         top_curves = []
         bottom_curves = []
         for measurement, mag_db in top_measurements:
-            item = self.top_plot.plot(
+            item = self._plot_curve(
+                self.top_plot,
                 measurement.freqs,
                 mag_db,
-                pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.2),
+                pen=pg.mkPen(
+                    self._display_color(measurement.color),
+                    width=2.4 if measurement.milestone else 1.2,
+                ),
             )
             self._items.append(item)
             top_curves.append((measurement.freqs, mag_db))
         if review_curve is not None:
             freqs, mag_db = review_curve
-            color = QColor(self._accent_color())
+            color = self._display_color(self._accent_color())
             glow_color = QColor(color)
             glow_color.setAlpha(72)
-            glow = self.top_plot.plot(freqs, mag_db, pen=pg.mkPen(glow_color, width=8.0))
-            item = self.top_plot.plot(freqs, mag_db, pen=pg.mkPen(color, width=2.5))
+            glow = self._plot_curve(
+                self.top_plot, freqs, mag_db, pen=pg.mkPen(glow_color, width=8.0)
+            )
+            item = self._plot_curve(
+                self.top_plot, freqs, mag_db, pen=pg.mkPen(color, width=2.5)
+            )
             self._items.extend([glow, item])
             top_curves.append((freqs, mag_db))
         delta_measurements = delta_measurements or []
         delta_group_variations = delta_group_variations or []
         if delta_mode_active:
             for measurement, freqs, mag_db in delta_measurements:
-                item = self.bottom_plot.plot(
+                item = self._plot_curve(
+                    self.bottom_plot,
                     freqs,
                     mag_db,
-                    pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.5),
+                    pen=pg.mkPen(
+                        self._display_color(measurement.color),
+                        width=2.4 if measurement.milestone else 1.5,
+                    ),
                 )
                 self._items.append(item)
                 bottom_curves.append((freqs, mag_db))
@@ -205,10 +255,14 @@ class RnDPlotWidget(QWidget):
                 bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
         else:
             for measurement, mag_db in pinned_measurements:
-                item = self.bottom_plot.plot(
+                item = self._plot_curve(
+                    self.bottom_plot,
                     measurement.freqs,
                     mag_db,
-                    pen=pg.mkPen(measurement.color, width=2.4 if measurement.milestone else 1.5),
+                    pen=pg.mkPen(
+                        self._display_color(measurement.color),
+                        width=2.4 if measurement.milestone else 1.5,
+                    ),
                 )
                 self._items.append(item)
                 bottom_curves.append((measurement.freqs, mag_db))
@@ -243,23 +297,36 @@ class RnDPlotWidget(QWidget):
         variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         freqs, p10, p25, p75, p90, median = variation
-        qcolor = QColor("#ff5078" if group.milestone else group.color or self._accent_color())
+        qcolor = self._display_color(
+            "#ff5078" if group.milestone else group.color or self._accent_color()
+        )
         outer = QColor(qcolor)
         outer.setAlpha(55 if not group.milestone else 75)
         inner = QColor(qcolor)
         inner.setAlpha(95 if not group.milestone else 118)
-        upper90 = plot.plot(freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower10 = plot.plot(freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        upper90 = self._plot_curve(
+            plot, freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0))
+        )
+        lower10 = self._plot_curve(
+            plot, freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0))
+        )
         fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
         plot.addItem(fill90)
-        upper75 = plot.plot(freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower25 = plot.plot(freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        upper75 = self._plot_curve(
+            plot, freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0))
+        )
+        lower25 = self._plot_curve(
+            plot, freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0))
+        )
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         plot.addItem(fill75)
         glow = QColor(qcolor)
         glow.setAlpha(58)
-        median_glow = plot.plot(freqs, median, pen=pg.mkPen(glow, width=7.0))
-        median_item = plot.plot(
+        median_glow = self._plot_curve(
+            plot, freqs, median, pen=pg.mkPen(glow, width=7.0)
+        )
+        median_item = self._plot_curve(
+            plot,
             freqs,
             median,
             pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
@@ -290,9 +357,18 @@ class RnDPlotWidget(QWidget):
         lower = np.interp(freqs, bounds.lower.freqs, bounds.lower.mag_db)
         if len(freqs) < 2:
             return []
-        upper_item = plot.plot(freqs, upper, pen=pg.mkPen((150, 150, 150, 185), width=1.5))
-        lower_item = plot.plot(freqs, lower, pen=pg.mkPen((150, 150, 150, 185), width=1.5))
-        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(150, 150, 150, 102))
+        bounds_color = self._display_color("#969696")
+        upper_pen = QColor(bounds_color)
+        upper_pen.setAlpha(185)
+        fill_color = QColor(bounds_color)
+        fill_color.setAlpha(102)
+        upper_item = self._plot_curve(
+            plot, freqs, upper, pen=pg.mkPen(upper_pen, width=1.5)
+        )
+        lower_item = self._plot_curve(
+            plot, freqs, lower, pen=pg.mkPen(upper_pen, width=1.5)
+        )
+        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(fill_color))
         plot.addItem(fill)
         self._items.extend([upper_item, lower_item, fill])
         return [(freqs, upper), (freqs, lower)]
@@ -305,11 +381,19 @@ class RnDPlotWidget(QWidget):
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         if len(freqs) < 2:
             return []
-        glow = plot.plot(freqs, mag_db, pen=pg.mkPen(QColor(255, 255, 255, 48), width=5.0))
-        item = plot.plot(
+        target_color = self._display_color("#F5F5F5")
+        glow_color = QColor(target_color)
+        glow_color.setAlpha(48)
+        line_color = QColor(target_color)
+        line_color.setAlpha(225)
+        glow = self._plot_curve(
+            plot, freqs, mag_db, pen=pg.mkPen(glow_color, width=5.0)
+        )
+        item = self._plot_curve(
+            plot,
             freqs,
             mag_db,
-            pen=pg.mkPen(color=(245, 245, 245, 205), width=1.8, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(color=line_color, width=1.8, style=Qt.PenStyle.DashLine),
         )
         self._items.extend([glow, item])
         return [(freqs, mag_db)]
@@ -432,7 +516,7 @@ class RnDWidget(QWidget):
         measurements = list(measurements)
         if not measurements:
             return
-        colors = default_color_cycle(self._brand_mode)
+        colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         start_index = len(self.session.measurements)
         for index, measurement in enumerate(measurements):
             measurement.color = colors[(start_index + index) % len(colors)]
@@ -966,7 +1050,7 @@ class RnDWidget(QWidget):
         self._sync_detail_panel()
 
     def _refresh_group_colors(self) -> None:
-        colors = default_color_cycle(self._brand_mode)
+        colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         for index, group in enumerate(self.session.groups):
             if not group.color or group.color == DEFAULT_COLORS[0]:
                 group.color = colors[index % len(colors)]
@@ -1523,7 +1607,7 @@ class RnDWidget(QWidget):
         names = {group.name for group in self.session.groups}
         name = self._unique_name("New Group", names)
         group = RnDGroup(name=name)
-        colors = default_color_cycle(self._brand_mode)
+        colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         group.color = colors[len(self.session.groups) % len(colors)]
         selected_ids = self._selected_measurement_ids()
         if selected_ids:

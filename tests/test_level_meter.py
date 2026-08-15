@@ -2,7 +2,14 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from dms.ui.level_meter import LevelMeterWidget
-from dms.ui.style_tokens import DARK_TOKENS, BRAND_TOKENS, LIGHT_TOKENS
+from dms.ui.style_tokens import (
+    DARK_TOKENS,
+    FASTGRAPH_95_DARK_TOKENS,
+    FASTGRAPH_95_TOKENS,
+    HACKERMAN_95_TOKENS,
+    BRAND_TOKENS,
+    LIGHT_TOKENS,
+)
 
 
 _APP: QApplication | None = None
@@ -76,3 +83,25 @@ def test_level_meter_clamps_level_and_renders_vertically() -> None:
     meter._level_animation.setCurrentTime(meter._RISE_MS)
     assert "dBFS" in meter.toolTip()
     assert not meter.grab().toImage().isNull()
+
+
+def test_fastgraph95_level_meter_uses_separate_progress_blocks() -> None:
+    app = _app()
+    meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
+    meter.resize(420, 32)
+    _outer, _well, track = meter._paint_rects()
+    blocks = meter._classic_block_rects(track.adjusted(1, 1, -1, -1))
+
+    assert len(blocks) >= 20
+    assert blocks[1].left() > blocks[0].right()
+    for mode, tokens in (
+        ("fastgraph95", FASTGRAPH_95_TOKENS),
+        ("fastgraph95_dark", FASTGRAPH_95_DARK_TOKENS),
+        ("hackerman95", HACKERMAN_95_TOKENS),
+    ):
+        app.setProperty("fastgraphVisualMode", mode)
+        meter.set_level(-7.0)
+        meter._level_animation.setCurrentTime(meter._RISE_MS)
+        assert meter._uses_classic_blocks()
+        assert meter._tokens() is tokens
+        assert not meter.grab().toImage().isNull()

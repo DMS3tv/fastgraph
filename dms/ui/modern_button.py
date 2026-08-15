@@ -148,6 +148,8 @@ class ModernButton(QPushButton):
         return base, text
 
     def _effective_hover(self) -> float:
+        if self._tokens().classic_controls:
+            return 0.0
         if not self.isEnabled():
             return 0.0
         focus_progress = (
@@ -166,6 +168,11 @@ class ModernButton(QPushButton):
         self._sync_visual_state()
 
     def _animate_hover(self, target: float) -> None:
+        if self._tokens().classic_controls:
+            self._hover_animation.stop()
+            self._hover_progress = 0.0
+            self.update()
+            return
         if not self.isEnabled() or self.role() == "swatch":
             return
         motion = self._tokens().motion
@@ -178,6 +185,11 @@ class ModernButton(QPushButton):
         self._hover_animation.start()
 
     def _animate_press(self, target: float, *, duration: int | None = None) -> None:
+        if self._tokens().classic_controls:
+            self._press_animation.stop()
+            self._press_progress = 0.0
+            self.update()
+            return
         if not self.isEnabled() or self.role() == "swatch":
             return
         self._press_animation.stop()
@@ -200,7 +212,7 @@ class ModernButton(QPushButton):
         self.update()
 
     def _glow_profile(self) -> dict[str, float | int]:
-        if not self.isEnabled():
+        if not self.isEnabled() or self._tokens().classic_controls:
             return {
                 "center_y": 1.05,
                 "radius": 0.50,
@@ -282,6 +294,9 @@ class ModernButton(QPushButton):
             return
 
         tokens = self._tokens()
+        if tokens.classic_controls:
+            self._paint_fastgraph95(tokens)
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -378,4 +393,84 @@ class ModernButton(QPushButton):
             painter,
             self,
         )
+        painter.end()
+
+    def _paint_fastgraph95(self, tokens: ThemeTokens) -> None:
+        """Paint a square classic button without the standard light effect."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        pressed = self.isDown()
+
+        face = QColor(tokens.control if self.isEnabled() else tokens.alternate)
+        if self.underMouse() and self.isEnabled() and not pressed:
+            face = QColor(tokens.control_hover)
+        painter.fillRect(rect, face)
+
+        dark_variant = tokens.dark_bevel
+        terminal_variant = tokens.terminal_chrome
+        role_accent = self._accent(tokens)
+        terminal_emphasis = terminal_variant and self.role() in {
+            "primary",
+            "positive",
+            "warning",
+            "danger",
+        }
+        terminal_edge = role_accent if terminal_emphasis else QColor(tokens.border)
+        light = QColor(terminal_edge if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF"))
+        mid_light = (
+            _mix(terminal_edge, QColor("#000000"), 0.52)
+            if terminal_variant
+            else QColor("#666666" if dark_variant else "#DFDFDF")
+        )
+        dark = QColor("#000000")
+        mid_dark = QColor(tokens.alternate if terminal_variant else ("#1B1B1B" if dark_variant else "#808080"))
+        top_left_outer = dark if pressed else light
+        top_left_inner = mid_dark if pressed else mid_light
+        bottom_right_outer = light if pressed else dark
+        bottom_right_inner = mid_light if pressed else mid_dark
+
+        painter.setPen(QPen(top_left_outer, 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.left(), rect.top())
+        painter.drawLine(rect.left(), rect.top(), rect.right(), rect.top())
+        painter.setPen(QPen(bottom_right_outer, 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
+
+        inner = rect.adjusted(1, 1, -1, -1)
+        painter.setPen(QPen(top_left_inner, 1))
+        painter.drawLine(inner.left(), inner.bottom(), inner.left(), inner.top())
+        painter.drawLine(inner.left(), inner.top(), inner.right(), inner.top())
+        painter.setPen(QPen(bottom_right_inner, 1))
+        painter.drawLine(inner.left(), inner.bottom(), inner.right(), inner.bottom())
+        painter.drawLine(inner.right(), inner.top(), inner.right(), inner.bottom())
+
+        option = QStyleOptionButton()
+        option.initFrom(self)
+        option.text = self.text()
+        option.icon = self.icon()
+        option.iconSize = self.iconSize()
+        label_rect = inner.adjusted(5, 2, -5, -2)
+        if pressed:
+            label_rect.translate(1, 1)
+        option.rect = label_rect
+        option.palette = QPalette(option.palette)
+        option.palette.setColor(
+            QPalette.ColorRole.ButtonText,
+            QColor(
+                role_accent
+                if terminal_emphasis and self.isEnabled()
+                else (tokens.text if self.isEnabled() else tokens.disabled)
+            ),
+        )
+        self.style().drawControl(
+            QStyle.ControlElement.CE_PushButtonLabel,
+            option,
+            painter,
+            self,
+        )
+        if self.hasFocus() and self.isEnabled():
+            painter.setPen(QPen(QColor(tokens.text), 1, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect.adjusted(4, 4, -4, -4))
         painter.end()

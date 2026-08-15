@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
     QKeySequenceEdit,
@@ -27,6 +29,8 @@ from dms.shortcuts import (
 )
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
+from dms.ui.style_tokens import theme_definition, theme_definitions
+from dms.ui.theme_surface import ThemePreview
 
 
 class SettingsWidget(QWidget):
@@ -55,7 +59,34 @@ class SettingsWidget(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        self._appearance_group = QGroupBox("Appearance")
+        self._themes_group = QGroupBox("Themes")
+        themes_layout = QVBoxLayout(self._themes_group)
+        self._theme_button_group = QButtonGroup(self)
+        self._theme_buttons: dict[str, QRadioButton] = {}
+        self._theme_choice_rows = QWidget()
+        theme_rows_layout = QVBoxLayout(self._theme_choice_rows)
+        theme_rows_layout.setContentsMargins(0, 0, 0, 0)
+        theme_rows_layout.setSpacing(6)
+        for definition in theme_definitions():
+            row = QHBoxLayout()
+            radio = QRadioButton(definition.label)
+            radio.setToolTip(f"Use the {definition.label} interface theme.")
+            self._theme_button_group.addButton(radio)
+            self._theme_buttons[definition.key] = radio
+            row.addWidget(radio, 1)
+            row.addWidget(ThemePreview(definition.key))
+            theme_rows_layout.addLayout(row)
+        themes_layout.addWidget(self._theme_choice_rows)
+        theme_hint = QLabel(
+            "Theme changes apply immediately. The 95 themes use square controls, "
+            "beveled edges, classic tabs, and no button glow."
+        )
+        theme_hint.setWordWrap(True)
+        theme_hint.setProperty("tone", "muted")
+        themes_layout.addWidget(theme_hint)
+        layout.addWidget(self._themes_group)
+
+        self._appearance_group = QGroupBox("brand")
         appearance_layout = QVBoxLayout(self._appearance_group)
         self._brand_mode = QCheckBox("brand mode")
         self._brand_mode.setToolTip(
@@ -272,6 +303,11 @@ class SettingsWidget(QWidget):
         )
         self._automation_browse.clicked.connect(self._choose_automation_dir)
         self._brand_mode.toggled.connect(self._on_brand_mode_toggled)
+        for theme_key, button in self._theme_buttons.items():
+            button.toggled.connect(
+                lambda checked, theme_key=theme_key: checked
+                and self._save("theme", theme_key)
+            )
         for action, edit in self._shortcut_edits.items():
             edit.editingFinished.connect(
                 lambda action=action, edit=edit: self._save_shortcut(action, edit.keySequence().toString())
@@ -309,8 +345,10 @@ class SettingsWidget(QWidget):
                 }
             )
             self.settings_changed.emit("brand_mode", True)
+            self._theme_choice_rows.setEnabled(False)
             return
         self._save("brand_mode", checked)
+        self._theme_choice_rows.setEnabled(not checked)
 
     def _save_latency(self, value: str) -> None:
         if not value:
@@ -354,6 +392,7 @@ class SettingsWidget(QWidget):
     def refresh_from_settings(self) -> None:
         controls = (
             self._brand_mode,
+            *self._theme_buttons.values(),
             self._duration,
             self._fs,
             self._buf,
@@ -372,7 +411,11 @@ class SettingsWidget(QWidget):
         for control in controls:
             control.blockSignals(True)
         try:
-            self._brand_mode.setChecked(bool(self._settings.get("brand_mode")))
+            brand_mode = bool(self._settings.get("brand_mode"))
+            self._brand_mode.setChecked(brand_mode)
+            active_theme = theme_definition(self._settings.get("theme")).key
+            self._theme_buttons[active_theme].setChecked(True)
+            self._theme_choice_rows.setEnabled(not brand_mode)
             self._duration.setValue(float(self._settings.get("sweep_duration")))
             self._fs.setCurrentIndex(self._fs.findData(self._settings.get("sample_rate")))
             self._buf.setCurrentIndex(self._buf.findData(self._settings.get("buffer_size")))
@@ -404,6 +447,7 @@ class SettingsWidget(QWidget):
                 control.blockSignals(False)
 
     def set_editing_enabled(self, enabled: bool) -> None:
+        self._themes_group.setEnabled(enabled)
         self._appearance_group.setEnabled(enabled)
         self._sweep_group.setEnabled(enabled)
         self._audio_tools_group.setEnabled(enabled)

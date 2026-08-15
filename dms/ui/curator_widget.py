@@ -45,12 +45,11 @@ from dms.curator.transforms import (
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.brand_brand import default_color_cycle
 from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.console import ConsoleEventStore
-from dms.theme import DARK, theme_colors
+from dms.theme import DARK, theme_colors, theme_trace_palette
 
 
 ACCENT_COLOR = "#FCBE11"
@@ -375,7 +374,7 @@ class CuratorWidget(QWidget):
             p90_db=_copy_optional(curve.p90_db),
             metadata=dict(curve.metadata),
         )
-        colors = default_color_cycle(self._brand_mode)
+        colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         color = colors[len(self._state.layers) % len(colors)]
         layer = LayerState(
             curve=copied,
@@ -581,7 +580,7 @@ class CuratorWidget(QWidget):
                 self._show_status("BRAND export has a text-size warning.")
             export_graph_image(self._state, output, size=(3840, 2160), brand_mode=True)
         else:
-            export_graph_image(self._state, output, size=(1920, 1080))
+            export_graph_image(self._state, output, size=(1920, 1080), theme=self._theme)
         self._show_status(f"Exported Curator PNG: {output}")
         self._log("INFO", "PNG exported", path=str(output))
         return output
@@ -1223,7 +1222,7 @@ class CuratorWidget(QWidget):
             layer.visible = False
 
         existing = sum(1 for layer in self._state.layers if layer.is_combined)
-        colors = default_color_cycle(self._brand_mode)
+        colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         color = colors[len(self._state.layers) % len(colors)]
         combined = LayerState(
             curve=combined_curve,

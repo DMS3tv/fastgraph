@@ -77,6 +77,21 @@ class ThemeTokens:
     typography: TypographyTokens
     geometry: GeometryTokens = GeometryTokens()
     motion: MotionTokens = MotionTokens()
+    classic_controls: bool = False
+    dark_bevel: bool = False
+    retro_graph: bool = False
+    terminal_chrome: bool = False
+    trace_palette: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ThemeDefinition:
+    """One selectable theme and the style renderer that it uses."""
+
+    key: str
+    label: str
+    tokens: ThemeTokens
+    style_family: str = "standard"
 
 
 STANDARD_TYPOGRAPHY = TypographyTokens(
@@ -89,6 +104,51 @@ BRAND_TYPOGRAPHY = TypographyTokens(
     ui_family="Inter",
     heading_family="Heading",
     technical_family="Inconsolata",
+)
+
+FASTGRAPH_95_TYPOGRAPHY = TypographyTokens(
+    ui_family="Tahoma",
+    heading_family="MS Sans Serif",
+    technical_family="Fixedsys",
+    caption_px=11,
+    body_px=12,
+    section_px=13,
+    screen_px=18,
+)
+
+HACKERMAN_95_TYPOGRAPHY = TypographyTokens(
+    ui_family="Monaco",
+    heading_family="Monaco",
+    technical_family="Monaco",
+    caption_px=11,
+    body_px=12,
+    section_px=13,
+    screen_px=18,
+)
+
+FASTGRAPH_95_GEOMETRY = GeometryTokens(
+    radius_micro=0,
+    radius_field=0,
+    radius_tab=0,
+    radius_button=0,
+    radius_surface=0,
+    border_px=2,
+    focus_border_px=1,
+    button_height=28,
+    compact_button_height=24,
+    primary_button_height=30,
+)
+
+FASTGRAPH_95_MOTION = MotionTokens(
+    hover_in_ms=0,
+    hover_out_ms=0,
+    press_ms=0,
+    hover_tint_alpha=0.0,
+    focus_glow_strength=0.0,
+    hover_glow_alpha=0,
+    rest_shadow_alpha=0,
+    rest_shadow_blur=0.0,
+    hover_shadow_blur=0.0,
 )
 
 
@@ -144,6 +204,109 @@ LIGHT_TOKENS = ThemeTokens(
     typography=STANDARD_TYPOGRAPHY,
 )
 
+FASTGRAPH_95_TOKENS = ThemeTokens(
+    name="fastgraph95",
+    background="#008080",
+    viewport="#C0C0C0",
+    panel="#C0C0C0",
+    raised="#FFFFFF",
+    control="#C0C0C0",
+    control_hover="#D4D4D4",
+    alternate="#A0A0A0",
+    text="#000000",
+    muted="#404040",
+    disabled="#808080",
+    border="#000000",
+    selected="#000080",
+    accent="#000080",
+    focus="#000080",
+    shadow="#000000",
+    danger="#800000",
+    positive="#008000",
+    warning="#808000",
+    plot_bg="#FFFFFF",
+    plot_fg="#000000",
+    plot_grid="#808080",
+    typography=FASTGRAPH_95_TYPOGRAPHY,
+    geometry=FASTGRAPH_95_GEOMETRY,
+    motion=FASTGRAPH_95_MOTION,
+    classic_controls=True,
+    retro_graph=True,
+)
+
+FASTGRAPH_95_DARK_TOKENS = ThemeTokens(
+    name="fastgraph95_dark",
+    background="#242424",
+    viewport="#353535",
+    panel="#3C3C3C",
+    raised="#292929",
+    control="#444444",
+    control_hover="#535353",
+    alternate="#2D2D2D",
+    text="#E2E2E2",
+    muted="#B0B0B0",
+    disabled="#777777",
+    border="#0A0A0A",
+    selected="#315B85",
+    accent="#78AEDD",
+    focus="#78AEDD",
+    shadow="#000000",
+    danger="#E09191",
+    positive="#8CCB9A",
+    warning="#D6BD77",
+    plot_bg="#202020",
+    plot_fg="#E2E2E2",
+    plot_grid="#666666",
+    typography=FASTGRAPH_95_TYPOGRAPHY,
+    geometry=FASTGRAPH_95_GEOMETRY,
+    motion=FASTGRAPH_95_MOTION,
+    classic_controls=True,
+    dark_bevel=True,
+    retro_graph=True,
+)
+
+HACKERMAN_95_TOKENS = ThemeTokens(
+    name="hackerman95",
+    background="#111411",
+    viewport="#171B17",
+    panel="#1D211D",
+    raised="#121512",
+    control="#282D28",
+    control_hover="#333A33",
+    alternate="#0F120F",
+    text="#D3D9D3",
+    muted="#899589",
+    disabled="#5C665C",
+    border="#465046",
+    selected="#234B2A",
+    accent="#39FF14",
+    focus="#39FF14",
+    shadow="#000000",
+    danger="#FF3B6B",
+    positive="#39FF14",
+    warning="#F5E642",
+    plot_bg="#010301",
+    plot_fg="#39FF14",
+    plot_grid="#0D5E1C",
+    typography=HACKERMAN_95_TYPOGRAPHY,
+    geometry=FASTGRAPH_95_GEOMETRY,
+    motion=FASTGRAPH_95_MOTION,
+    classic_controls=True,
+    dark_bevel=True,
+    retro_graph=True,
+    terminal_chrome=True,
+    trace_palette=(
+        "#39FF14",
+        "#00E5FF",
+        "#FF3BF4",
+        "#F5E642",
+        "#FF6B35",
+        "#9B7BFF",
+        "#00FF9C",
+        "#FF4F79",
+    ),
+)
+
 BRAND_TOKENS = ThemeTokens(
     name="brand",
     background=DARK_TOKENS.background,
@@ -171,11 +334,38 @@ BRAND_TOKENS = ThemeTokens(
 )
 
 
+THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
+    ThemeDefinition("dark", "Default dark", DARK_TOKENS),
+    ThemeDefinition("light", "Default light", LIGHT_TOKENS),
+    ThemeDefinition("fastgraph95", "FastGraph 95", FASTGRAPH_95_TOKENS, "fastgraph95"),
+    ThemeDefinition(
+        "fastgraph95_dark",
+        "FastGraph 95 Dark",
+        FASTGRAPH_95_DARK_TOKENS,
+        "fastgraph95_dark",
+    ),
+    ThemeDefinition("hackerman95", "Hackerman 95", HACKERMAN_95_TOKENS, "hackerman95"),
+)
+
+_THEMES_BY_KEY = {definition.key: definition for definition in THEME_DEFINITIONS}
+
+
+def theme_definitions() -> tuple[ThemeDefinition, ...]:
+    """Return selectable themes in their Settings order."""
+    return THEME_DEFINITIONS
+
+
+def theme_definition(theme: object) -> ThemeDefinition:
+    """Return a registered theme, or the default dark theme."""
+    key = str(theme or "").strip().lower()
+    return _THEMES_BY_KEY.get(key, _THEMES_BY_KEY["dark"])
+
+
 def tokens_for(theme: str = "dark", *, brand_mode: bool = False) -> ThemeTokens:
     """Return the complete token set for one application mode."""
     if brand_mode:
         return BRAND_TOKENS
-    return LIGHT_TOKENS if str(theme).strip().lower() == "light" else DARK_TOKENS
+    return theme_definition(theme).tokens
 
 
 def mode_tokens(mode: object) -> ThemeTokens:

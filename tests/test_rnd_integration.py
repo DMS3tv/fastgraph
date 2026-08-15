@@ -4,6 +4,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
@@ -26,7 +27,7 @@ from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
-from dms.theme import ThemeController
+from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95, ThemeController
 from dms.ui.main_window import AppState, MainWindow, RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 
@@ -1182,6 +1183,7 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
     expected_colors = [
         ("dark", False, "#66ccff"),
         ("light", False, "#176ea6"),
+        (HACKERMAN_95, False, "#39ff14"),
         ("dark", True, "#7A7A7A"),
     ]
     for theme, brand_mode, expected_color in expected_colors:
@@ -1190,6 +1192,20 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
         assert plot_widget.bottom_plot.getPlotItem().titleLabel.text == "View 2"
         assert plot_widget.top_plot.getPlotItem().titleLabel.opts["color"] == expected_color
         assert plot_widget.bottom_plot.getPlotItem().titleLabel.opts["color"] == expected_color
+    measurement = _measurement()
+    plot_widget.redraw(
+        top_measurements=[(measurement, measurement.mag_db)],
+        pinned_measurements=[],
+        top_group_variations=[],
+        bottom_group_variations=[],
+    )
+    plot_widget.apply_theme(FASTGRAPH_95_DARK)
+    curve = next(item for item in plot_widget._items if isinstance(item, pg.PlotDataItem))
+    assert curve.opts["antialias"] is True
+    np.testing.assert_array_equal(curve.xData, [100.0, 1000.0, 1000.0])
+    np.testing.assert_array_equal(curve.yData, [1.0, 1.0, 0.0])
+    np.testing.assert_array_equal(measurement.freqs, [100.0, 1000.0])
+    np.testing.assert_array_equal(measurement.mag_db, [1.0, 0.0])
     plot_widget.close()
 
     window = _window(qapp, monkeypatch, tmp_path)

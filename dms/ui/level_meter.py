@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from PyQt6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation, pyqtSlot
 from PyQt6.QtGui import (
     QColor,
@@ -25,7 +27,7 @@ def _mix(first: QColor, second: QColor, amount: float) -> QColor:
 
 
 class LevelMeterWidget(QWidget):
-    """A token-based RMS meter with a recessed, glowing fill."""
+    """A token-based RMS meter with modern and classic renderers."""
 
     _FLOOR = -60.0
     _CLIP = 0.0
@@ -59,6 +61,9 @@ class LevelMeterWidget(QWidget):
         mode = app.property("fastgraphVisualMode") if app is not None else "dark"
         return mode_tokens(mode)
 
+    def _uses_classic_blocks(self) -> bool:
+        return self._tokens().classic_controls
+
     @classmethod
     def _fraction(cls, db: float) -> float:
         return max(0.0, min(1.0, (float(db) - cls._FLOOR) / (cls._CLIP - cls._FLOOR)))
@@ -89,6 +94,27 @@ class LevelMeterWidget(QWidget):
         track = well.adjusted(2.5, 2.5, -2.5, -2.5)
         return outer, well, track
 
+    def _classic_block_rects(self, track: QRectF) -> list[QRectF]:
+        gap = 2.0
+        if self._orientation == Qt.Orientation.Horizontal:
+            count = max(1, int((track.width() + gap) // 14.0))
+            extent = (track.width() - gap * (count - 1)) / count
+            return [
+                QRectF(track.left() + index * (extent + gap), track.top(), extent, track.height())
+                for index in range(count)
+            ]
+        count = max(1, int((track.height() + gap) // 12.0))
+        extent = (track.height() - gap * (count - 1)) / count
+        return [
+            QRectF(
+                track.left(),
+                track.bottom() - (index + 1) * extent - index * gap,
+                track.width(),
+                extent,
+            )
+            for index in range(count)
+        ]
+
     @pyqtSlot(float)
     def set_level(self, db: float) -> None:
         target = max(self._FLOOR, min(self._CLIP, float(db)))
@@ -111,6 +137,10 @@ class LevelMeterWidget(QWidget):
     def paintEvent(self, event) -> None:
         tokens = self._tokens()
         painter = QPainter(self)
+        if tokens.classic_controls:
+            self._paint_classic_blocks(painter, tokens)
+            painter.end()
+            return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         outer, well, track = self._paint_rects()
         radius = min(float(tokens.geometry.radius_button), track.height() / 2.0, track.width() / 2.0)
@@ -224,3 +254,52 @@ class LevelMeterWidget(QWidget):
         painter.setPen(QPen(border, 1.0))
         painter.drawRoundedRect(track, radius, radius)
         painter.end()
+
+    def _paint_classic_blocks(self, painter: QPainter, tokens: ThemeTokens) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        outer, well, track = self._paint_rects()
+        dark_variant = tokens.dark_bevel
+        terminal_variant = tokens.terminal_chrome
+        highlight = QColor(tokens.accent if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF"))
+        mid_shadow = QColor("#082E0E" if terminal_variant else ("#1B1B1B" if dark_variant else "#808080"))
+        shadow = QColor(tokens.border)
+
+        painter.fillRect(outer, QColor(tokens.control))
+        painter.setPen(QPen(highlight, 1.0))
+        painter.drawLine(outer.topLeft(), outer.topRight())
+        painter.drawLine(outer.topLeft(), outer.bottomLeft())
+        painter.setPen(QPen(shadow, 1.0))
+        painter.drawLine(outer.bottomLeft(), outer.bottomRight())
+        painter.drawLine(outer.topRight(), outer.bottomRight())
+
+        painter.fillRect(well, QColor(tokens.raised))
+        painter.setPen(QPen(shadow, 1.0))
+        painter.drawLine(well.topLeft(), well.topRight())
+        painter.drawLine(well.topLeft(), well.bottomLeft())
+        painter.setPen(QPen(mid_shadow, 1.0))
+        painter.drawLine(well.bottomLeft(), well.bottomRight())
+        painter.drawLine(well.topRight(), well.bottomRight())
+
+        painter.fillRect(track, QColor(tokens.alternate))
+        blocks = self._classic_block_rects(track.adjusted(1.0, 1.0, -1.0, -1.0))
+        fraction = self._fraction(self._display_db)
+        active_count = min(len(blocks), int(math.ceil(fraction * len(blocks)))) if fraction > 0 else 0
+        for index, block in enumerate(blocks):
+            if index >= active_count:
+                painter.fillRect(block, QColor(tokens.raised))
+                continue
+            block_fraction = (index + 1) / len(blocks)
+            block_db = self._FLOOR + (self._CLIP - self._FLOOR) * block_fraction
+            if block_db >= self._DANGER_BLEND_DB:
+                color = QColor(tokens.danger)
+            elif block_db >= self._WARNING_BLEND_DB:
+                color = QColor(tokens.warning)
+            else:
+                color = QColor(tokens.accent if terminal_variant else tokens.selected)
+            painter.fillRect(block, color)
+            painter.setPen(QPen(_mix(color, highlight, 0.22), 1.0))
+            painter.drawLine(block.topLeft(), block.topRight())
+            painter.drawLine(block.topLeft(), block.bottomLeft())
+            painter.setPen(QPen(_mix(color, shadow, 0.35), 1.0))
+            painter.drawLine(block.bottomLeft(), block.bottomRight())
+            painter.drawLine(block.topRight(), block.bottomRight())

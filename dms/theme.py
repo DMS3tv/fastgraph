@@ -1,4 +1,4 @@
-"""Application-wide light/dark theme management."""
+"""Application-wide theme management."""
 
 from __future__ import annotations
 
@@ -8,17 +8,87 @@ from PyQt6.QtWidgets import QApplication
 
 from dms import brand_brand
 from dms.settings_manager import SettingsManager
-from dms.ui.style_tokens import BRAND_TOKENS, ThemeTokens, tokens_for
+from dms.ui.style_tokens import (
+    BRAND_TOKENS,
+    ThemeTokens,
+    theme_definition,
+    theme_definitions,
+    tokens_for,
+)
 
 
 DARK = "dark"
 LIGHT = "light"
-VALID_THEMES = {DARK, LIGHT}
+FASTGRAPH_95 = "fastgraph95"
+FASTGRAPH_95_DARK = "fastgraph95_dark"
+HACKERMAN_95 = "hackerman95"
+VALID_THEMES = {definition.key for definition in theme_definitions()}
 
 
 def normalize_theme(value: object) -> str:
     value = str(value or "").strip().lower()
     return value if value in VALID_THEMES else DARK
+
+
+def _relative_luminance(color: QColor) -> float:
+    channels = []
+    for value in (color.redF(), color.greenF(), color.blueF()):
+        channels.append(value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def graph_contrast_ratio(foreground: object, background: object) -> float:
+    """Return the WCAG contrast ratio for two solid colors."""
+    foreground_color = QColor(foreground)
+    background_color = QColor(background)
+    lighter = max(_relative_luminance(foreground_color), _relative_luminance(background_color))
+    darker = min(_relative_luminance(foreground_color), _relative_luminance(background_color))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def ensure_graph_color(
+    foreground: object,
+    background: object,
+    *,
+    minimum_ratio: float = 4.5,
+) -> QColor:
+    """Adjust a display trace toward black or white until it stays visible."""
+    source = QColor(foreground)
+    backdrop = QColor(background)
+    if not source.isValid():
+        source = QColor("#000000")
+    if not backdrop.isValid():
+        backdrop = QColor("#ffffff")
+    if graph_contrast_ratio(source, backdrop) >= minimum_ratio:
+        return source
+
+    black = QColor("#000000")
+    white = QColor("#ffffff")
+    target = (
+        black
+        if graph_contrast_ratio(black, backdrop) >= graph_contrast_ratio(white, backdrop)
+        else white
+    )
+    low = 0.0
+    high = 1.0
+    for _ in range(14):
+        amount = (low + high) / 2.0
+        candidate = QColor(
+            round(source.red() + (target.red() - source.red()) * amount),
+            round(source.green() + (target.green() - source.green()) * amount),
+            round(source.blue() + (target.blue() - source.blue()) * amount),
+            source.alpha(),
+        )
+        if graph_contrast_ratio(candidate, backdrop) >= minimum_ratio:
+            high = amount
+        else:
+            low = amount
+    return QColor(
+        round(source.red() + (target.red() - source.red()) * high),
+        round(source.green() + (target.green() - source.green()) * high),
+        round(source.blue() + (target.blue() - source.blue()) * high),
+        source.alpha(),
+    )
 
 
 def theme_colors(theme: str) -> dict[str, str]:
@@ -31,6 +101,14 @@ def theme_colors(theme: str) -> dict[str, str]:
         meter_peak="#20252d" if light else "#ffffff",
         lowercase=True,
     )
+
+
+def theme_trace_palette(theme: str, *, brand_mode: bool = False) -> list[str]:
+    """Return a copy of the ordered trace palette for one visual mode."""
+    if brand_mode:
+        return list(brand_brand.TRACE_PALETTE)
+    palette = tokens_for(normalize_theme(theme)).trace_palette
+    return list(palette) if palette else list(brand_brand.NON_BRAND_DEFAULT_COLORS)
 
 
 def _color_dict(
@@ -89,10 +167,12 @@ def _status_accent_colors(light: bool) -> dict[str, tuple[str, str, str]]:
 
 
 def application_stylesheet(theme: str) -> str:
-    c = theme_colors(theme)
-    light = normalize_theme(theme) == LIGHT
-    token = tokens_for(theme)
-    return _stylesheet_body(
+    normalized = normalize_theme(theme)
+    c = theme_colors(normalized)
+    light = normalized == LIGHT
+    definition = theme_definition(normalized)
+    token = definition.tokens
+    base = _stylesheet_body(
         c,
         visual_tokens=token,
         status=_status_accent_colors(light),
@@ -100,6 +180,233 @@ def application_stylesheet(theme: str) -> str:
         tab_selected=token.raised,
         group_bg=token.panel,
     )
+    style_builder = _STYLE_FAMILY_BUILDERS.get(definition.style_family)
+    return base + style_builder(c) if style_builder is not None else base
+
+
+def fastgraph95_application_stylesheet() -> str:
+    """Return the registered FastGraph 95 theme stylesheet."""
+    return application_stylesheet(FASTGRAPH_95)
+
+
+def _fastgraph95_stylesheet(
+    c: dict[str, str],
+    *,
+    dark_variant: bool = False,
+    terminal_variant: bool = False,
+) -> str:
+    """Square, beveled FastGraph 95 overrides for the shared widget rules."""
+    highlight = "#596259" if terminal_variant else ("#8f8f8f" if dark_variant else "#ffffff")
+    mid_edge = "#121512" if terminal_variant else ("#1b1b1b" if dark_variant else "#808080")
+    field_bg = c["raised"]
+    field_text = c["text"]
+    selection_text = c["text"] if terminal_variant else ("#eeeeee" if dark_variant else "#ffffff")
+    tooltip_bg = c["raised"] if terminal_variant else ("#303030" if dark_variant else "#ffffe1")
+    font_stack = "'Monaco', 'Courier New', monospace" if terminal_variant else "'Tahoma', 'MS Sans Serif', sans-serif"
+    return f"""
+    QWidget {{
+        font-family: {font_stack};
+        font-size: 12px;
+        border-radius: 0px;
+    }}
+    QWidget[ditherSurface="true"] {{ background: transparent; border: none; }}
+    QWidget[surfaceLevel="viewport"], QWidget[surfaceLevel="panel"],
+    QWidget[surfaceLevel="raised"] {{
+        background-color: {c['panel']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+    }}
+    QPushButton {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: none;
+        border-radius: 0px;
+        padding: 4px 10px;
+        min-height: 24px;
+    }}
+    QPushButton:hover {{ background-color: {c['control_hover']}; }}
+    QPushButton:pressed {{ background-color: {c['control']}; padding: 5px 9px 3px 11px; }}
+    QPushButton:disabled {{ color: {c['disabled']}; background-color: {c['control']}; }}
+    QMessageBox, QInputDialog, QFileDialog, QDialog {{
+        background-color: {c['panel']};
+        color: {c['text']};
+    }}
+    QMessageBox QLabel, QInputDialog QLabel, QFileDialog QLabel,
+    QDialogButtonBox {{ background: transparent; color: {c['text']}; border: none; }}
+    QDialogButtonBox QPushButton, QMessageBox QPushButton,
+    QInputDialog QPushButton, QFileDialog QPushButton {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+        padding: 4px 12px;
+        min-width: 64px;
+        min-height: 22px;
+    }}
+    QDialogButtonBox QPushButton:pressed, QMessageBox QPushButton:pressed,
+    QInputDialog QPushButton:pressed, QFileDialog QPushButton:pressed {{
+        border-top: 2px solid #000000;
+        border-left: 2px solid #000000;
+        border-right: 2px solid {highlight};
+        border-bottom: 2px solid {highlight};
+        padding: 5px 11px 3px 13px;
+    }}
+    QPushButton#btn_keep, QPushButton#btn_fail, QPushButton#btn_danger,
+    QPushButton#btn_start, QPushButton#btn_cancel, QPushButton#btn_export,
+    QPushButton#btn_upload, QPushButton#btn_update, QPushButton#btn_feedback {{
+        background-color: {c['control']}; color: {c['text']}; border-radius: 0px;
+    }}
+    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit,
+    QListWidget, QTreeWidget, QTableWidget, QKeySequenceEdit {{
+        background-color: {field_bg};
+        color: {field_text};
+        border-top: 2px solid #000000;
+        border-left: 2px solid #000000;
+        border-right: 2px solid {highlight};
+        border-bottom: 2px solid {highlight};
+        border-radius: 0px;
+        selection-background-color: {c['selected']};
+        selection-color: {selection_text};
+    }}
+    QComboBox::drop-down {{
+        width: 20px;
+        background: {c['control']};
+        border-left: 1px solid {mid_edge};
+    }}
+    QComboBox QAbstractItemView {{
+        background: {field_bg}; color: {field_text};
+        border: 1px solid #000000;
+        selection-background-color: {c['selected']};
+        selection-color: {selection_text};
+    }}
+    QGroupBox {{
+        background-color: {c['panel']};
+        border: 1px solid {mid_edge};
+        border-radius: 0px;
+        margin-top: 14px;
+    }}
+    QGroupBox::title {{
+        color: {c['text']};
+        background-color: {c['panel']};
+        left: 8px;
+        padding: 0 4px;
+        font-family: 'MS Sans Serif', 'Tahoma', sans-serif;
+        font-size: 12px;
+        font-weight: normal;
+    }}
+    QTabWidget::pane {{
+        background: {c['panel']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+        top: -2px;
+    }}
+    QTabBar::tab {{
+        background: {c['control']};
+        color: {c['text']};
+        padding: 5px 14px;
+        margin-right: 1px;
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid {mid_edge};
+        border-radius: 0px;
+    }}
+    QTabBar::tab:hover {{ background: {c['control_hover']}; }}
+    QTabBar::tab:selected {{
+        background: {c['panel']};
+        color: {c['text']};
+        border-bottom: 2px solid {c['panel']};
+        padding-top: 6px;
+    }}
+    QToolButton#section_toggle {{
+        background-color: {c['control']}; color: {c['text']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+    }}
+    QToolButton#section_toggle:hover,
+    QToolButton#section_toggle:checked {{ background-color: {c['control_hover']}; border-left: 2px solid {highlight}; }}
+    QCheckBox::indicator, QRadioButton::indicator {{
+        width: 13px; height: 13px;
+        background: {field_bg};
+        border-top: 1px solid #000000;
+        border-left: 1px solid #000000;
+        border-right: 1px solid {highlight};
+        border-bottom: 1px solid {highlight};
+        border-radius: 0px;
+    }}
+    QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+        background: {c['selected']};
+        border: 2px solid {highlight};
+    }}
+    QScrollBar:vertical {{ width: 17px; margin: 17px 0 17px 0; background: {c['alternate']}; border-radius: 0px; }}
+    QScrollBar:horizontal {{ height: 17px; margin: 0 17px 0 17px; background: {c['alternate']}; border-radius: 0px; }}
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+        background: {c['control']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+    }}
+    QScrollBar::add-line, QScrollBar::sub-line {{
+        background: {c['control']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        width: 17px; height: 17px;
+    }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: {c['alternate']}; }}
+    QHeaderView::section {{
+        background: {c['control']}; color: {c['text']};
+        border-top: 1px solid {highlight}; border-left: 1px solid {highlight};
+        border-right: 1px solid #000000; border-bottom: 1px solid #000000;
+        padding: 3px;
+    }}
+    QMenuBar, QMenu {{ background: {c['panel']}; color: {c['text']}; border: 1px solid #000000; }}
+    QMenu::item:selected {{ background: {c['selected']}; color: {selection_text}; }}
+    QStatusBar {{
+        background: {c['panel']};
+        color: {c['text']};
+        border-top: 2px solid {highlight};
+    }}
+    QToolTip {{ background: {tooltip_bg}; color: {c['text']}; border: 1px solid #000000; }}
+    """
+
+
+def _fastgraph95_dark_stylesheet(c: dict[str, str]) -> str:
+    return _fastgraph95_stylesheet(c, dark_variant=True)
+
+
+def _hackerman95_stylesheet(c: dict[str, str]) -> str:
+    return _fastgraph95_stylesheet(c, dark_variant=True, terminal_variant=True) + f"""
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+    QPlainTextEdit:focus, QListWidget:focus, QTreeWidget:focus {{
+        border: 2px solid {c['accent']};
+    }}
+    QTabBar::tab:selected {{ color: {c['accent']}; border-bottom-color: {c['accent']}; }}
+    QMenu::item:selected {{ background: {c['selected']}; color: {c['accent']}; }}
+    QLabel[tone="accent"], QLabel#label_channel_active {{ color: {c['accent']}; }}
+    """
+
+
+_STYLE_FAMILY_BUILDERS = {
+    "fastgraph95": _fastgraph95_stylesheet,
+    "fastgraph95_dark": _fastgraph95_dark_stylesheet,
+    "hackerman95": _hackerman95_stylesheet,
+}
 
 
 def _stylesheet_body(
@@ -121,6 +428,9 @@ def _stylesheet_body(
     return f"""
     QWidget {{ background-color: {c['window']}; color: {c['text']}; font-family: '{typography.ui_family}', 'Helvetica Neue', Arial, sans-serif; font-size: {typography.body_px}px; }}
     QMainWindow, QDialog {{ background-color: {c['window']}; }}
+    QMessageBox, QInputDialog, QFileDialog {{ background-color: {c['panel']}; color: {c['text']}; }}
+    QMessageBox QLabel, QInputDialog QLabel, QFileDialog QLabel, QDialogButtonBox {{ background-color: transparent; color: {c['text']}; border: none; }}
+    QDialogButtonBox QPushButton {{ min-width: 72px; }}
     QLabel {{ background-color: transparent; }}
     QCheckBox, QRadioButton {{ background-color: transparent; }}
     QToolTip {{ background-color: {c['base']}; color: {c['text']}; border: 1px solid {c['border']}; }}

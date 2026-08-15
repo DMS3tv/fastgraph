@@ -24,6 +24,7 @@ class _RoundedViewportOverlay(QWidget):
         app = QApplication.instance()
         mode = app.property("fastgraphVisualMode") if app is not None else "dark"
         tokens = mode_tokens(mode)
+        radius = 0 if tokens.classic_controls else self._radius
         rect = self.rect().adjusted(0, 0, -1, -1)
         if rect.width() <= 0 or rect.height() <= 0:
             return
@@ -35,7 +36,7 @@ class _RoundedViewportOverlay(QWidget):
             outside = QPainterPath()
             outside.addRect(QRectF(self.rect()))
             rounded = QPainterPath()
-            rounded.addRoundedRect(QRectF(rect), self._radius, self._radius)
+            rounded.addRoundedRect(QRectF(rect), radius, radius)
             painter.fillPath(
                 outside.subtracted(rounded),
                 QColor(tokens.viewport),
@@ -45,8 +46,8 @@ class _RoundedViewportOverlay(QWidget):
             painter.setPen(QPen(QColor(tokens.border), 1.0))
             painter.drawRoundedRect(
                 QRectF(rect),
-                self._radius,
-                self._radius,
+                radius,
+                radius,
             )
         finally:
             painter.end()

@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## [0.4.1] - 2026-08-14
+
+### Added
+
+- Theme choices in Settings: Default dark, Default light, FastGraph 95,
+  FastGraph 95 Dark, and Hackerman 95.
+- A registered theme definition system so future themes can provide their own
+  colors, typography, geometry, motion, graph palette, and renderer family.
+- FastGraph 95 interface surfaces, classic buttons, tabs, fields, menus,
+  dialogs, and dither details.
+- FastGraph 95 Dark and Hackerman 95 variants. Hackerman 95 uses charcoal
+  interface surfaces with selected neon-green controls and multi-color neon
+  graph traces.
+- Stepped graph rendering for the 95 themes. It preserves the measured curve
+  while giving the display a fine retro step appearance.
+
+### Improved
+
+- Kept graph backgrounds and trace palettes readable in every theme, including
+  black graph fields in Hackerman 95.
+- Changed the 95-theme level meter to a segmented progress-bar display.
+- Made headphone metadata available from a menu that matches the Inputs menu.
+- Updated Curator exports with theme-aware graph styling and corrected bottom
+  text spacing so labels do not cut off.
+
 ### Fixed
 
 - Prevented Linux PipeWire startup and calibration crashes by opening only

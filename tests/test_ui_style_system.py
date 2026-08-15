@@ -2,11 +2,28 @@ from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from dms.theme import DARK, LIGHT, ThemeController, application_stylesheet
+from dms.theme import (
+    DARK,
+    FASTGRAPH_95,
+    FASTGRAPH_95_DARK,
+    HACKERMAN_95,
+    LIGHT,
+    ThemeController,
+    application_stylesheet,
+)
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import DARK_TOKENS, BRAND_TOKENS, LIGHT_TOKENS, tokens_for
+from dms.ui.style_tokens import (
+    DARK_TOKENS,
+    BRAND_TOKENS,
+    LIGHT_TOKENS,
+    FASTGRAPH_95_TOKENS,
+    FASTGRAPH_95_DARK_TOKENS,
+    HACKERMAN_95_TOKENS,
+    theme_definitions,
+    tokens_for,
+)
 
 
 _APP: QApplication | None = None
@@ -49,7 +66,17 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert BRAND_TOKENS.danger == "#6E6E6E"
     assert BRAND_TOKENS.typography.heading_family == "Heading"
     assert tokens_for(LIGHT) is LIGHT_TOKENS
+    assert tokens_for(FASTGRAPH_95) is FASTGRAPH_95_TOKENS
+    assert tokens_for(FASTGRAPH_95_DARK) is FASTGRAPH_95_DARK_TOKENS
+    assert tokens_for(HACKERMAN_95) is HACKERMAN_95_TOKENS
     assert tokens_for(DARK, brand_mode=True) is BRAND_TOKENS
+    assert [definition.label for definition in theme_definitions()] == [
+        "Default dark",
+        "Default light",
+        "FastGraph 95",
+        "FastGraph 95 Dark",
+        "Hackerman 95",
+    ]
 
 
 def test_stylesheet_exposes_surface_and_tab_hierarchy() -> None:
@@ -120,6 +147,50 @@ def test_modern_button_hover_and_press_endpoints() -> None:
     flash = button._glow_profile()
     assert flash["center_alpha"] > hover["center_alpha"]
     assert flash["uniform_alpha"] > hover["uniform_alpha"]
+
+
+def test_fastgraph95_button_disables_glow_and_uses_square_geometry() -> None:
+    app = _app()
+    app.setProperty("fastgraphVisualMode", FASTGRAPH_95)
+    button = ModernButton("Action")
+    button.resize(button.sizeHint())
+
+    button._set_hover_progress(1.0)
+    button._set_press_progress(1.0)
+
+    assert button._tokens() is FASTGRAPH_95_TOKENS
+    assert button._effective_hover() == 0.0
+    assert button._glow_profile()["center_alpha"] == 0
+    assert FASTGRAPH_95_TOKENS.geometry.radius_button == 0
+
+
+def test_fastgraph95_dark_uses_classic_renderer_without_bright_surfaces() -> None:
+    app = _app()
+    app.setProperty("fastgraphVisualMode", FASTGRAPH_95_DARK)
+    button = ModernButton("Action")
+
+    assert button._tokens() is FASTGRAPH_95_DARK_TOKENS
+    assert button._glow_profile()["center_alpha"] == 0
+    assert FASTGRAPH_95_DARK_TOKENS.raised == "#292929"
+    assert FASTGRAPH_95_DARK_TOKENS.plot_bg == "#202020"
+
+
+def test_hackerman95_uses_terminal_tokens_and_neon_trace_palette() -> None:
+    app = _app()
+    app.setProperty("fastgraphVisualMode", HACKERMAN_95)
+    button = ModernButton("Action")
+
+    assert button._tokens() is HACKERMAN_95_TOKENS
+    assert button._glow_profile()["center_alpha"] == 0
+    assert HACKERMAN_95_TOKENS.classic_controls is True
+    assert HACKERMAN_95_TOKENS.dark_bevel is True
+    assert HACKERMAN_95_TOKENS.retro_graph is True
+    assert HACKERMAN_95_TOKENS.terminal_chrome is True
+    assert HACKERMAN_95_TOKENS.background == "#111411"
+    assert HACKERMAN_95_TOKENS.panel == "#1D211D"
+    assert HACKERMAN_95_TOKENS.text == "#D3D9D3"
+    assert HACKERMAN_95_TOKENS.plot_bg == "#010301"
+    assert HACKERMAN_95_TOKENS.trace_palette[0] == "#39FF14"
 
 
 def test_modern_button_animates_hover_and_press() -> None:

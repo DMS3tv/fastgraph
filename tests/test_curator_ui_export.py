@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox, QPushButton, Q
 from dms.curator.export_image import ACCENT_COLOR, FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS, export_graph_image, fit_title
 import dms.curator.export_image as export_image_module
 from dms.curator.models import CurveData
+from dms.theme import DARK, FASTGRAPH_95, FASTGRAPH_95_DARK, HACKERMAN_95
 from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 import dms.ui.curator_widget as main_window_module
 from dms.ui.curator_widget import CuratorWidget
@@ -68,11 +69,59 @@ def test_curator_preview_curves_have_no_glow_items(qapp) -> None:
     assert window.graph_state.y_max == 10.0
 
 
+def test_fastgraph95_curves_use_the_fine_step_display_renderer(qapp) -> None:
+    window = CuratorWidget(ConsoleEventStore(), theme=FASTGRAPH_95)
+    fr = CurveData(
+        kind="fr",
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([1.0, 0.0]),
+    )
+    window.add_curve(fr, "FR", animate=False)
+    window._redraw()
+    curve = next(item for item in window._graph._items if isinstance(item, pg.PlotDataItem))
+    assert curve.opts["antialias"] is True
+    np.testing.assert_array_equal(curve.xData, [100.0, 1000.0, 1000.0])
+    np.testing.assert_array_equal(curve.yData, [1.0, 1.0, 0.0])
+
+    window.apply_theme(DARK)
+    curve = next(item for item in window._graph._items if isinstance(item, pg.PlotDataItem))
+    assert curve.opts["antialias"] is True
+    np.testing.assert_array_equal(curve.xData, [100.0, 1000.0])
+    np.testing.assert_array_equal(curve.yData, [1.0, 0.0])
+    window.close()
+
+
+def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(qapp) -> None:
+    window = CuratorWidget(ConsoleEventStore(), theme=HACKERMAN_95)
+    curve = CurveData(
+        kind="fr",
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([1.0, 0.0]),
+    )
+
+    first = window.add_curve(curve, "First", animate=False)
+    second = window.add_curve(curve, "Second", animate=False)
+
+    assert first.color == "#39FF14"
+    assert second.color == "#00E5FF"
+    assert first.color != second.color
+    window.close()
+
+
 class _PenRecorder:
     def __init__(self) -> None:
         self.widths: list[float] = []
 
     def setBrush(self, _brush) -> None:
+        pass
+
+    def save(self) -> None:
+        pass
+
+    def restore(self) -> None:
+        pass
+
+    def setRenderHint(self, _hint, _enabled=True) -> None:
         pass
 
     def setPen(self, pen) -> None:
@@ -394,6 +443,29 @@ def test_export_graph_image_writes_16_by_9_png(qapp, tmp_path: Path) -> None:
     assert output.stat().st_size > 0
     assert image.width() == 1920
     assert image.height() == 1080
+
+
+def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
+    qapp, tmp_path: Path
+) -> None:
+    source = tmp_path / "curve.txt"
+    source.write_text("100 1\n1000 2\n", encoding="utf-8")
+    window = CuratorWidget(ConsoleEventStore(), theme=FASTGRAPH_95_DARK)
+    window.import_files([source])
+    output = tmp_path / "poster-dark.png"
+
+    export_graph_image(
+        window.graph_state,
+        output,
+        size=(1920, 1080),
+        theme=FASTGRAPH_95_DARK,
+    )
+
+    image = QImage(str(output))
+    assert image.pixelColor(1880, 40).name().upper() == "#315B85"
+    assert image.pixelColor(10, 1068).name().upper() == "#3C3C3C"
+    assert image.pixelColor(100, 1018).name().upper() != "#202020"
+    window.close()
 
 
 def test_export_uses_gold_accent_constant() -> None:

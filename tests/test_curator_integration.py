@@ -189,6 +189,40 @@ def test_inputs_overlay_closes_on_tab_change(qapp, monkeypatch, tmp_path: Path) 
     window.close()
 
 
+def test_metadata_button_opens_dropdown_and_saves_session(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.resize(1280, 800)
+    window.show()
+    qapp.processEvents()
+
+    window._open_metadata_overlay()
+    window._metadata_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+
+    assert window._metadata_overlay.isVisible()
+    assert window._metadata_overlay.parent() is window._tabs
+    assert window._metadata_overlay.geometry().right() <= window._tabs.rect().right()
+    assert window._metadata_overlay.geometry().bottom() <= window._tabs.rect().bottom()
+    assert not window._inputs_overlay_open
+
+    editor = window._metadata_editor
+    editor._rig.setCurrentText("B&K 5128")
+    editor._brand.setText("DMS")
+    editor._model.setText("Dropdown Test")
+    editor._channel_side.setCurrentText("L")
+    window._save_metadata_overlay()
+    window._metadata_overlay_animation.setCurrentTime(180)
+    qapp.processEvents()
+
+    assert window._session.rig == "B&K 5128"
+    assert window._session.model == "Dropdown Test"
+    assert window._session.channel_side == "L"
+    assert not window._metadata_overlay.isVisible()
+    window.close()
+
+
 def test_measure_plots_keep_frequency_endpoints_inside_view(
     qapp, monkeypatch, tmp_path: Path
 ) -> None:

@@ -1,15 +1,26 @@
-from PyQt6.QtWidgets import (
-    QDialog, QFormLayout, QLineEdit, QComboBox, QCheckBox,
-    QPushButton, QDialogButtonBox, QVBoxLayout, QGroupBox,
-    QLabel, QScrollArea, QWidget,
-)
+from __future__ import annotations
+
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
-from dms.ui.modern_button import ModernButton as QPushButton
 
 
-class SessionDialog(QDialog):
+class SessionEditor(QWidget):
+    """Reusable headphone metadata editor for dialogs and header menus."""
+
     _RIG_OPTIONS = [
         "KB500X",
         "B&K 4128",
@@ -21,23 +32,18 @@ class SessionDialog(QDialog):
 
     def __init__(
         self,
-        settings: SettingsManager,
-        parent=None,
+        parent: QWidget | None = None,
+        *,
         initial_session: SessionData | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Headphone Metadata")
-        self.setMinimumWidth(480)
-        self._settings = settings
-        self._initial_session = initial_session
         self._build_ui()
+        self.set_session(initial_session)
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-
-        outer.addWidget(QLabel(
-            "<b>Enter headphone / test setup info before measuring.</b>"
-        ))
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(QLabel("<b>Headphone and test setup</b>"))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -45,10 +51,10 @@ class SessionDialog(QDialog):
         form = QFormLayout(inner)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        def line(placeholder="") -> QLineEdit:
-            w = QLineEdit()
-            w.setPlaceholderText(placeholder)
-            return w
+        def line(placeholder: str = "") -> QLineEdit:
+            field = QLineEdit()
+            field.setPlaceholderText(placeholder)
+            return field
 
         self._rig = QComboBox()
         self._rig.setEditable(False)
@@ -67,23 +73,29 @@ class SessionDialog(QDialog):
 
         self._form_factor = QComboBox()
         self._form_factor.addItems(["over-ear", "on-ear", "in-ear"])
-        self._form_factor.currentTextChanged.connect(self._on_form_factor_changed)
+        self._form_factor.currentTextChanged.connect(
+            self._sync_in_ear_fitment_visibility
+        )
 
         self._in_ear_fitment = QComboBox()
-        self._in_ear_fitment.addItems(["shallow fitment", "mid fitment", "deep fitment"])
+        self._in_ear_fitment.addItems(
+            ["shallow fitment", "mid fitment", "deep fitment"]
+        )
 
         self._open_back = QComboBox()
         self._open_back.addItems(["open back", "closed back", "semi-open"])
 
         self._pads = line("e.g. foam tips size M")
         self._connection = QComboBox()
-        self._connection.addItems([
-            "wired analog",
-            "wired USB",
-            "bluetooth",
-            "wireless dongle",
-            "other",
-        ])
+        self._connection.addItems(
+            [
+                "wired analog",
+                "wired USB",
+                "bluetooth",
+                "wireless dongle",
+                "other",
+            ]
+        )
         self._channel_side = QComboBox()
         self._channel_side.addItems(["", "L", "R"])
         self._channel_side.setMinimumWidth(120)
@@ -104,8 +116,6 @@ class SessionDialog(QDialog):
         form.addRow("Pads / Tips Notes", self._pads)
         form.addRow("Connection", self._connection)
         self._fitment_label = form.labelForField(self._in_ear_fitment)
-        self._load_initial_values()
-        self._sync_in_ear_fitment_visibility()
 
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
@@ -114,15 +124,7 @@ class SessionDialog(QDialog):
         self._status.setProperty("tone", "error")
         outer.addWidget(self._status)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.accepted.connect(self._validate_and_accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
-
-    def _validate_and_accept(self) -> None:
+    def validate(self) -> bool:
         missing = []
         if not self._rig.currentText().strip():
             missing.append("Rig")
@@ -132,35 +134,54 @@ class SessionDialog(QDialog):
             missing.append("Model")
         if not self._channel_side.currentText().strip():
             missing.append("Channel Side")
-        if missing:
-            self._status.setText(f"Required: {', '.join(missing)}")
-            return
-        self.accept()
+        self._status.setText(f"Required: {', '.join(missing)}" if missing else "")
+        return not missing
 
-    def _load_initial_values(self) -> None:
-        if self._initial_session is None:
-            return
+    def set_session(self, session: SessionData | None) -> None:
+        self._status.setText("")
+        self._rig.setCurrentIndex(0)
+        self._brand.clear()
+        self._model.clear()
+        self._model_number.clear()
+        self._asset_tag.clear()
+        self._firmware.clear()
+        self._eq.setChecked(False)
+        self._anc.setChecked(False)
+        self._transparency.setChecked(False)
+        self._form_factor.setCurrentIndex(0)
+        self._in_ear_fitment.setCurrentIndex(0)
+        self._open_back.setCurrentText("closed back")
+        self._pads.clear()
+        self._connection.setCurrentIndex(0)
+        self._channel_side.setCurrentIndex(0)
 
-        s = self._initial_session
-        rig_idx = self._rig.findText(s.rig)
-        if rig_idx >= 0:
-            self._rig.setCurrentIndex(rig_idx)
-        self._brand.setText(s.brand)
-        self._model.setText(s.model)
-        self._model_number.setText(s.model_number)
-        self._asset_tag.setText(s.asset_tag)
-        self._firmware.setText(s.firmware)
-        self._eq.setChecked(s.eq_applied)
-        self._anc.setChecked(s.anc_mode)
-        self._transparency.setChecked(getattr(s, "transparency_mode", False))
-        self._form_factor.setCurrentText(s.form_factor)
-        fitment = getattr(s, "in_ear_fitment", "")
-        if fitment:
-            self._in_ear_fitment.setCurrentText(fitment)
-        self._open_back.setCurrentText("open back" if s.open_back else "closed back")
-        self._pads.setText(s.pads_notes)
-        self._connection.setCurrentText(s.connection)
-        self._channel_side.setCurrentText((getattr(s, "channel_side", "") or "").strip().upper())
+        if session is not None:
+            rig_index = self._rig.findText(session.rig)
+            if rig_index >= 0:
+                self._rig.setCurrentIndex(rig_index)
+            self._brand.setText(session.brand)
+            self._model.setText(session.model)
+            self._model_number.setText(session.model_number)
+            self._asset_tag.setText(session.asset_tag)
+            self._firmware.setText(session.firmware)
+            self._eq.setChecked(session.eq_applied)
+            self._anc.setChecked(session.anc_mode)
+            self._transparency.setChecked(
+                getattr(session, "transparency_mode", False)
+            )
+            self._form_factor.setCurrentText(session.form_factor)
+            fitment = getattr(session, "in_ear_fitment", "")
+            if fitment:
+                self._in_ear_fitment.setCurrentText(fitment)
+            self._open_back.setCurrentText(
+                "open back" if session.open_back else "closed back"
+            )
+            self._pads.setText(session.pads_notes)
+            self._connection.setCurrentText(session.connection)
+            self._channel_side.setCurrentText(
+                (getattr(session, "channel_side", "") or "").strip().upper()
+            )
+        self._sync_in_ear_fitment_visibility()
 
     def session_data(self) -> SessionData:
         return SessionData(
@@ -186,24 +207,55 @@ class SessionDialog(QDialog):
         )
 
     def _on_anc_toggled(self, checked: bool) -> None:
-        if not checked:
-            return
-        self._transparency.blockSignals(True)
-        self._transparency.setChecked(False)
-        self._transparency.blockSignals(False)
+        if checked:
+            self._transparency.blockSignals(True)
+            self._transparency.setChecked(False)
+            self._transparency.blockSignals(False)
 
     def _on_transparency_toggled(self, checked: bool) -> None:
-        if not checked:
-            return
-        self._anc.blockSignals(True)
-        self._anc.setChecked(False)
-        self._anc.blockSignals(False)
+        if checked:
+            self._anc.blockSignals(True)
+            self._anc.setChecked(False)
+            self._anc.blockSignals(False)
 
-    def _on_form_factor_changed(self, _value: str) -> None:
-        self._sync_in_ear_fitment_visibility()
-
-    def _sync_in_ear_fitment_visibility(self) -> None:
+    def _sync_in_ear_fitment_visibility(self, _value: str = "") -> None:
         is_in_ear = self._form_factor.currentText() == "in-ear"
         self._in_ear_fitment.setVisible(is_in_ear)
         if self._fitment_label is not None:
             self._fitment_label.setVisible(is_in_ear)
+
+
+class SessionDialog(QDialog):
+    """Compatibility dialog that uses the shared metadata editor."""
+
+    _RIG_OPTIONS = SessionEditor._RIG_OPTIONS
+
+    def __init__(
+        self,
+        settings: SettingsManager,
+        parent=None,
+        initial_session: SessionData | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Headphone Metadata")
+        self.setMinimumWidth(480)
+        self._settings = settings
+
+        outer = QVBoxLayout(self)
+        self._editor = SessionEditor(self, initial_session=initial_session)
+        outer.addWidget(self._editor, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+
+    def _validate_and_accept(self) -> None:
+        if self._editor.validate():
+            self.accept()
+
+    def session_data(self) -> SessionData:
+        return self._editor.session_data()

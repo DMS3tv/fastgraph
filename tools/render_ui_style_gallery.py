@@ -27,6 +27,7 @@ from dms.theme import application_stylesheet, brand_application_stylesheet
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.style_tokens import mode_tokens
+from dms.ui.theme_surface import DitherSurface
 
 
 def _button(
@@ -58,6 +59,15 @@ def build_gallery(mode: str) -> QWidget:
     title = QLabel(f"FastGraph UI Style - {mode.title()}")
     title.setProperty("typographyRole", "screen")
     layout.addWidget(title)
+
+    header = DitherSurface()
+    header.setFixedHeight(34)
+    header_layout = QHBoxLayout(header)
+    header_layout.setContentsMargins(8, 2, 8, 2)
+    header_layout.addWidget(QLabel("Header surface"))
+    header_layout.addStretch(1)
+    header_layout.addWidget(_button("Inputs", "primary"))
+    layout.addWidget(header)
 
     tabs = QTabWidget()
     for name in ("Measure", "R&&D", "Curator", "Automation", "Settings"):
@@ -160,7 +170,14 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     app = QApplication.instance() or QApplication([])
-    for mode in ("dark", "light", "brand"):
+    for mode in (
+        "dark",
+        "light",
+        "fastgraph95",
+        "fastgraph95_dark",
+        "hackerman95",
+        "brand",
+    ):
         app.setProperty("fastgraphVisualMode", mode)
         app.setStyleSheet(
             brand_application_stylesheet()

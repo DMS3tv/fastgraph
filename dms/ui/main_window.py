@@ -131,7 +131,7 @@ from dms.squiglink import (
     upload_export_sftp,
     write_remote_phone_book,
 )
-from dms.theme import DARK, LIGHT, ThemeController
+from dms.theme import ThemeController
 from dms.update_checker import UpdateCheckWorker
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
@@ -141,9 +141,10 @@ from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.rnd_widget import RnDWidget
-from dms.ui.session_dialog import SessionDialog
+from dms.ui.session_dialog import SessionEditor
 from dms.ui.settings_dialog import SettingsWidget
-from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
+from dms.ui.theme_surface import DitherSurface
+from dms.ui.toggle_switch import ToggleSwitch
 
 
 class AppState:
@@ -849,11 +850,6 @@ class MainWindow(QMainWindow):
         self._rnd_widget.view_state_changed.connect(self._on_rnd_selection_changed)
         self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
-        if self._theme_controller.brand_mode:
-            self._theme_toggle.setEnabled(False)
-            self._theme_toggle.setToolTip(
-                "Dark/Light toggle is locked while brand mode is active."
-            )
         if bool(self._settings.get("bluetooth_headphone_mode")):
             self._apply_bluetooth_headphone_mode_settings(
                 notify=False,
@@ -891,6 +887,7 @@ class MainWindow(QMainWindow):
             Qt.Corner.TopLeftCorner,
         )
         self._build_inputs_overlay()
+        self._build_metadata_overlay()
 
         central = QWidget()
         self._tabs.addTab(central, "Measure")
@@ -976,19 +973,11 @@ class MainWindow(QMainWindow):
             )
         )
         self._statusbar.addPermanentWidget(self._feedback_btn)
-        self._theme_toggle = ThemeToggleWidget(
-            dark=self._theme_controller.theme == DARK,
-            parent=self,
-        )
-        self._theme_toggle.toggled.connect(self._on_theme_toggled)
-        self._statusbar.addPermanentWidget(self._theme_toggle)
         self._build_update_indicator()
-
-    def _on_theme_toggled(self, dark: bool) -> None:
-        self._theme_controller.set_theme(DARK if dark else LIGHT)
 
     def _on_tab_changed(self, _index: int) -> None:
         self._close_inputs_overlay()
+        self._close_metadata_overlay()
         if self._tabs.currentWidget() is self._settings_scroll:
             self._settings_widget.refresh_from_settings()
 
@@ -999,6 +988,7 @@ class MainWindow(QMainWindow):
             self._open_inputs_overlay()
 
     def _open_inputs_overlay(self) -> None:
+        self._close_metadata_overlay()
         self._inputs_overlay_open = True
         target = self._inputs_overlay_geometry(
             max(1, self._inputs_overlay.sizeHint().height())
@@ -1047,35 +1037,104 @@ class MainWindow(QMainWindow):
         available_height = max(0, self._tabs.height() - y - 8)
         return QRect(x, y, width, min(max(0, int(height)), available_height))
 
+    def _toggle_metadata_overlay(self) -> None:
+        if self._metadata_overlay_open:
+            self._close_metadata_overlay()
+        else:
+            self._open_metadata_overlay()
+
+    def _open_metadata_overlay(self) -> None:
+        self._close_inputs_overlay()
+        self._metadata_editor.set_session(self._session)
+        self._metadata_overlay_open = True
+        target = self._metadata_overlay_geometry(
+            max(1, self._metadata_overlay.sizeHint().height())
+        )
+        start = QRect(target.x(), target.y(), target.width(), 0)
+        self._metadata_overlay.setGeometry(start)
+        self._metadata_overlay.show()
+        self._metadata_overlay.raise_()
+        self._metadata_overlay_animation.stop()
+        self._metadata_overlay_animation.setStartValue(start)
+        self._metadata_overlay_animation.setEndValue(target)
+        self._metadata_overlay_animation.start()
+
+    def _close_metadata_overlay(self) -> None:
+        if not getattr(self, "_metadata_overlay_open", False):
+            return
+        self._metadata_overlay_open = False
+        self._metadata_overlay_animation.stop()
+        start = self._metadata_overlay.geometry()
+        self._metadata_overlay_animation.setStartValue(start)
+        self._metadata_overlay_animation.setEndValue(
+            QRect(start.x(), start.y(), start.width(), 0)
+        )
+        self._metadata_overlay_animation.start()
+
+    def _on_metadata_overlay_animation_finished(self) -> None:
+        if not self._metadata_overlay_open:
+            self._metadata_overlay.hide()
+
+    def _position_metadata_overlay(self) -> None:
+        if not hasattr(self, "_metadata_overlay"):
+            return
+        self._metadata_overlay.setGeometry(
+            self._metadata_overlay_geometry(self._metadata_overlay.height())
+        )
+        self._metadata_overlay.raise_()
+
+    def _metadata_overlay_geometry(self, height: int) -> QRect:
+        anchor = self._metadata_btn.mapTo(
+            self._tabs,
+            self._metadata_btn.rect().bottomLeft(),
+        )
+        width = min(580, max(440, self._tabs.width() - 16))
+        x = min(max(8, anchor.x()), max(8, self._tabs.width() - width - 8))
+        y = anchor.y() + 6
+        available_height = max(0, self._tabs.height() - y - 8)
+        return QRect(x, y, width, min(max(0, int(height)), available_height))
+
     @staticmethod
     def _global_point_inside(widget: QWidget, global_point) -> bool:
         return widget.rect().contains(widget.mapFromGlobal(global_point))
 
     def eventFilter(self, watched, event) -> bool:
-        if getattr(self, "_inputs_overlay_open", False):
+        overlays_open = getattr(self, "_inputs_overlay_open", False) or getattr(
+            self, "_metadata_overlay_open", False
+        )
+        if overlays_open:
             if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
                 self._close_inputs_overlay()
+                self._close_metadata_overlay()
                 return True
             if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "globalPosition"):
                 point = event.globalPosition().toPoint()
-                if not self._global_point_inside(
-                    self._inputs_overlay,
-                    point,
+                if getattr(self, "_inputs_overlay_open", False) and not self._global_point_inside(
+                    self._inputs_overlay, point
                 ) and not self._global_point_inside(self._inputs_btn, point):
                     self._close_inputs_overlay()
+                if getattr(self, "_metadata_overlay_open", False) and not self._global_point_inside(
+                    self._metadata_overlay, point
+                ) and not self._global_point_inside(self._metadata_btn, point):
+                    self._close_metadata_overlay()
             if watched is self and event.type() == QEvent.Type.WindowDeactivate:
                 self._close_inputs_overlay()
+                self._close_metadata_overlay()
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "_inputs_overlay"):
             self._position_inputs_overlay()
+        if hasattr(self, "_metadata_overlay"):
+            self._position_metadata_overlay()
 
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
         if hasattr(self, "_inputs_overlay"):
             self._position_inputs_overlay()
+        if hasattr(self, "_metadata_overlay"):
+            self._position_metadata_overlay()
 
     def _on_settings_tab_changed(self, key: str, _value: object) -> None:
         if key in {"sample_rate", "buffer_size", "latency"}:
@@ -1085,6 +1144,9 @@ class MainWindow(QMainWindow):
         if key == "brand_mode":
             # SettingsWidget._save already persisted this value; avoid a redundant write.
             self._theme_controller.set_brand_mode(bool(_value), persist=False)
+        if key == "theme":
+            # SettingsWidget._save already persisted this value; avoid a redundant write.
+            self._theme_controller.set_theme(str(_value), persist=False)
         self._log_event("INFO", "settings", "Setting saved", name=key)
         self._statusbar.showMessage("Setting saved.")
 
@@ -1162,7 +1224,7 @@ class MainWindow(QMainWindow):
             self._tabs.setCurrentIndex(index)
 
     def _build_tab_header(self) -> QWidget:
-        header = QWidget()
+        header = DitherSurface()
         header.setObjectName("tab_header_controls")
         header.setSizePolicy(
             QSizePolicy.Policy.Fixed,
@@ -1185,7 +1247,7 @@ class MainWindow(QMainWindow):
         self._metadata_btn = QPushButton("Headphone Metadata…")
         self._metadata_btn.setObjectName("btn_metadata")
         self._metadata_btn.setFixedHeight(30)
-        self._metadata_btn.clicked.connect(self._open_metadata_dialog)
+        self._metadata_btn.clicked.connect(self._toggle_metadata_overlay)
         row.addWidget(self._metadata_btn)
 
         self._clear_metadata_btn = QPushButton("Clear Metadata")
@@ -1212,9 +1274,6 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
         brand = self._theme_controller.brand_mode
-        toggle = getattr(self, "_theme_toggle", None)
-        if toggle is not None:
-            toggle.set_dark(theme == DARK)
         plots = getattr(self, "_plots", None)
         if plots is not None:
             plots.apply_theme(theme, brand_mode=brand)
@@ -1231,14 +1290,9 @@ class MainWindow(QMainWindow):
             self._log_event("INFO", "theme", "Application theme changed", theme=theme)
 
     def _on_brand_mode_changed(self, enabled: bool) -> None:
-        toggle = getattr(self, "_theme_toggle", None)
-        if toggle is not None:
-            toggle.setEnabled(not enabled)
-            toggle.setToolTip(
-                "Dark/Light toggle is locked while brand mode is active."
-                if enabled
-                else ""
-            )
+        settings_widget = getattr(self, "_settings_widget", None)
+        if settings_widget is not None:
+            settings_widget.refresh_from_settings()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if hasattr(self, "_upload_btn"):
             self._sync_export_button()
@@ -2042,6 +2096,44 @@ class MainWindow(QMainWindow):
         self._inputs_overlay_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._inputs_overlay_animation.finished.connect(self._on_inputs_overlay_animation_finished)
         QApplication.instance().installEventFilter(self)
+
+    def _build_metadata_overlay(self) -> None:
+        overlay = QFrame(self._tabs)
+        overlay.setObjectName("metadata_overlay")
+        overlay.setProperty("surfaceLevel", "raised")
+        overlay.setMinimumWidth(500)
+        overlay.hide()
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        self._metadata_editor = SessionEditor(overlay, initial_session=self._session)
+        self._metadata_editor.setMinimumHeight(430)
+        layout.addWidget(self._metadata_editor, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self._close_metadata_overlay)
+        actions.addWidget(close_button)
+        save_button = QPushButton("Save Metadata")
+        save_button.setRole("positive")
+        save_button.clicked.connect(self._save_metadata_overlay)
+        actions.addWidget(save_button)
+        layout.addLayout(actions)
+
+        self._metadata_overlay = overlay
+        self._metadata_overlay_open = False
+        self._metadata_overlay_animation = QPropertyAnimation(
+            overlay,
+            b"geometry",
+            self,
+        )
+        self._metadata_overlay_animation.setDuration(180)
+        self._metadata_overlay_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._metadata_overlay_animation.finished.connect(
+            self._on_metadata_overlay_animation_finished
+        )
 
     def _build_measure_queue_bar(self) -> QWidget:
         bar = _ResponsiveQueueBar()
@@ -2854,6 +2946,8 @@ class MainWindow(QMainWindow):
 
         self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)
+        if not idle:
+            self._close_metadata_overlay()
         if hasattr(self, "_rnd_widget"):
             self._rnd_widget.set_busy(not idle)
         self._start_queue_btn.setEnabled(idle and device_ok)
@@ -3864,17 +3958,14 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._statusbar.showMessage("Last kept measurement removed.")
 
-    def _open_metadata_dialog(self) -> None:
-        dlg = SessionDialog(
-            self._settings,
-            self,
-            initial_session=self._session,
-        )
-        if dlg.exec():
-            self._session = dlg.session_data()
-            self._refresh_session_labels()
-            self._refresh_window_title()
-            self._statusbar.showMessage("Headphone metadata updated.")
+    def _save_metadata_overlay(self) -> None:
+        if not self._metadata_editor.validate():
+            return
+        self._session = self._metadata_editor.session_data()
+        self._refresh_session_labels()
+        self._refresh_window_title()
+        self._close_metadata_overlay()
+        self._statusbar.showMessage("Headphone metadata updated.")
 
     def _clear_metadata(self) -> None:
         if bool(self._settings.get("confirm_clear_metadata")):

@@ -16,11 +16,21 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QRect, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
 from dms import brand_brand
-from dms.theme import LIGHT, brand_theme_colors, normalize_theme, theme_colors
+from dms.graph_display import retro_step_group, retro_step_series, uses_retro_steps
+from dms.theme import (
+    FASTGRAPH_95,
+    LIGHT,
+    ensure_graph_color,
+    brand_theme_colors,
+    normalize_theme,
+    theme_colors,
+    theme_trace_palette,
+)
 from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.style_tokens import tokens_for
 
 
 pg.setConfigOption("background", "#1a1a1a")
@@ -135,6 +145,11 @@ class DualPlotWidget(QWidget):
         self._theme = "dark"
         self._brand_mode = False
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
+        self._last_average: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._last_variation: Optional[
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        ] = None
+        self._last_bottom_mode = "average"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -193,7 +208,31 @@ class DualPlotWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _bottom_accent_color(self) -> str:
-        return brand_brand.GRADIENT_ORANGE if self._brand_mode else _GOLD
+        if self._brand_mode:
+            base = brand_brand.GRADIENT_ORANGE
+            background = brand_theme_colors()["plot_bg"]
+        else:
+            custom_palette = tokens_for(self._theme).trace_palette
+            base = (
+                theme_trace_palette(self._theme)[0]
+                if custom_palette
+                else ("#000080" if self._theme == FASTGRAPH_95 else _GOLD)
+            )
+            background = theme_colors(self._theme)["plot_bg"]
+        return ensure_graph_color(base, background).name()
+
+    def _uses_light_plot(self) -> bool:
+        return self._theme in {LIGHT, FASTGRAPH_95}
+
+    def _uses_retro_steps(self) -> bool:
+        return uses_retro_steps(self._theme, brand_mode=self._brand_mode)
+
+    def _display_curve(
+        self, freqs: np.ndarray, mag_db: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self._uses_retro_steps():
+            return retro_step_series(freqs, mag_db)
+        return freqs, mag_db
 
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
@@ -207,20 +246,30 @@ class DualPlotWidget(QWidget):
                 axis.setPen(pg.mkPen(foreground))
                 axis.setTextPen(pg.mkPen(foreground))
             plot.getPlotItem().titleLabel.setAttr("color", foreground)
-        reference = (135, 143, 153) if self._theme == LIGHT else (75, 75, 75)
+        light_plot = self._uses_light_plot()
+        reference = (128, 128, 128) if light_plot else (75, 75, 75)
         for line in self._reference_lines:
             line.setPen(pg.mkPen(color=reference, style=Qt.PenStyle.DashLine))
         for index, item in enumerate(self._top_items):
             is_last = index == len(self._top_items) - 1
             if is_last:
-                color = (35, 135, 128, 235) if self._theme == LIGHT else _TEAL
-                width = 1.7 if self._theme == LIGHT else 1.5
+                color = (0, 0, 128, 235) if self._theme == FASTGRAPH_95 else (
+                    (35, 135, 128, 235) if light_plot else _TEAL
+                )
+                width = 1.7 if light_plot else 1.5
             else:
-                color = (90, 98, 108, 180) if self._theme == LIGHT else _GREY
+                color = (90, 98, 108, 180) if light_plot else _GREY
                 width = 1.0
             item.setPen(pg.mkPen(color=color, width=width))
         if self._bot_item is not None:
             self._bot_item.setPen(pg.mkPen(color=self._bottom_accent_color(), width=2.0))
+        if self._kept_curves or self._last_average is not None or self._last_variation is not None:
+            self._redraw_top(self._kept_curves)
+            self._redraw_bottom(
+                average=self._last_average,
+                variation=self._last_variation,
+                mode=self._last_bottom_mode,
+            )
         self.update()
 
     def update_curves(
@@ -236,6 +285,9 @@ class DualPlotWidget(QWidget):
         self._reveal_item = None
         self._reveal_curve = None
         self._kept_curves = kept
+        self._last_average = average
+        self._last_variation = variation
+        self._last_bottom_mode = bottom_mode
         self._redraw_top(kept)
         self._redraw_bottom(average=average, variation=variation, mode=bottom_mode)
         if animate_last and kept and self._top_items:
@@ -246,6 +298,9 @@ class DualPlotWidget(QWidget):
         self._reveal_item = None
         self._reveal_curve = None
         self._kept_curves = []
+        self._last_average = None
+        self._last_variation = None
+        self._last_bottom_mode = "average"
         for item in self._top_items:
             self._top_plot.removeItem(item)
         self._top_items.clear()
@@ -344,13 +399,22 @@ class DualPlotWidget(QWidget):
 
         for i, (freqs, mag_db) in enumerate(kept):
             is_last = i == len(kept) - 1
-            if is_last:
-                color = (35, 135, 128, 235) if self._theme == LIGHT else _TEAL
-                pen = pg.mkPen(color=color, width=1.7 if self._theme == LIGHT else 1.5)
+            custom_palette = tokens_for(self._theme).trace_palette if not self._brand_mode else ()
+            if custom_palette:
+                color = QColor(custom_palette[i % len(custom_palette)])
+                color.setAlpha(235 if is_last else 190)
+                pen = pg.mkPen(color=color, width=1.7 if is_last else 1.15)
+            elif is_last:
+                light_plot = self._uses_light_plot()
+                color = (0, 0, 128, 235) if self._theme == FASTGRAPH_95 else (
+                    (35, 135, 128, 235) if light_plot else _TEAL
+                )
+                pen = pg.mkPen(color=color, width=1.7 if light_plot else 1.5)
             else:
-                color = (90, 98, 108, 180) if self._theme == LIGHT else _GREY
+                color = (90, 98, 108, 180) if self._uses_light_plot() else _GREY
                 pen = pg.mkPen(color=color, width=1.0)
-            item = self._top_plot.plot(freqs, mag_db, pen=pen)
+            display_freqs, display_mag = self._display_curve(freqs, mag_db)
+            item = self._top_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
             self._top_items.append(item)
 
         self._auto_center_y(self._top_plot, kept)
@@ -380,8 +444,11 @@ class DualPlotWidget(QWidget):
         self._bot_plot.setTitle("Averaged Result (1/48 Oct RMS)")
         if average is not None and len(average[0]) > 0:
             freqs, mag_db = average
+            display_freqs, display_mag = self._display_curve(freqs, mag_db)
             pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
-            self._bot_item = self._bot_plot.plot(freqs, mag_db, pen=pen)
+            self._bot_item = self._bot_plot.plot(
+                display_freqs, display_mag, pen=pen, antialias=True
+            )
             self._auto_center_y(self._bot_plot, [average])
 
     def _draw_variation_bottom(
@@ -395,21 +462,52 @@ class DualPlotWidget(QWidget):
         freqs, p10, p25, p75, p90, median = variation
         if len(freqs) == 0:
             return
+        if self._uses_retro_steps():
+            freqs, p10, p25, p75, p90, median = retro_step_group(
+                freqs, (p10, p25, p75, p90, median)
+            )
 
-        upper90 = self._bot_plot.plot(freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower10 = self._bot_plot.plot(freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(_BAND_OUTER))
+        antialias = True
+        if not self._brand_mode and tokens_for(self._theme).trace_palette:
+            base = QColor(theme_trace_palette(self._theme)[0])
+            outer_color = QColor(base)
+            outer_color.setAlpha(55)
+            inner_color = QColor(base)
+            inner_color.setAlpha(90)
+        else:
+            outer_color = QColor(*_BAND_OUTER)
+            inner_color = QColor(*_BAND_INNER)
+        upper90 = self._bot_plot.plot(
+            freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
+        )
+        lower10 = self._bot_plot.plot(
+            freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
+        )
+        fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer_color))
         self._bot_plot.addItem(fill90)
 
-        upper75 = self._bot_plot.plot(freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower25 = self._bot_plot.plot(freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(_BAND_INNER))
+        upper75 = self._bot_plot.plot(
+            freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
+        )
+        lower25 = self._bot_plot.plot(
+            freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
+        )
+        fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner_color))
         self._bot_plot.addItem(fill75)
 
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        median_base = (
+            QColor(theme_trace_palette(self._theme)[0])
+            if not self._brand_mode and tokens_for(self._theme).trace_palette
+            else QColor(*_BAND_MEDIAN[:3])
+        )
+        median_color = ensure_graph_color(median_base, colors["plot_bg"])
+        median_color.setAlpha(_BAND_MEDIAN[3])
         median_item = self._bot_plot.plot(
             freqs,
             median,
-            pen=pg.mkPen(color=_BAND_MEDIAN, width=1.8),
+            pen=pg.mkPen(color=median_color, width=1.8),
+            antialias=antialias,
         )
         self._bot_extra_items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median_item])
         self._auto_center_y(self._bot_plot, [(freqs, p10), (freqs, p90)])
@@ -457,9 +555,11 @@ class DualPlotWidget(QWidget):
             return
 
         k = max(2, min(n, int(n * self._reveal_progress)))
-        self._reveal_item.setData(freqs[:k], mag_db[:k])
+        display_freqs, display_mag = self._display_curve(freqs[:k], mag_db[:k])
+        self._reveal_item.setData(display_freqs, display_mag, antialias=True)
 
         self._reveal_progress += 0.14
         if self._reveal_progress >= 1.02:
-            self._reveal_item.setData(freqs, mag_db)
+            display_freqs, display_mag = self._display_curve(freqs, mag_db)
+            self._reveal_item.setData(display_freqs, display_mag, antialias=True)
             self._reveal_timer.stop()

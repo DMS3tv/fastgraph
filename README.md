@@ -295,11 +295,14 @@ curator reset | curator export <path>
 Layer numbers are one-based and are shown by `curator layers`. Quote paths or
 text containing spaces.
 
-## Light and Dark Themes
+## Themes
 
-Fastgraph starts in Dark mode. Use the sun/moon switch beside the feedback
-button in the bottom status bar to change themes immediately. The selected
-theme is saved and restored the next time Fastgraph starts.
+Fastgraph starts with Default dark. Open Settings to select Default dark,
+Default light, FastGraph 95, FastGraph 95 Dark, or Hackerman 95. Fastgraph saves
+the selection and restores it at the next start.
+
+Developers can use [`docs/HOW_TO_ADD_THEMES.md`](docs/HOW_TO_ADD_THEMES.md) for
+the theme registry, token, graph, export, test, and visual-review procedure.
 
 ## brand Mode
 

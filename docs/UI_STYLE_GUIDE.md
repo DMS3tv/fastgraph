@@ -114,6 +114,9 @@ edges. Join the selected tab to the gray tab pane.
 
 ## Theme Framework
 
+For the complete procedure, examples, tests, and review checklist, see
+[`HOW_TO_ADD_THEMES.md`](HOW_TO_ADD_THEMES.md).
+
 Add a selectable theme in `dms/ui/style_tokens.py`. Add one `ThemeTokens`
 value and one `ThemeDefinition` entry. Use a `style_family` only when the theme
 needs control shapes that the standard stylesheet cannot provide. Register the

@@ -244,9 +244,20 @@ def _draw_legend(
     shown = layers[:16]
     columns = 2 if len(shown) > 8 else 1
     rows = min(8, len(shown))
-    column_width = 270.0
     row_height = 26.0
-    box_width = columns * column_width + 20.0
+    font = QFont(
+        classic_tokens.typography.ui_family if classic_tokens is not None else "Arial",
+        15,
+        QFont.Weight.DemiBold,
+    )
+    painter.setFont(font)
+    metrics = QFontMetrics(font)
+    column_widths = []
+    for column in range(columns):
+        column_layers = shown[column * 8 : (column + 1) * 8]
+        widest_label = max(metrics.horizontalAdvance(layer.name) for layer, _curve in column_layers)
+        column_widths.append(max(270.0, float(widest_label + 56)))
+    box_width = sum(column_widths) + 24.0
     box_height = rows * row_height + 20.0 + (row_height if len(layers) > 16 else 0.0)
     box = QRectF(rect.right() - box_width - 14, rect.top() + 14, box_width, box_height)
     if classic_tokens is not None:
@@ -258,13 +269,6 @@ def _draw_legend(
             QColor(245, 247, 250, 225) if light_background else QColor(20, 23, 29, 220)
         )
         painter.drawRoundedRect(box, 6, 6)
-    font = QFont(
-        classic_tokens.typography.ui_family if classic_tokens is not None else "Arial",
-        15,
-        QFont.Weight.DemiBold,
-    )
-    painter.setFont(font)
-    metrics = QFontMetrics(font)
     text_color = QColor(
         classic_tokens.text
         if classic_tokens is not None
@@ -273,7 +277,9 @@ def _draw_legend(
     for index, (layer, _curve) in enumerate(shown):
         column = index // 8
         row = index % 8
-        x = box.left() + 12 + column * column_width
+        column_left = sum(column_widths[:column])
+        column_width = column_widths[column]
+        x = box.left() + 12 + column_left
         y = box.top() + 12 + row * row_height
         legend_color = (
             ensure_graph_color(layer.color, classic_tokens.control)
@@ -283,8 +289,11 @@ def _draw_legend(
         painter.setPen(QPen(legend_color, 4))
         painter.drawLine(QPointF(x, y + 10), QPointF(x + 28, y + 10))
         painter.setPen(text_color)
-        label = metrics.elidedText(layer.name, Qt.TextElideMode.ElideRight, int(column_width - 52))
-        painter.drawText(QRectF(x + 38, y, column_width - 50, row_height), Qt.AlignmentFlag.AlignVCenter, label)
+        painter.drawText(
+            QRectF(x + 38, y, column_width - 50, row_height),
+            Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+            layer.name,
+        )
     if len(layers) > 16:
         painter.setPen(
             QColor(classic_tokens.muted)

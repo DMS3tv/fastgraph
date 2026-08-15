@@ -29,6 +29,8 @@
 
 ### Fixed
 
+- Prevented Curator export legend names from being shortened with an ellipsis.
+  Each legend column now expands to fit its longest complete layer name.
 - Prevented Linux PipeWire startup and calibration crashes by opening only
   enough input channels to include the selected channel.
 

@@ -7,7 +7,13 @@ from PyQt6.QtCore import QRectF
 from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox, QPushButton, QWidget
 
-from dms.curator.export_image import ACCENT_COLOR, FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS, export_graph_image, fit_title
+from dms.curator.export_image import (
+    ACCENT_COLOR,
+    FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
+    _draw_legend,
+    export_graph_image,
+    fit_title,
+)
 import dms.curator.export_image as export_image_module
 from dms.curator.models import CurveData
 from dms.theme import DARK, FASTGRAPH_95, FASTGRAPH_95_DARK, HACKERMAN_95
@@ -372,6 +378,49 @@ def test_export_title_shrinks_then_elides(qapp) -> None:
     assert short_font.pointSize() == 42
     assert long_font.pointSize() == 24
     assert long.endswith("…")
+
+
+def test_export_legend_expands_and_never_elides_layer_names(qapp) -> None:
+    class _Layer:
+        color = "#39FF14"
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _Painter:
+        def __init__(self) -> None:
+            self.boxes = []
+            self.text = []
+
+        def setFont(self, *_args) -> None:
+            pass
+
+        def setPen(self, *_args) -> None:
+            pass
+
+        def setBrush(self, *_args) -> None:
+            pass
+
+        def drawRoundedRect(self, rect, *_args) -> None:
+            self.boxes.append(QRectF(rect))
+
+        def drawLine(self, *_args) -> None:
+            pass
+
+        def drawText(self, _rect, _flags, text) -> None:
+            self.text.append(text)
+
+    long_name = "Unknown Unknown COMP with a complete measurement description"
+    painter = _Painter()
+    _draw_legend(
+        painter,
+        QRectF(0, 0, 1800, 700),
+        [(_Layer(long_name), None)],
+        False,
+    )
+
+    assert painter.text == [long_name]
+    assert painter.boxes[0].width() > 290
 
 
 def test_viewport_text_inputs_update_export_text(qapp) -> None:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QPointF, QRectF, Qt, QVariantAnimation
+import math
+
+from PyQt6.QtCore import QEasingCurve, QEvent, QPointF, QRect, QRectF, Qt, QVariantAnimation
 from PyQt6.QtGui import (
     QColor,
+    QFontMetrics,
     QGradient,
     QLinearGradient,
     QPainter,
@@ -20,6 +23,8 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.ui.style_tokens import ThemeTokens, mode_tokens
+from dms.ui.theme_surface import paint_dither
+from dms.dither_fonts import dither_heading_font
 
 
 _OBJECT_ROLES = {
@@ -34,6 +39,9 @@ _OBJECT_ROLES = {
     "btn_export": "primary",
     "exportButton": "primary",
 }
+
+_FLAT_HOVER_DITHER_STEPS = 7
+_FLAT_HOVER_DITHER_DENSITY = 0.38
 
 
 def _mix(first: QColor, second: QColor, amount: float) -> QColor:
@@ -136,6 +144,25 @@ class ModernButton(QPushButton):
             return QColor(tokens.warning)
         return QColor(tokens.accent)
 
+    def _flat_role_color(self, tokens: ThemeTokens) -> QColor:
+        role = self.role()
+        if role in {"default", "ghost", "compact", "swatch"}:
+            return QColor(tokens.text)
+        return self._accent(tokens)
+
+    def _flat_hover_dither_state(self) -> tuple[float, float]:
+        """Return the stepped density and bottom-up sweep fraction."""
+
+        progress = max(0.0, min(1.0, self._hover_progress))
+        if progress <= 0.0 or not self.isEnabled():
+            return 0.0, 0.0
+        step = min(
+            _FLAT_HOVER_DITHER_STEPS,
+            max(1, math.ceil(progress * _FLAT_HOVER_DITHER_STEPS)),
+        )
+        fraction = step / _FLAT_HOVER_DITHER_STEPS
+        return _FLAT_HOVER_DITHER_DENSITY * fraction, fraction
+
     def _surface_and_text(self, tokens: ThemeTokens) -> tuple[QColor, QColor]:
         light_mode = tokens.name == "light"
         control = QColor(tokens.control if light_mode else tokens.viewport)
@@ -212,7 +239,11 @@ class ModernButton(QPushButton):
         self.update()
 
     def _glow_profile(self) -> dict[str, float | int]:
-        if not self.isEnabled() or self._tokens().classic_controls:
+        if (
+            not self.isEnabled()
+            or self._tokens().classic_controls
+            or self._tokens().flat_controls
+        ):
             return {
                 "center_y": 1.05,
                 "radius": 0.50,
@@ -240,6 +271,14 @@ class ModernButton(QPushButton):
 
     def _has_persistent_outline(self) -> bool:
         return self.objectName() == "btn_start" or bool(self.property("emphasized"))
+
+    def _control_paint_path(self) -> str:
+        tokens = self._tokens()
+        if tokens.classic_controls:
+            return "classic"
+        if tokens.flat_controls:
+            return "flat"
+        return "modern"
 
     def enterEvent(self, event) -> None:
         self._animate_hover(1.0)
@@ -296,6 +335,9 @@ class ModernButton(QPushButton):
         tokens = self._tokens()
         if tokens.classic_controls:
             self._paint_fastgraph95(tokens)
+            return
+        if tokens.flat_controls:
+            self._paint_flat(tokens)
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -386,6 +428,87 @@ class ModernButton(QPushButton):
         option.palette = QPalette(option.palette)
         option.palette.setColor(QPalette.ColorRole.ButtonText, text)
         if self.isDown():
+            option.state |= QStyle.StateFlag.State_Sunken
+        self.style().drawControl(
+            QStyle.ControlElement.CE_PushButtonLabel,
+            option,
+            painter,
+            self,
+        )
+        painter.end()
+
+    def _paint_flat(self, tokens: ThemeTokens) -> None:
+        """Paint a square control with ordered pixel texture and hard states."""
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        pressed = self.isDown() and self.isEnabled()
+        hovered = (
+            self.isEnabled()
+            and not pressed
+            and (self.underMouse() or self._hover_progress > 0.0)
+        )
+        role_color = self._flat_role_color(tokens)
+
+        if not self.isEnabled():
+            face = QColor(tokens.alternate)
+            label = QColor(tokens.disabled)
+        elif pressed:
+            face = role_color
+            label = QColor(tokens.background)
+        else:
+            face = QColor(tokens.control)
+            label = QColor(tokens.muted if self.role() == "ghost" else tokens.text)
+
+        painter.fillRect(rect, face)
+        if hovered:
+            density, sweep_fraction = self._flat_hover_dither_state()
+            dither_rect = rect.adjusted(1, 1, -1, -1)
+            visible_height = math.ceil(dither_rect.height() * sweep_fraction)
+            if density > 0.0 and visible_height > 0:
+                sweep_rect = QRect(
+                    dither_rect.left(),
+                    dither_rect.bottom() - visible_height + 1,
+                    dither_rect.width(),
+                    visible_height,
+                )
+                paint_dither(
+                    painter,
+                    sweep_rect,
+                    foreground=role_color,
+                    density=density,
+                )
+
+        border = QColor(tokens.text if hovered else tokens.border)
+        border_width = tokens.geometry.border_px
+        if self.hasFocus() and self.isEnabled():
+            border = QColor(tokens.focus)
+            border_width = tokens.geometry.focus_border_px
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(border, border_width))
+        inset = max(0.5, border_width / 2.0)
+        painter.drawRect(
+            QRectF(
+                inset,
+                inset,
+                max(0.0, self.width() - border_width),
+                max(0.0, self.height() - border_width),
+            )
+        )
+
+        font = dither_heading_font(self.font())
+        painter.setFont(font)
+        option = QStyleOptionButton()
+        option.initFrom(self)
+        option.text = self.text()
+        option.icon = self.icon()
+        option.iconSize = self.iconSize()
+        option.rect = rect.adjusted(8, 1, -8, -1)
+        option.fontMetrics = QFontMetrics(font)
+        option.palette = QPalette(option.palette)
+        option.palette.setColor(QPalette.ColorRole.ButtonText, label)
+        if pressed:
             option.state |= QStyle.StateFlag.State_Sunken
         self.style().drawControl(
             QStyle.ControlElement.CE_PushButtonLabel,

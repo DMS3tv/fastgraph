@@ -1,11 +1,16 @@
 import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPen
 
 from dms.graph_display import (
     RETRO_GRAPH_MAX_BINS,
+    STIPPLE_DASH_PATTERNS,
     retro_step_group,
     retro_step_series,
+    stipple_trace_pen,
     uses_retro_steps,
 )
+from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS
 
 
 def test_retro_steps_reduce_display_points_and_preserve_local_extrema() -> None:
@@ -49,3 +54,32 @@ def test_registered_classic_graph_themes_select_the_step_renderer() -> None:
     assert uses_retro_steps("hackerman95")
     assert not uses_retro_steps("dark")
     assert not uses_retro_steps("hackerman95", brand_mode=True)
+
+
+def test_stipple_trace_pen_preserves_non_stipple_pen() -> None:
+    source = QPen(QColor("#123456"), 2.75, Qt.PenStyle.DashDotLine)
+
+    result = stipple_trace_pen(source, 3, DARK_TOKENS)
+
+    assert result.color() == source.color()
+    assert result.widthF() == source.widthF()
+    assert result.style() == source.style()
+    assert result.dashPattern() == source.dashPattern()
+
+
+def test_stipple_trace_pen_uses_each_pattern_and_cycles() -> None:
+    source = QPen(QColor("#E9E2D4"), 3.25)
+
+    for index, expected in enumerate(STIPPLE_DASH_PATTERNS):
+        result = stipple_trace_pen(source, index, DITHER_TOKENS)
+        assert result.color() == source.color()
+        assert result.widthF() == source.widthF()
+        if expected is None:
+            assert result.style() == Qt.PenStyle.SolidLine
+        else:
+            assert result.style() == Qt.PenStyle.CustomDashLine
+            assert result.dashPattern() == list(expected)
+
+    cycled = stipple_trace_pen(source, 9, DITHER_TOKENS)
+    assert cycled.style() == Qt.PenStyle.CustomDashLine
+    assert cycled.dashPattern() == [6.0, 3.0]

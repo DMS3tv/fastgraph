@@ -196,8 +196,8 @@ def test_sweep_worker_passes_numeric_portaudio_indices(monkeypatch) -> None:
             snr_db=60.0,
         ),
     )
-    times = iter([0.0, 1.0])
-    monkeypatch.setattr(audio_engine.time, "monotonic", lambda: next(times, 1.0))
+    times = iter([0.0, 1.0, 2.0, 3.0])
+    monkeypatch.setattr(audio_engine.time, "monotonic", lambda: next(times, 3.0))
     monkeypatch.setattr(audio_engine.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(audio_engine.sd, "wait", lambda: None)
 
@@ -228,6 +228,52 @@ def test_sweep_worker_passes_numeric_portaudio_indices(monkeypatch) -> None:
 
     assert playrec_calls
     assert playrec_calls[0]["device"] == (43, 1)
+
+    worker._run_inner(
+        sweep=np.zeros(1, dtype=np.float32),
+        output_device=1,
+        input_device=43,
+        input_channel=1,
+        output_channel=1,
+        fs=48000,
+        buffer_size=256,
+        pre_silence=0.1,
+        post_silence=0.1,
+        latency="low",
+        output_device_label="Main Out",
+        input_device_label="in 1-2 (motu m series) (Windows WASAPI)",
+        bluetooth_headphone_mode=False,
+        start_alignment_confidence_min=9.0,
+        end_marker_confidence_min=7.0,
+        timing_drift_max_ms=35.0,
+    )
+
+    assert playrec_calls[1]["input_mapping"] == [2]
+    assert playrec_calls[1]["output_mapping"] == [2]
+
+
+def test_dual_level_monitor_uses_one_two_channel_stream(monkeypatch) -> None:
+    stream_calls = []
+
+    class _FakeInputStream:
+        def __init__(self, **kwargs):
+            stream_calls.append(kwargs)
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        audio_engine,
+        "device_by_index",
+        lambda _device_index, kind="input": {"max_input_channels": 2},
+    )
+    monkeypatch.setattr(audio_engine.sd, "InputStream", _FakeInputStream)
+
+    monitor = audio_engine.DualLevelMonitor()
+    monitor.start(4, "Two In", 48000, 256)
+
+    assert stream_calls[0]["device"] == 4
+    assert stream_calls[0]["channels"] == 2
 
 
 def test_level_monitor_passes_numeric_portaudio_index(monkeypatch) -> None:

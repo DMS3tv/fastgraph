@@ -9,6 +9,7 @@ import shlex
 import tempfile
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -51,6 +52,7 @@ from dms.ui.modern_spinbox import (
 )
 
 from dms.audio_engine import (
+    DualLevelMonitor,
     LevelMonitor,
     SweepWorker,
     device_channel_count,
@@ -66,6 +68,7 @@ from dms.audio_engine import (
     refresh_audio_backend,
     resolve_device_selection,
 )
+from dms.channel_balance import ChannelBalanceEngine, frequency_limit
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
 from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
@@ -97,6 +100,13 @@ from dms.processing import (
     generate_log_sweep,
     normalize_at_1khz,
     smooth_fractional_octave,
+)
+from dms.two_channel import (
+    TwoChannelCurvePair,
+    channel_curves,
+    combined_pair_curves,
+    curve_label_for_selection,
+    shared_normalize_pair_at_1khz,
 )
 from dms.rnd.models import (
     RnDGroup,
@@ -138,7 +148,7 @@ from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.automation_widget import AutomationWidget
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
-from dms.ui.dual_plot_widget import DualPlotWidget
+from dms.ui.measure_workspace import MeasureWorkspace
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionEditor
@@ -253,6 +263,16 @@ class _SweepThread(QThread):
 
     def abort(self) -> None:
         self._worker.abort()
+
+
+class _BalanceThread(QThread):
+    def __init__(self, engine: ChannelBalanceEngine, **kwargs) -> None:
+        super().__init__()
+        self._engine = engine
+        self._kwargs = kwargs
+
+    def run(self) -> None:
+        self._engine.run(**self._kwargs)
 
 
 class TestLevelDialog(QDialog):
@@ -797,6 +817,30 @@ class MainWindow(QMainWindow):
             tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
         ] = None
         self._pending_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._two_channel_pairs: list[TwoChannelCurvePair] = []
+        self._pending_pair: TwoChannelCurvePair | None = None
+        self._pending_pair_first_raw: tuple[np.ndarray, np.ndarray] | None = None
+        self._pending_pair_first_diagnostics: object | None = None
+        self._two_channel_stage = 0
+        self._start_second_pair_stage = False
+        self._two_channel_averages: dict[str, object] = {}
+        self._two_channel_variations: dict[str, object] = {}
+        self._two_channel_enabled = bool(
+            self._settings.get("measure_two_channel_enabled")
+        )
+        bottom_mode = str(
+            self._settings.get("measure_two_channel_bottom_mode") or "combined"
+        )
+        self._two_channel_bottom_mode = (
+            "separate" if bottom_mode == "separate" else "combined"
+        )
+        self._two_channel_selection = "channel_1"
+        self._channel_balance_active = False
+        self._balance_engine: ChannelBalanceEngine | None = None
+        self._balance_thread: QThread | None = None
+        self._balance_waveform = "sine"
+        self._balance_frequency = 500.0
+        self._balance_level_db = -6.0
 
         self._queue_target = 0
         self._queue_index = 0
@@ -833,6 +877,10 @@ class MainWindow(QMainWindow):
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
         self._level_monitor.error_occurred.connect(self._on_level_error)
+        self._dual_level_monitor = DualLevelMonitor()
+        self._dual_level_monitor.levels_updated.connect(self._on_dual_level_update)
+        self._dual_level_monitor.error_occurred.connect(self._on_level_error)
+        self._last_dual_levels = (-120.0, -120.0)
 
         self._refresh_window_title()
         self.setMinimumSize(1280, 700)
@@ -875,6 +923,10 @@ class MainWindow(QMainWindow):
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
         self._meter_ui_timer.start(_METER_UPDATE_MS)
 
+        self._balance_ui_timer = QTimer(self)
+        self._balance_ui_timer.setInterval(33)
+        self._balance_ui_timer.timeout.connect(self._refresh_balance_scope)
+
         self._device_check_timer = QTimer(self)
         self._device_check_timer.timeout.connect(self._check_devices)
         self._device_check_timer.start(1500)
@@ -890,17 +942,24 @@ class MainWindow(QMainWindow):
         self._build_metadata_overlay()
 
         central = QWidget()
+        self._measure_tab = central
         self._tabs.addTab(central, "Measure")
 
         root = QHBoxLayout(central)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        self._plots = DualPlotWidget()
+        self._plots = MeasureWorkspace()
         self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
+        self._plots.selection_changed.connect(self._on_two_channel_selection_changed)
+        self._plots.balance_start_requested.connect(self._start_channel_balance)
+        self._plots.balance_stop_requested.connect(self._stop_channel_balance)
+        self._plots.balance_parameters_changed.connect(self._on_balance_parameters_changed)
         self._plots.set_header_widget(self._build_measure_queue_bar())
         self._plots.set_between_plots_widget(self._build_measure_plot_controls())
         self._plots.set_footer_widget(self._build_export_controls())
+        self._plots.set_two_channel_enabled(self._two_channel_enabled)
+        self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
         root.addWidget(self._plots, 1)
 
         self._rnd_widget = RnDWidget(
@@ -978,8 +1037,224 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         self._close_inputs_overlay()
         self._close_metadata_overlay()
+        if self._tabs.currentWidget() is not self._measure_tab:
+            self._stop_channel_balance()
         if self._tabs.currentWidget() is self._settings_scroll:
             self._settings_widget.refresh_from_settings()
+
+    def _on_two_channel_toggled(self, _state: int) -> None:
+        if self._state != AppState.IDLE:
+            self._two_channel_toggle.blockSignals(True)
+            self._two_channel_toggle.setChecked(self._two_channel_enabled)
+            self._two_channel_toggle.blockSignals(False)
+            return
+        enabled = bool(self._two_channel_toggle.isChecked())
+        if not enabled:
+            self._stop_channel_balance()
+            self._measure_submode_toggle.setChecked(False)
+        self._two_channel_enabled = enabled
+        self._settings.set("measure_two_channel_enabled", enabled)
+        self._plots.set_two_channel_enabled(enabled)
+        self._measure_submode_control.setVisible(enabled)
+        self._level_meter_2.setVisible(enabled)
+        self._level_status_label_2.setVisible(enabled)
+        self._bottom_layout_label.setVisible(enabled)
+        self._bottom_layout_combo.setVisible(enabled)
+        self._ch_combo.setEnabled(not enabled)
+        self._update_queue_progress()
+        self._update_plots()
+        self._start_level_monitor()
+        self._apply_state_ui()
+        mode = "Two Channel" if enabled else "Single Channel"
+        self._statusbar.showMessage(f"Measure mode: {mode}.")
+
+    def _channel_balance_mode_active(self) -> bool:
+        toggle = getattr(self, "_measure_submode_toggle", None)
+        return bool(
+            getattr(self, "_two_channel_enabled", False)
+            and toggle is not None
+            and toggle.isChecked()
+        )
+
+    def _update_measure_submode_label_tones(self) -> None:
+        toggle = getattr(self, "_measure_submode_toggle", None)
+        frequency_label = getattr(self, "_measure_frequency_label", None)
+        balance_label = getattr(self, "_measure_balance_label", None)
+        if toggle is None or frequency_label is None or balance_label is None:
+            return
+        balance = toggle.isChecked()
+        frequency_label.setProperty("tone", "muted" if balance else "accent")
+        balance_label.setProperty("tone", "accent" if balance else "muted")
+        for label in (frequency_label, balance_label):
+            label.style().unpolish(label)
+            label.style().polish(label)
+            label.update()
+
+    def _on_measure_submode_toggled(self, _checked: bool) -> None:
+        self._update_measure_submode_label_tones()
+        balance = self._channel_balance_mode_active()
+        if not balance:
+            self._stop_channel_balance()
+        self._plots.two.set_balance_mode(balance)
+        self._bottom_layout_label.setVisible(self._two_channel_enabled and not balance)
+        self._bottom_layout_combo.setVisible(self._two_channel_enabled and not balance)
+        self._variation_toggle.setVisible(not balance)
+        self._hrtf_toggle.setVisible(not balance)
+        self._hrtf_combo.setVisible(not balance)
+        self._hrtf_label.setVisible(not balance)
+        self._level_meter.setVisible(not balance)
+        self._level_meter_2.setVisible(self._two_channel_enabled and not balance)
+        self._level_status_label.setVisible(not balance)
+        self._level_status_label_2.setVisible(self._two_channel_enabled and not balance)
+        self._plots.two.set_generator_level(float(self._queue_level_spin.value()))
+        self._plots.two.set_frequency_limit(
+            frequency_limit(int(self._settings.get("sample_rate")))
+        )
+        if balance:
+            self._level_monitor.stop()
+            self._dual_level_monitor.stop()
+        else:
+            self._start_level_monitor()
+            self._update_plots()
+        self._apply_state_ui()
+
+    def _on_two_channel_bottom_mode_changed(self, _index: int) -> None:
+        mode = str(self._bottom_layout_combo.currentData() or "combined")
+        self._two_channel_bottom_mode = "separate" if mode == "separate" else "combined"
+        self._settings.set(
+            "measure_two_channel_bottom_mode", self._two_channel_bottom_mode
+        )
+        self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
+        self._update_plots()
+
+    def _on_two_channel_selection_changed(self, selection: str) -> None:
+        if selection in {"channel_1", "channel_2"}:
+            self._two_channel_selection = selection
+        self._sync_export_button()
+
+    def _two_channel_devices_ready(self) -> bool:
+        input_info = self._current_input_device_info()
+        output_info = self._current_output_device_info()
+        return bool(
+            input_info is not None
+            and output_info is not None
+            and int(input_info.get("max_input_channels", 0) or 0) >= 2
+            and int(output_info.get("max_output_channels", 0) or 0) >= 2
+            and self._selected_audio_pair_is_compatible()
+        )
+
+    def _start_channel_balance(self) -> None:
+        if self._channel_balance_active:
+            return
+        if (
+            self._state != AppState.IDLE
+            or not self._channel_balance_mode_active()
+        ):
+            return
+        if not self._two_channel_devices_ready():
+            QMessageBox.warning(
+                self,
+                "Two Channels Required",
+                "Channel Balance needs an input device and an output device with at least two channels.",
+            )
+            return
+        input_device = self._current_input_device()
+        output_device = self._current_output_device()
+        if input_device is None or output_device is None:
+            return
+
+        self._level_monitor.stop()
+        self._dual_level_monitor.stop()
+        self._balance_level_db = float(self._queue_level_spin.value())
+        engine = ChannelBalanceEngine()
+        engine.set_parameters(
+            self._balance_waveform,
+            self._balance_frequency,
+            self._balance_level_db,
+        )
+        engine.error.connect(self._on_balance_error)
+        thread = _BalanceThread(
+            engine,
+            input_device=input_device,
+            output_device=output_device,
+            sample_rate=int(self._settings.get("sample_rate")),
+            block_size=int(self._settings.get("buffer_size")),
+            latency=self._sweep_latency_mode(),
+        )
+        thread.finished.connect(self._on_balance_thread_finished)
+        self._balance_engine = engine
+        self._balance_thread = thread
+        self._channel_balance_active = True
+        self._plots.two.set_balance_running(True)
+        self._balance_ui_timer.start()
+        thread.start()
+        self._statusbar.showMessage("Channel Balance generator started.")
+
+    def _stop_channel_balance(self, *_args) -> None:
+        engine = self._balance_engine
+        thread = self._balance_thread
+        if hasattr(self, "_balance_ui_timer"):
+            self._balance_ui_timer.stop()
+        if engine is not None:
+            engine.stop()
+        if thread is not None and thread.isRunning():
+            thread.wait(1200)
+        self._channel_balance_active = False
+        if hasattr(self, "_plots"):
+            self._plots.two.set_balance_running(False)
+        if thread is None or not thread.isRunning():
+            self._balance_engine = None
+            self._balance_thread = None
+
+    def _on_balance_thread_finished(self) -> None:
+        thread = self._balance_thread
+        if thread is not None:
+            thread.deleteLater()
+        self._balance_engine = None
+        self._balance_thread = None
+        self._channel_balance_active = False
+        self._balance_ui_timer.stop()
+        self._plots.two.set_balance_running(False)
+
+    def _on_balance_error(self, message: str) -> None:
+        self._log_event("ERROR", "channel_balance", message)
+        self._statusbar.showMessage(message)
+        QMessageBox.warning(self, "Channel Balance Error", message)
+
+    def _on_balance_parameters_changed(
+        self, waveform: str, frequency: float, level_db: float
+    ) -> None:
+        self._balance_waveform = "square" if waveform == "square" else "sine"
+        self._balance_frequency = max(
+            20.0,
+            min(
+                frequency_limit(int(self._settings.get("sample_rate"))),
+                float(frequency),
+            ),
+        )
+        self._balance_level_db = max(-120.0, min(0.0, float(level_db)))
+        if abs(float(self._queue_level_spin.value()) - self._balance_level_db) > 1e-9:
+            self._queue_level_spin.setValue(self._balance_level_db)
+        if self._balance_engine is not None:
+            self._balance_engine.set_parameters(
+                self._balance_waveform,
+                self._balance_frequency,
+                self._balance_level_db,
+            )
+
+    def _refresh_balance_scope(self) -> None:
+        engine = self._balance_engine
+        if engine is None:
+            return
+        sample_rate = int(self._settings.get("sample_rate"))
+        sample_count = int(
+            round(5.0 * sample_rate / max(20.0, self._balance_frequency))
+        )
+        sample_count = max(128, min(sample_count, int(0.25 * sample_rate)))
+        left, right, left_db, right_db, delta_db = engine.snapshot(sample_count)
+        self._plots.two.update_scope(
+            left, right, sample_rate, left_db, right_db, delta_db
+        )
 
     def _toggle_inputs_overlay(self) -> None:
         if self._inputs_overlay_open:
@@ -1138,6 +1413,10 @@ class MainWindow(QMainWindow):
 
     def _on_settings_tab_changed(self, key: str, _value: object) -> None:
         if key in {"sample_rate", "buffer_size", "latency"}:
+            self._stop_channel_balance()
+            self._plots.two.set_frequency_limit(
+                frequency_limit(int(self._settings.get("sample_rate")))
+            )
             self._start_level_monitor()
         if key == "shortcut_bindings":
             self._configure_keyboard_shortcuts()
@@ -1286,6 +1565,9 @@ class MainWindow(QMainWindow):
         meter = getattr(self, "_level_meter", None)
         if meter is not None:
             meter.update()
+        meter_2 = getattr(self, "_level_meter_2", None)
+        if meter_2 is not None:
+            meter_2.update()
         if log and hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "Application theme changed", theme=theme)
 
@@ -1966,6 +2248,31 @@ class MainWindow(QMainWindow):
         self._level_status_label.setToolTip("Live input RMS monitor")
         row.addWidget(self._level_status_label)
 
+        self._level_meter_2 = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
+        self._level_meter_2.setMinimumWidth(120)
+        self._level_meter_2.setVisible(self._two_channel_enabled)
+        row.addWidget(self._level_meter_2, 1, Qt.AlignmentFlag.AlignVCenter)
+        self._level_status_label_2 = QLabel("R")
+        self._level_status_label_2.setProperty("tone", "muted")
+        self._level_status_label_2.setVisible(self._two_channel_enabled)
+        row.addWidget(self._level_status_label_2)
+
+        self._bottom_layout_label = QLabel("Bottom")
+        self._bottom_layout_label.setProperty("tone", "muted")
+        self._bottom_layout_label.setVisible(self._two_channel_enabled)
+        row.addWidget(self._bottom_layout_label)
+        self._bottom_layout_combo = QComboBox()
+        self._bottom_layout_combo.addItem("Combined", "combined")
+        self._bottom_layout_combo.addItem("Separate", "separate")
+        self._bottom_layout_combo.setCurrentIndex(
+            1 if self._two_channel_bottom_mode == "separate" else 0
+        )
+        self._bottom_layout_combo.setVisible(self._two_channel_enabled)
+        self._bottom_layout_combo.currentIndexChanged.connect(
+            self._on_two_channel_bottom_mode_changed
+        )
+        row.addWidget(self._bottom_layout_combo)
+
         self._variation_toggle = ToggleSwitch("Variation")
         self._variation_toggle.setToolTip(
             "Show confidence-style spread of kept measurements in the bottom viewport."
@@ -2165,6 +2472,36 @@ class MainWindow(QMainWindow):
         self._cancel_queue_btn.setObjectName("btn_cancel")
         self._cancel_queue_btn.clicked.connect(self._cancel_queue)
         primary.addWidget(self._cancel_queue_btn)
+
+        self._two_channel_toggle = ToggleSwitch("Two Channel")
+        self._two_channel_toggle.setChecked(self._two_channel_enabled)
+        self._two_channel_toggle.setToolTip(
+            "Measure output/input channel 1 as L and channel 2 as R."
+        )
+        self._two_channel_toggle.stateChanged.connect(self._on_two_channel_toggled)
+        primary.addWidget(self._two_channel_toggle)
+
+        self._measure_submode_control = QWidget()
+        self._measure_submode_control.setProperty("layoutRole", "transparent")
+        submode_layout = QHBoxLayout(self._measure_submode_control)
+        submode_layout.setContentsMargins(0, 0, 0, 0)
+        submode_layout.setSpacing(4)
+        self._measure_frequency_label = QLabel("Frequency Response")
+        submode_layout.addWidget(self._measure_frequency_label)
+        self._measure_submode_toggle = ToggleSwitch("")
+        self._measure_submode_toggle.setAccessibleName("Measure mode")
+        self._measure_submode_toggle.setToolTip(
+            "Switch between Frequency Response and Channel Balance."
+        )
+        self._measure_submode_toggle.toggled.connect(
+            self._on_measure_submode_toggled
+        )
+        submode_layout.addWidget(self._measure_submode_toggle)
+        self._measure_balance_label = QLabel("Channel Balance")
+        submode_layout.addWidget(self._measure_balance_label)
+        self._measure_submode_control.setVisible(self._two_channel_enabled)
+        self._update_measure_submode_label_tones()
+        primary.addWidget(self._measure_submode_control)
 
         n_label = QLabel("Count")
         n_label.setProperty("tone", "accent")
@@ -2669,7 +3006,11 @@ class MainWindow(QMainWindow):
         previous_in = self._current_input_device()
         previous_ch = self._current_input_channel()
 
+        getattr(self, "_stop_channel_balance", lambda: None)()
         self._level_monitor.stop()
+        dual_monitor = getattr(self, "_dual_level_monitor", None)
+        if dual_monitor is not None:
+            dual_monitor.stop()
         refresh_audio_backend()
         self._refresh_devices()
 
@@ -2736,6 +3077,8 @@ class MainWindow(QMainWindow):
         ):
             return
 
+        getattr(self, "_stop_channel_balance", lambda: None)()
+
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
 
@@ -2771,8 +3114,9 @@ class MainWindow(QMainWindow):
 
     def _start_level_monitor(self) -> None:
         self._level_monitor.stop()
+        self._dual_level_monitor.stop()
 
-        if self._state == AppState.SWEEPING:
+        if self._state == AppState.SWEEPING or self._channel_balance_active:
             return
 
         input_device = self._current_input_device()
@@ -2783,6 +3127,20 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            if self._two_channel_enabled:
+                if not self._two_channel_devices_ready():
+                    self._level_status_label.setText("Two inputs needed")
+                    self._level_status_label_2.setText("R")
+                    return
+                self._dual_level_monitor.start(
+                    device_index=input_device,
+                    device_label=self._current_input_device_label(),
+                    fs=int(self._settings.get("sample_rate")),
+                    buffer_size=int(self._settings.get("buffer_size")),
+                )
+                self._level_status_label.setText("L")
+                self._level_status_label_2.setText("R")
+                return
             self._level_monitor.start(
                 device_index=input_device,
                 device_label=self._current_input_device_label(),
@@ -2795,6 +3153,7 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage(f"Level monitor start failed: {exc}")
 
     def _on_output_device_changed(self) -> None:
+        self._stop_channel_balance()
         self._settings.set("output_device", self._current_output_device_setting())
         self._refresh_session_labels()
         self._apply_state_ui()
@@ -2809,6 +3168,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_input_device_changed(self) -> None:
+        self._stop_channel_balance()
         self._settings.set("input_device", self._current_input_device_setting())
         self._sync_windows_output_to_input()
         self._refresh_channels()
@@ -2847,7 +3207,16 @@ class MainWindow(QMainWindow):
     def _on_level_update(self, dbfs: float) -> None:
         self._last_level_dbfs = float(dbfs)
 
+    def _on_dual_level_update(self, left_dbfs: float, right_dbfs: float) -> None:
+        self._last_dual_levels = (float(left_dbfs), float(right_dbfs))
+        self._last_level_dbfs = max(self._last_dual_levels)
+
     def _refresh_level_meter_display(self) -> None:
+        if getattr(self, "_two_channel_enabled", False):
+            left_db, right_db = self._last_dual_levels
+            self._level_meter.set_level(max(-60.0, min(0.0, left_db)))
+            self._level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
+            return
         target_db = max(-60.0, min(0.0, self._last_level_dbfs))
         self._displayed_level_dbfs = (
             self._displayed_level_dbfs * 0.5
@@ -2916,12 +3285,18 @@ class MainWindow(QMainWindow):
         idle = self._state == AppState.IDLE
         pass_fail = self._state == AppState.PASS_FAIL
         busy = self._state in {AppState.SWEEPING, AppState.QUEUE_RUNNING}
+        balance_mode = self._channel_balance_mode_active()
 
-        device_ok = (
+        single_device_ok = (
             self._current_output_device() is not None
             and self._current_input_device() is not None
             and self._ch_combo.count() > 0
             and self._selected_audio_pair_is_compatible()
+        )
+        device_ok = (
+            self._two_channel_devices_ready()
+            if self._two_channel_enabled
+            else single_device_ok
         )
 
         for widget in (
@@ -2944,16 +3319,30 @@ class MainWindow(QMainWindow):
         ):
             widget.setEnabled(idle)
 
+        self._two_channel_toggle.setEnabled(idle)
+        self._measure_submode_toggle.setEnabled(idle)
+        self._bottom_layout_combo.setEnabled(idle)
+        self._ch_combo.setEnabled(idle and not self._two_channel_enabled)
+
         self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)
         if not idle:
             self._close_metadata_overlay()
         if hasattr(self, "_rnd_widget"):
             self._rnd_widget.set_busy(not idle)
-        self._start_queue_btn.setEnabled(idle and device_ok)
+        self._start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
-        self._undo_btn.setEnabled(idle and len(self._kept_curves) > 0)
-        has_measurements = bool(self._kept_curves) or self._pending_curve is not None
+        active_count = (
+            len(self._two_channel_pairs)
+            if self._two_channel_enabled
+            else len(self._kept_curves)
+        )
+        self._undo_btn.setEnabled(idle and active_count > 0)
+        has_measurements = (
+            bool(self._two_channel_pairs) or self._pending_pair is not None
+            if self._two_channel_enabled
+            else bool(self._kept_curves) or self._pending_curve is not None
+        )
         self._clear_btn.setEnabled(idle and has_measurements)
         self._sync_export_button()
 
@@ -2988,6 +3377,14 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if self._two_channel_enabled and not self._two_channel_devices_ready():
+            QMessageBox.warning(
+                self,
+                "Two Channels Required",
+                "Two Channel measurement needs an input device and an output device with at least two channels.",
+            )
+            return
+
         ambient_dbfs = float(self._last_level_dbfs)
         if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
             choice = QMessageBox.question(
@@ -3013,7 +3410,11 @@ class MainWindow(QMainWindow):
 
         self._queue_progress_bar.setRange(0, max(1, self._queue_target))
         self._queue_progress_bar.setValue(0)
-        kept_count = len(self._kept_curves)
+        kept_count = (
+            len(self._two_channel_pairs)
+            if self._two_channel_enabled
+            else len(self._kept_curves)
+        )
         self._queue_progress_label.setText(
             f"Kept: {kept_count}"
         )
@@ -3023,7 +3424,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Queue started.")
         self._start_next_sweep()
 
-    def _start_next_sweep(self) -> None:
+    def _start_next_sweep(self, *, second_stage: bool = False) -> None:
         if not self._queue_active():
             self._state = AppState.IDLE
             self._apply_state_ui()
@@ -3033,14 +3434,27 @@ class MainWindow(QMainWindow):
             self._finish_queue()
             return
 
-        self._current_sweep_attempts += 1
+        if second_stage:
+            self._two_channel_stage = 2
+        else:
+            self._current_sweep_attempts += 1
+            if self._two_channel_enabled:
+                self._two_channel_stage = 1
+                self._pending_pair = None
+                self._pending_pair_first_raw = None
+                self._pending_pair_first_diagnostics = None
         self._state = AppState.SWEEPING
         self._apply_state_ui()
         self._sweep_progress.setValue(0)
 
         output_device = self._current_output_device()
         input_device = self._current_input_device()
-        input_channel = self._current_input_channel()
+        input_channel = (
+            self._two_channel_stage - 1
+            if self._two_channel_enabled
+            else self._current_input_channel()
+        )
+        output_channel = input_channel if self._two_channel_enabled else None
 
         if output_device is None or input_device is None:
             self._on_sweep_error("Selected device is unavailable.")
@@ -3051,6 +3465,7 @@ class MainWindow(QMainWindow):
             return
 
         self._level_monitor.stop()
+        self._dual_level_monitor.stop()
         self._last_timing_quality = None
         self._last_measurement_diagnostics = None
 
@@ -3080,6 +3495,7 @@ class MainWindow(QMainWindow):
             output_device_label=self._current_output_device_label(),
             input_device_label=self._current_input_device_label(),
             input_channel=input_channel,
+            output_channel=output_channel,
             fs=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
             pre_silence=float(self._settings.get("pre_sweep_silence")),
@@ -3099,8 +3515,13 @@ class MainWindow(QMainWindow):
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
 
+        channel_text = (
+            f", channel {self._two_channel_stage}"
+            if self._two_channel_enabled
+            else ""
+        )
         self._statusbar.showMessage(
-            f"Sweeping {self._queue_index + 1}/{self._queue_target} "
+            f"Sweeping {self._queue_index + 1}/{self._queue_target}{channel_text} "
             f"(attempt {self._current_sweep_attempts})..."
         )
         self._log_event(
@@ -3111,7 +3532,13 @@ class MainWindow(QMainWindow):
             sample_rate=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
             output_level_db=float(self._queue_level_spin.value()),
+            input_channel=input_channel + 1,
+            output_channel=(output_channel + 1) if output_channel is not None else None,
         )
+
+    def _start_second_two_channel_sweep(self) -> None:
+        if self._queue_active() and self._pending_pair_first_raw is not None:
+            self._start_next_sweep(second_stage=True)
 
     def _on_sweep_progress(self, frac: float) -> None:
         self._sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
@@ -3142,6 +3569,55 @@ class MainWindow(QMainWindow):
                 f_low=_MEASUREMENT_F_MIN,
                 f_high=_MEASUREMENT_F_MAX,
             )
+            if self._two_channel_enabled:
+                if self._two_channel_stage == 1:
+                    self._pending_pair_first_raw = (freqs, mag_db)
+                    self._pending_pair_first_diagnostics = self._last_measurement_diagnostics
+                    self._start_second_pair_stage = True
+                    self._state = AppState.QUEUE_RUNNING
+                    self._apply_state_ui()
+                    self._statusbar.showMessage(
+                        "Channel 1/L complete. Starting channel 2/R."
+                    )
+                    return
+                if self._two_channel_stage != 2 or self._pending_pair_first_raw is None:
+                    raise ValueError("The first channel result is unavailable.")
+                first_freqs, first_mag = self._pending_pair_first_raw
+                first_norm, second_norm = shared_normalize_pair_at_1khz(
+                    first_freqs,
+                    first_mag,
+                    freqs,
+                    mag_db,
+                    f_ref=1000.0,
+                )
+                first_ds = downsample_to_log_points(
+                    first_freqs,
+                    first_norm,
+                    n_points=600,
+                    f_ref=1000.0,
+                    normalize_ref=False,
+                )
+                second_ds = downsample_to_log_points(
+                    freqs,
+                    second_norm,
+                    n_points=600,
+                    f_ref=1000.0,
+                    normalize_ref=False,
+                )
+                self._pending_pair = TwoChannelCurvePair(
+                    channel_1=first_ds,
+                    channel_2=second_ds,
+                    channel_1_diagnostics=self._pending_pair_first_diagnostics,
+                    channel_2_diagnostics=self._last_measurement_diagnostics,
+                )
+                self._state = AppState.PASS_FAIL
+                self._apply_state_ui()
+                self._update_plots(show_pending=True)
+                self._statusbar.showMessage(
+                    "Two-channel pair complete. Waiting for review."
+                )
+                QTimer.singleShot(0, self._show_pass_fail_dialog)
+                return
             mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
 
             freqs_ds, mag_ds = downsample_to_log_points(
@@ -3201,6 +3677,11 @@ class MainWindow(QMainWindow):
         self._cleanup_sweep_thread()
         self._close_pass_fail_dialog()
         self._pending_curve = None
+        self._pending_pair = None
+        self._pending_pair_first_raw = None
+        self._pending_pair_first_diagnostics = None
+        self._start_second_pair_stage = False
+        self._two_channel_stage = 0
         self._last_timing_quality = None
         self._sweep_progress.setValue(0)
 
@@ -3213,9 +3694,12 @@ class MainWindow(QMainWindow):
             message=message,
             failure_reason=failure_reason,
         )
+        retry_complete_pair = bool(
+            getattr(self, "_two_channel_enabled", False) and self._queue_active()
+        )
         if (
             self._queue_active()
-            and is_timing_quality_error
+            and (is_timing_quality_error or retry_complete_pair)
             and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS
         ):
             diagnostics_text = ""
@@ -3234,15 +3718,19 @@ class MainWindow(QMainWindow):
             self._state = AppState.QUEUE_RUNNING
             self._apply_state_ui()
             self._start_level_monitor()
+            retry_subject = (
+                "The two-channel pair failed. Both channels will be measured again."
+                if retry_complete_pair
+                else f"Measurement {self._queue_index + 1} did not meet timing quality."
+            )
             retry_msg = (
-                f"{message}\n\n"
-                f"Measurement {self._queue_index + 1} did not meet timing quality.\n"
+                f"{message}\n\n{retry_subject}\n"
                 f"Retry attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?"
                 f"{diagnostics_text}"
             )
             choice = QMessageBox.question(
                 self,
-                "Timing Quality Retry",
+                "Two-Channel Pair Retry" if retry_complete_pair else "Timing Quality Retry",
                 retry_msg,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
@@ -3255,7 +3743,14 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(150, self._start_next_sweep)
                 return
             self._cancel_queue()
-            self._statusbar.showMessage("Queue canceled by user after timing-quality retry prompt.")
+            cancel_reason = (
+                "two-channel pair retry"
+                if retry_complete_pair
+                else "timing-quality retry"
+            )
+            self._statusbar.showMessage(
+                f"Queue canceled by user after {cancel_reason} prompt."
+            )
             return
 
         self._state = AppState.IDLE
@@ -3278,11 +3773,41 @@ class MainWindow(QMainWindow):
 
     def _on_sweep_thread_finished(self) -> None:
         self._cleanup_sweep_thread()
+        if self._start_second_pair_stage:
+            self._start_second_pair_stage = False
+            QTimer.singleShot(0, self._start_second_two_channel_sweep)
+            return
         if self._state != AppState.PASS_FAIL:
             self._start_level_monitor()
 
     def _on_keep(self) -> None:
-        if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+        if self._state != AppState.PASS_FAIL:
+            return
+
+        if self._two_channel_enabled:
+            if self._pending_pair is None:
+                return
+            self._close_pass_fail_dialog()
+            self._two_channel_pairs.append(self._pending_pair)
+            self._pending_pair = None
+            self._pending_pair_first_raw = None
+            self._pending_pair_first_diagnostics = None
+            self._two_channel_stage = 0
+            self._queue_index += 1
+            self._current_sweep_attempts = 0
+            self._recompute_two_channel_results()
+            self._update_queue_progress()
+            self._update_plots()
+            self._run_automation_trigger("measurement_kept")
+            if self._queue_index >= self._queue_target:
+                self._finish_queue()
+                return
+            self._state = AppState.QUEUE_RUNNING
+            self._apply_state_ui()
+            self._start_next_sweep()
+            return
+
+        if self._pending_curve is None:
             return
 
         self._close_pass_fail_dialog()
@@ -3294,6 +3819,10 @@ class MainWindow(QMainWindow):
         )
         self._run_automation_trigger("measurement_kept")
         self._pending_curve = None
+        self._pending_pair = None
+        self._pending_pair_first_raw = None
+        self._pending_pair_first_diagnostics = None
+        self._two_channel_stage = 0
         self._queue_index += 1
         self._current_sweep_attempts = 0
 
@@ -3317,6 +3846,11 @@ class MainWindow(QMainWindow):
         self._close_pass_fail_dialog()
         self._log_event("WARNING", "review", "Measurement rejected", index=self._queue_index + 1)
         self._pending_curve = None
+        self._pending_pair = None
+        self._pending_pair_first_raw = None
+        self._pending_pair_first_diagnostics = None
+        self._start_second_pair_stage = False
+        self._two_channel_stage = 0
         self._state = AppState.QUEUE_RUNNING
         self._apply_state_ui()
         self._update_plots()
@@ -3354,13 +3888,22 @@ class MainWindow(QMainWindow):
         target = max(0, self._queue_target)
         self._queue_progress_bar.setRange(0, max(1, target))
         self._queue_progress_bar.setValue(min(self._queue_index, max(1, target)))
-        kept_count = len(self._kept_curves)
+        kept_count = (
+            len(self._two_channel_pairs)
+            if self._two_channel_enabled
+            else len(self._kept_curves)
+        )
         self._queue_progress_label.setText(
             f"Kept: {kept_count}"
         )
 
     def _show_pass_fail_dialog(self) -> None:
-        if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+        pending_available = (
+            self._pending_pair is not None
+            if self._two_channel_enabled
+            else self._pending_curve is not None
+        )
+        if self._state != AppState.PASS_FAIL or not pending_available:
             return
 
         if self._pass_fail_dialog is not None:
@@ -3700,6 +4243,79 @@ class MainWindow(QMainWindow):
         )
         self._average = (freqs, mag_db)
 
+    def _recompute_two_channel_results(self) -> None:
+        curves_by_key = {
+            "channel_1": channel_curves(self._two_channel_pairs, 1),
+            "channel_2": channel_curves(self._two_channel_pairs, 2),
+            "combined": combined_pair_curves(
+                self._two_channel_pairs,
+                n_points=_DISPLAY_AVG_POINTS,
+            ),
+        }
+        averages: dict[str, object] = {}
+        for key, curves in curves_by_key.items():
+            if not curves:
+                averages[key] = None
+                continue
+            averages[key] = compute_rms_average(
+                curves,
+                n_points=_DISPLAY_AVG_POINTS,
+                f_ref=1000.0,
+                f_min=_MEASUREMENT_F_MIN,
+                f_max=_MEASUREMENT_F_MAX,
+                normalize_ref=False,
+            )
+        self._two_channel_averages = averages
+
+    def _active_two_channel_key(self) -> str:
+        if self._two_channel_bottom_mode == "combined":
+            return "combined"
+        return self._two_channel_selection
+
+    def _active_two_channel_average(
+        self,
+    ) -> Optional[tuple[np.ndarray, np.ndarray]]:
+        value = self._two_channel_averages.get(self._active_two_channel_key())
+        return value if isinstance(value, tuple) else None
+
+    def _active_measure_curves(self) -> list[tuple[np.ndarray, np.ndarray]]:
+        if not getattr(self, "_two_channel_enabled", False):
+            return list(self._kept_curves)
+        key = self._active_two_channel_key()
+        if key == "channel_1":
+            return channel_curves(self._two_channel_pairs, 1)
+        if key == "channel_2":
+            return channel_curves(self._two_channel_pairs, 2)
+        return combined_pair_curves(
+            self._two_channel_pairs,
+            n_points=_DISPLAY_AVG_POINTS,
+        )
+
+    def _active_measure_count(self) -> int:
+        return (
+            len(self._two_channel_pairs)
+            if getattr(self, "_two_channel_enabled", False)
+            else len(self._kept_curves)
+        )
+
+    def _active_measure_label(self) -> str:
+        if not getattr(self, "_two_channel_enabled", False):
+            return ""
+        return curve_label_for_selection(self._active_two_channel_key())
+
+    def _active_measure_session(self) -> SessionData:
+        label = self._active_measure_label()
+        if label in {"L", "R"}:
+            return replace(self._session, channel_side=label)
+        if label == "BOTH":
+            return replace(self._session, channel_side="")
+        return self._session
+
+    def _active_measure_variation(self):
+        if getattr(self, "_two_channel_enabled", False):
+            return self._two_channel_variations.get(self._active_two_channel_key())
+        return self._variation
+
     def _recompute_variation(self) -> None:
         active_hrtf = self._hrtf if self._is_hrtf_active() else None
         self._variation = self._variation_from_kept_curves(hrtf=active_hrtf)
@@ -3718,12 +4334,35 @@ class MainWindow(QMainWindow):
             np.ndarray,
         ]
     ]:
-        if not self._kept_curves or self._average is None:
+        return MainWindow._variation_from_curves(
+            self,
+            self._kept_curves,
+            self._average,
+            hrtf=hrtf,
+        )
+
+    def _variation_from_curves(
+        self,
+        curves: list[tuple[np.ndarray, np.ndarray]],
+        average: Optional[tuple[np.ndarray, np.ndarray]],
+        *,
+        hrtf: HRTFCurve | None,
+    ) -> Optional[
+        tuple[
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+            np.ndarray,
+        ]
+    ]:
+        if not curves or average is None:
             return None
 
-        base_freqs = self._average[0]
+        base_freqs = average[0]
         rows: list[np.ndarray] = []
-        for freqs, mag in self._kept_curves:
+        for freqs, mag in curves:
             values = np.interp(base_freqs, freqs, mag)
             if hrtf is not None and not getattr(hrtf, "is_variation", False):
                 values = hrtf.apply(base_freqs, values)
@@ -3758,9 +4397,14 @@ class MainWindow(QMainWindow):
         self,
         hrtf: HRTFCurve | None,
     ) -> Optional[tuple[np.ndarray, np.ndarray]]:
-        if self._average is None:
+        source = (
+            self._active_two_channel_average()
+            if getattr(self, "_two_channel_enabled", False)
+            else self._average
+        )
+        if source is None:
             return None
-        freqs, mag_db = self._average
+        freqs, mag_db = source
         if hrtf is None:
             return freqs, mag_db
         return freqs, hrtf.apply(freqs, mag_db)
@@ -3784,6 +4428,50 @@ class MainWindow(QMainWindow):
         )
 
     def _update_plots(self, *_args, show_pending: bool = False) -> None:
+        if self._two_channel_enabled:
+            active_hrtf = self._hrtf if self._is_hrtf_active() else None
+            pairs = list(self._two_channel_pairs)
+            if show_pending and self._pending_pair is not None:
+                pairs.append(self._pending_pair)
+            curves_by_key = {
+                "channel_1": channel_curves(self._two_channel_pairs, 1),
+                "channel_2": channel_curves(self._two_channel_pairs, 2),
+                "combined": combined_pair_curves(
+                    self._two_channel_pairs,
+                    n_points=_DISPLAY_AVG_POINTS,
+                ),
+            }
+            averages: dict[str, object] = {}
+            variations: dict[str, object] = {}
+            for key in ("channel_1", "channel_2", "combined"):
+                raw_average = self._two_channel_averages.get(key)
+                if isinstance(raw_average, tuple):
+                    freqs, values = raw_average
+                    if active_hrtf is not None:
+                        values = active_hrtf.apply(freqs, values)
+                    averages[key] = smooth_fractional_octave(
+                        freqs,
+                        values,
+                        fraction=_DISPLAY_AVG_SMOOTHING,
+                    )
+                else:
+                    averages[key] = None
+                variations[key] = self._variation_from_curves(
+                    curves_by_key[key],
+                    raw_average if isinstance(raw_average, tuple) else None,
+                    hrtf=active_hrtf,
+                )
+            self._two_channel_variations = variations
+            self._plots.two.update_frequency_response(
+                top_channel_1=channel_curves(pairs, 1),
+                top_channel_2=channel_curves(pairs, 2),
+                averages=averages,
+                variations=variations,
+                show_variation=self._bottom_view_mode() == "variation",
+            )
+            self._sync_export_button()
+            return
+
         avg = self._bottom_curve_for_display()
         self._recompute_variation()
 
@@ -3839,6 +4527,16 @@ class MainWindow(QMainWindow):
             self._update_plots()
 
     def _import_dropped_measurement_files(self, paths: list[str]) -> None:
+        if getattr(self, "_two_channel_enabled", False):
+            QMessageBox.information(
+                self,
+                "Single Channel Only",
+                "TXT drag-and-drop import is available only in Single Channel mode.",
+            )
+            self._statusbar.showMessage(
+                "Measurement import blocked: Two Channel mode is active."
+            )
+            return
         if self._state != AppState.IDLE:
             QMessageBox.information(
                 self,
@@ -3895,7 +4593,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._kept_curves and self._pending_curve is None:
+        active_has_data = (
+            bool(self._two_channel_pairs) or self._pending_pair is not None
+            if self._two_channel_enabled
+            else bool(self._kept_curves) or self._pending_curve is not None
+        )
+        if not active_has_data:
             return
 
         if bool(self._settings.get("confirm_clear_measurements")):
@@ -3906,14 +4609,23 @@ class MainWindow(QMainWindow):
                 self._settings.set("confirm_clear_measurements", False)
                 self._settings_widget.refresh_from_settings()
 
-        self._kept_curves.clear()
-        self._average = None
-        self._variation = None
-        self._pending_curve = None
+        if self._two_channel_enabled:
+            self._two_channel_pairs.clear()
+            self._two_channel_averages.clear()
+            self._two_channel_variations.clear()
+            self._pending_pair = None
+            self._pending_pair_first_raw = None
+            self._pending_pair_first_diagnostics = None
+            self._update_plots()
+        else:
+            self._kept_curves.clear()
+            self._average = None
+            self._variation = None
+            self._pending_curve = None
+            self._plots.clear_all()
         self._queue_target = 0
         self._queue_index = 0
         self._current_sweep_attempts = 0
-        self._plots.clear_all()
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
         self._sync_export_button()
@@ -3947,12 +4659,17 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._kept_curves:
-            return
-
-        self._kept_curves.pop()
-        self._recompute_average()
-        self._recompute_variation()
+        if self._two_channel_enabled:
+            if not self._two_channel_pairs:
+                return
+            self._two_channel_pairs.pop()
+            self._recompute_two_channel_results()
+        else:
+            if not self._kept_curves:
+                return
+            self._kept_curves.pop()
+            self._recompute_average()
+            self._recompute_variation()
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
@@ -4011,6 +4728,15 @@ class MainWindow(QMainWindow):
             self._queue_level_spin.blockSignals(False)
         if self._queue_level_persist_toggle.isChecked():
             self._settings.set("queue_output_level_db", clamped)
+        if hasattr(self, "_plots"):
+            self._plots.two.set_generator_level(clamped)
+        self._balance_level_db = clamped
+        if self._balance_engine is not None:
+            self._balance_engine.set_parameters(
+                self._balance_waveform,
+                self._balance_frequency,
+                self._balance_level_db,
+            )
 
     def _on_queue_count_changed(self, _value: int) -> None:
         if hasattr(self._settings, "clear_session"):
@@ -4186,18 +4912,24 @@ class MainWindow(QMainWindow):
             {
                 "hrtf_name": active_hrtf.name if active_hrtf is not None else "",
                 "compensated": active_hrtf is not None,
+                "measure_channel": self._active_measure_label(),
             }
         )
         if mode == "variation":
-            if self._variation is None:
+            active_variation = self._active_measure_variation()
+            if active_variation is None:
                 raise ValueError("No variation band is available to send.")
             source_variation = None
             if active_hrtf is not None and getattr(active_hrtf, "is_variation", False):
-                source_variation = self._variation_from_kept_curves(
+                source_variation = self._variation_from_curves(
+                    self._active_measure_curves(),
+                    self._active_two_channel_average()
+                    if self._two_channel_enabled
+                    else self._average,
                     hrtf=None,
                 )
             freqs, p10, p25, p75, p90, median = (
-                source_variation if source_variation is not None else self._variation
+                source_variation if source_variation is not None else active_variation
             )
             if active_hrtf is not None and not getattr(active_hrtf, "is_variation", False):
                 correction = active_hrtf.evaluate(freqs)
@@ -4244,7 +4976,9 @@ class MainWindow(QMainWindow):
         if not identity:
             identity = "Fastgraph"
         comp_label = "COMP" if active_hrtf is not None else "RAW"
-        name = f"{identity} {comp_label} {kind_label}"
+        channel_label = self._active_measure_label()
+        channel_part = f" {channel_label}" if channel_label else ""
+        name = f"{identity}{channel_part} {comp_label} {kind_label}"
         # Make Curator visible before its reveal animation starts. Some Qt
         # platforms defer animation paints for hidden tab pages.
         self._tabs.setCurrentWidget(self._curator_widget)
@@ -4278,10 +5012,16 @@ class MainWindow(QMainWindow):
     def _measure_to_rnd_unavailable_reason(self) -> str:
         if self._state != AppState.IDLE:
             return "Measurements can only be sent to R&D while Measure is idle."
+        if self._channel_balance_mode_active():
+            return "Switch to Frequency Response before sending data to R&D."
         if self._bottom_view_mode() == "variation":
-            if not self._kept_curves:
+            if not self._active_measure_curves():
                 return "Keep at least one measurement before sending Var to R&D."
-        elif self._average is None:
+        elif (
+            self._active_two_channel_average()
+            if self._two_channel_enabled
+            else self._average
+        ) is None:
             return "Create an average before sending it to R&D."
         return ""
 
@@ -4297,11 +5037,15 @@ class MainWindow(QMainWindow):
         metadata = session_snapshot(self._session)
         input_label = self._current_input_device_label()
         output_label = self._current_output_device_label()
-        input_channel_index = self._current_input_channel()
-        channel_label = (
+        active_label = self._active_measure_label()
+        input_channel_index = (
+            1 if active_label == "R" else 0
+        ) if self._two_channel_enabled else self._current_input_channel()
+        channel_label = active_label or (
             self._ch_combo.currentText().strip()
             or f"Channel {input_channel_index + 1}"
         )
+        metadata["measure_channel"] = channel_label
         identity = self._session.asset_tag.strip() or " ".join(
             part
             for part in (self._session.brand.strip(), self._session.model.strip())
@@ -4318,7 +5062,9 @@ class MainWindow(QMainWindow):
                 measurement.name for measurement in self._rnd_widget.session.measurements
             }
             measurements: list[RnDMeasurement] = []
-            for index, (freqs, mag_db) in enumerate(self._kept_curves, start=1):
+            for index, (freqs, mag_db) in enumerate(
+                self._active_measure_curves(), start=1
+            ):
                 name = self._unique_rnd_transfer_name(
                     f"{group_name} Sweep {index}",
                     existing_names,
@@ -4357,8 +5103,13 @@ class MainWindow(QMainWindow):
             transferred_count = len(measurements)
             transfer_mode = "variation"
         else:
-            assert self._average is not None
-            freqs, mag_db = self._average
+            active_average = (
+                self._active_two_channel_average()
+                if self._two_channel_enabled
+                else self._average
+            )
+            assert active_average is not None
+            freqs, mag_db = active_average
             name = self._unique_rnd_transfer_name(
                 f"{identity} AVG",
                 {
@@ -4852,7 +5603,17 @@ class MainWindow(QMainWindow):
             return
 
         compensated = self._is_hrtf_active()
-        filename = build_filename(self._session, compensated=compensated)
+        two_channel = bool(getattr(self, "_two_channel_enabled", False))
+        channel_label = self._active_measure_label() if two_channel else ""
+        export_session = self._active_measure_session() if two_channel else self._session
+        active_count = (
+            self._active_measure_count() if two_channel else len(self._kept_curves)
+        )
+        filename = build_filename(
+            self._session,
+            compensated=compensated,
+            channel_label=channel_label,
+        )
         path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Average")
         if path is None:
             return
@@ -4865,11 +5626,11 @@ class MainWindow(QMainWindow):
             export_curve(
                 freqs=freqs,
                 mag_db=mag_db,
-                session=self._session,
+                session=export_session,
                 output_path=path,
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
-                n_sweeps=len(self._kept_curves),
+                n_sweeps=active_count,
             )
             self._statusbar.showMessage(f"Exported average: {path}")
             if hasattr(self, "_log_event"):
@@ -4882,12 +5643,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Error", str(exc))
 
     def _export_variation(self, requested_path: Optional[str] = None) -> None:
-        if self._variation is None:
+        two_channel = bool(getattr(self, "_two_channel_enabled", False))
+        active_variation = (
+            self._active_measure_variation() if two_channel else self._variation
+        )
+        if active_variation is None:
             QMessageBox.information(self, "Nothing to Export", "No variation band available yet.")
             return
 
         compensated = self._is_hrtf_active()
-        filename = build_variation_filename(self._session, compensated=compensated)
+        channel_label = self._active_measure_label() if two_channel else ""
+        export_session = self._active_measure_session() if two_channel else self._session
+        active_count = (
+            self._active_measure_count() if two_channel else len(self._kept_curves)
+        )
+        filename = build_variation_filename(
+            self._session,
+            compensated=compensated,
+            channel_label=channel_label,
+        )
         path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Variation")
         if path is None:
             return
@@ -4895,7 +5669,7 @@ class MainWindow(QMainWindow):
         self._export_dir_input.setText(export_dir)
         self._settings.set("export_directory", export_dir)
 
-        freqs, p10, p25, p75, p90, median = self._variation
+        freqs, p10, p25, p75, p90, median = active_variation
         try:
             export_variation(
                 freqs=freqs,
@@ -4904,11 +5678,11 @@ class MainWindow(QMainWindow):
                 median_db=median,
                 p75_db=p75,
                 p90_db=p90,
-                session=self._session,
+                session=export_session,
                 output_path=path,
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
-                n_sweeps=len(self._kept_curves),
+                n_sweeps=active_count,
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
             )
             self._statusbar.showMessage(f"Exported variation: {path}")
@@ -4934,9 +5708,19 @@ class MainWindow(QMainWindow):
     def _export_all_unavailable_reason(self) -> str:
         if self._state != AppState.IDLE:
             return "Export All is available while Measure is idle."
-        if self._average is None:
+        active_average = (
+            self._active_two_channel_average()
+            if getattr(self, "_two_channel_enabled", False)
+            else self._average
+        )
+        if active_average is None:
             return "Keep at least one measurement to create the average."
-        if len(self._kept_curves) < 2:
+        active_count = (
+            self._active_measure_count()
+            if getattr(self, "_two_channel_enabled", False)
+            else len(self._kept_curves)
+        )
+        if active_count < 2:
             return "Keep at least two measurements to create variation files."
         if self._hrtf is None:
             return "Select an HRTF to create the COMP files."
@@ -4996,8 +5780,26 @@ class MainWindow(QMainWindow):
         hrtf = self._hrtf
         raw_average = self._average_curve_with_hrtf(None)
         comp_average = self._average_curve_with_hrtf(hrtf)
-        raw_variation = self._variation_from_kept_curves(hrtf=None)
-        comp_variation = self._variation_from_kept_curves(hrtf=hrtf)
+        active_average_raw = (
+            self._active_two_channel_average()
+            if getattr(self, "_two_channel_enabled", False)
+            else self._average
+        )
+        active_curves = (
+            self._active_measure_curves()
+            if getattr(self, "_two_channel_enabled", False)
+            else list(self._kept_curves)
+        )
+        if getattr(self, "_two_channel_enabled", False):
+            raw_variation = self._variation_from_curves(
+                active_curves, active_average_raw, hrtf=None
+            )
+            comp_variation = self._variation_from_curves(
+                active_curves, active_average_raw, hrtf=hrtf
+            )
+        else:
+            raw_variation = self._variation_from_kept_curves(hrtf=None)
+            comp_variation = self._variation_from_kept_curves(hrtf=hrtf)
         if (
             hrtf is None
             or raw_average is None
@@ -5012,11 +5814,26 @@ class MainWindow(QMainWindow):
             )
             return
 
+        channel_label = (
+            self._active_measure_label()
+            if getattr(self, "_two_channel_enabled", False)
+            else ""
+        )
+        active_count = (
+            self._active_measure_count()
+            if getattr(self, "_two_channel_enabled", False)
+            else len(self._kept_curves)
+        )
+        export_session = (
+            self._active_measure_session()
+            if getattr(self, "_two_channel_enabled", False)
+            else self._session
+        )
         filenames = [
-            build_filename(self._session, compensated=False),
-            build_filename(self._session, compensated=True),
-            build_variation_filename(self._session, compensated=False),
-            build_variation_filename(self._session, compensated=True),
+            build_filename(self._session, compensated=False, channel_label=channel_label),
+            build_filename(self._session, compensated=True, channel_label=channel_label),
+            build_variation_filename(self._session, compensated=False, channel_label=channel_label),
+            build_variation_filename(self._session, compensated=True, channel_label=channel_label),
         ]
         destinations = [directory / name for name in filenames]
         conflicts = [path for path in destinations if path.exists()]
@@ -5034,20 +5851,20 @@ class MainWindow(QMainWindow):
                 export_curve(
                     freqs=raw_freqs,
                     mag_db=raw_mag,
-                    session=self._session,
+                    session=export_session,
                     output_path=temp_dir / filenames[0],
                     compensated=False,
                     hrtf=None,
-                    n_sweeps=len(self._kept_curves),
+                    n_sweeps=active_count,
                 )
                 export_curve(
                     freqs=comp_freqs,
                     mag_db=comp_mag,
-                    session=self._session,
+                    session=export_session,
                     output_path=temp_dir / filenames[1],
                     compensated=True,
                     hrtf=hrtf,
-                    n_sweeps=len(self._kept_curves),
+                    n_sweeps=active_count,
                 )
                 for index, variation, compensated in (
                     (2, raw_variation, False),
@@ -5061,11 +5878,11 @@ class MainWindow(QMainWindow):
                         median_db=median,
                         p75_db=p75,
                         p90_db=p90,
-                        session=self._session,
+                        session=export_session,
                         output_path=temp_dir / filenames[index],
                         compensated=compensated,
                         hrtf=hrtf if compensated else None,
-                        n_sweeps=len(self._kept_curves),
+                        n_sweeps=active_count,
                         smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
                     )
                 for name, destination in zip(filenames, destinations):
@@ -5108,18 +5925,28 @@ class MainWindow(QMainWindow):
 
     def _sync_export_button(self) -> None:
         idle = self._state == AppState.IDLE
+        two_channel = bool(getattr(self, "_two_channel_enabled", False))
+        frequency_mode = not MainWindow._channel_balance_mode_active(self)
+        active_average = (
+            self._active_two_channel_average()
+            if two_channel
+            else self._average
+        )
+        active_variation = (
+            self._active_measure_variation() if two_channel else self._variation
+        )
         if self._bottom_view_mode() == "variation":
             self._export_btn.setText("Export Variation…")
             self._export_btn.setToolTip(
                 "Export the displayed variation band as percentile columns in a tab-delimited TXT file."
             )
-            export_enabled = idle and self._variation is not None
+            export_enabled = idle and frequency_mode and active_variation is not None
         else:
             self._export_btn.setText("Export Average…")
             self._export_btn.setToolTip(
                 "Export averaged FR as a REW-style TXT file."
             )
-            export_enabled = idle and self._average is not None
+            export_enabled = idle and frequency_mode and active_average is not None
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
             self._send_to_curator_btn.setEnabled(export_enabled)
@@ -5148,13 +5975,18 @@ class MainWindow(QMainWindow):
                 self._upload_btn.setObjectName("btn_upload")
             if hasattr(self._upload_btn, "setRole"):
                 self._upload_btn.setRole("positive")
-            self._upload_btn.setEnabled(idle and self._average is not None)
+            self._upload_btn.setEnabled(idle and frequency_mode and active_average is not None)
             self._upload_btn.setToolTip("Upload the current average to Squiglink.")
         if hasattr(self, "_undo_btn"):
-            self._undo_btn.setEnabled(idle and bool(self._kept_curves))
+            self._undo_btn.setEnabled(idle and self._active_measure_count() > 0)
         if hasattr(self, "_clear_btn"):
             self._clear_btn.setEnabled(
-                idle and (bool(self._kept_curves) or self._pending_curve is not None)
+                idle
+                and (
+                    bool(self._two_channel_pairs) or self._pending_pair is not None
+                    if self._two_channel_enabled
+                    else bool(self._kept_curves) or self._pending_curve is not None
+                )
             )
 
     def _squiglink_endpoint(self) -> tuple[str, int]:
@@ -5207,10 +6039,22 @@ class MainWindow(QMainWindow):
             self._settings.set("squiglink_credentials_encrypted", None)
 
         compensated = self._is_hrtf_active()
-        if not self._ensure_upload_metadata():
+        channel_label = self._active_measure_label()
+        required_side = (
+            "R" if channel_label == "R" else "L"
+        ) if self._two_channel_enabled else None
+        if not self._ensure_upload_metadata(required_side=required_side):
             return
-        upload_stem = build_upload_name_stem(self._session, auth.name_modifier())
-        phone_book_stem = build_phone_book_name_stem(self._session, auth.name_modifier())
+        upload_session = (
+            replace(self._session, channel_side=required_side)
+            if required_side is not None
+            else self._session
+        )
+        modifier = auth.name_modifier()
+        if self._two_channel_enabled and channel_label == "BOTH" and not modifier:
+            modifier = "BOTH L"
+        upload_stem = build_upload_name_stem(upload_session, modifier)
+        phone_book_stem = build_phone_book_name_stem(upload_session, modifier)
         filename = f"{upload_stem}.txt"
         freqs, mag_db = curve
 
@@ -5229,11 +6073,11 @@ class MainWindow(QMainWindow):
             export_curve(
                 freqs=freqs,
                 mag_db=mag_db,
-                session=self._session,
+                session=upload_session,
                 output_path=tmp_path,
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
-                n_sweeps=len(self._kept_curves),
+                n_sweeps=self._active_measure_count(),
             )
             upload_export_sftp(
                 local_path=tmp_path,
@@ -5269,25 +6113,28 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-    def _ensure_upload_metadata(self) -> bool:
+    def _ensure_upload_metadata(self, *, required_side: str | None = None) -> bool:
         side = (getattr(self._session, "channel_side", "") or "").strip().upper()
         brand = (getattr(self._session, "brand", "") or "").strip()
         model = (getattr(self._session, "model", "") or "").strip()
-        if brand and model and side in {"L", "R"}:
+        if brand and model and (
+            required_side in {"L", "R"} or side in {"L", "R"}
+        ):
             return True
 
         dialog = SquiglinkUploadMetadataDialog(
             self,
             initial_brand=brand,
             initial_model=model,
-            initial_channel_side=side,
+            initial_channel_side=required_side or side,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
 
         self._session.brand = dialog.brand()
         self._session.model = dialog.model()
-        self._session.channel_side = dialog.channel_side()
+        if required_side is None:
+            self._session.channel_side = dialog.channel_side()
         return True
 
     def _ask_phone_book_fallback_mode(self, detail_message: str) -> str:
@@ -5388,6 +6235,16 @@ class MainWindow(QMainWindow):
 
         try:
             self._level_monitor.stop()
+        except Exception:
+            pass
+
+        try:
+            self._dual_level_monitor.stop()
+        except Exception:
+            pass
+
+        try:
+            self._stop_channel_balance()
         except Exception:
             pass
 

@@ -8,9 +8,10 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterP
 
 from dms.curator.models import CurveData, GraphState
 from dms.curator.transforms import visible_display_layers
-from dms.graph_display import retro_step_group, retro_step_series
+from dms.graph_display import retro_step_group, retro_step_series, stipple_trace_pen
 from dms.theme import ensure_graph_color, normalize_theme
 from dms.ui.style_tokens import ThemeTokens, tokens_for
+from dms.ui.theme_surface import paint_aperiodic_dither_band
 
 
 FREQ_MIN = 20.0
@@ -39,6 +40,8 @@ FREQUENCY_MARKERS = {
     3000: (145, 152, 168, 92, 1.4),
     10000: (145, 152, 168, 128, 2.0),
 }
+DITHER_FOOTER_HEIGHT = 78.0
+DITHER_FOOTER_HORIZONTAL_MARGIN = 40.0
 
 
 def export_graph_image(
@@ -79,13 +82,19 @@ def _draw_poster(
     width, height = size
     graph_rect = QRectF(72, 150, width - 144, height - 280)
     text = state.export_text
-    bg = QColor(state.background)
-    light_background = bg.lightness() >= 150
     tokens = tokens_for(theme)
     classic = tokens.classic_controls
-    fg = QColor(tokens.text if classic else ("#20252d" if light_background else "#f2f5f4"))
-    accent = QColor(ACCENT_COLOR)
-    muted = QColor(tokens.plot_fg if classic else ("#5f6977" if light_background else "#8f98a8"))
+    dither = tokens.dither_chrome
+    bg = QColor(tokens.background if dither else state.background)
+    light_background = bg.lightness() >= 150
+    if dither:
+        fg = QColor(tokens.text)
+        accent = QColor(tokens.accent)
+        muted = QColor(tokens.plot_fg)
+    else:
+        fg = QColor(tokens.text if classic else ("#20252d" if light_background else "#f2f5f4"))
+        accent = QColor(ACCENT_COLOR)
+        muted = QColor(tokens.plot_fg if classic else ("#5f6977" if light_background else "#8f98a8"))
 
     if classic:
         painter.fillRect(QRectF(0, 0, width, height), QColor(tokens.panel))
@@ -94,37 +103,54 @@ def _draw_poster(
         painter.setPen(QPen(QColor(tokens.border), 2))
         painter.drawRect(title_bar)
         _draw_dither_strip(painter, QRectF(24, 116, width - 48, 14), tokens)
+    elif dither:
+        painter.fillRect(QRectF(0, 0, width, height), QColor(tokens.background))
+        _draw_dither_masthead(painter, text, width, tokens)
     else:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(bg).lighter(118))
         painter.drawRect(QRectF(0, 0, width, 96))
 
-    title_color = QColor(tokens.text if tokens.dark_bevel else "#FFFFFF") if classic else fg
-    painter.setPen(title_color)
-    title_rect = QRectF(44 if classic else 72, 18 if classic else 16, width - 280, 58)
-    title, title_font = fit_title(text.title.strip() or "Curator", title_rect.width())
-    if classic:
-        title_font.setFamily(tokens.typography.heading_family)
-        title_font.setPointSize(min(title_font.pointSize(), 36))
-    painter.setFont(title_font)
-    painter.drawText(
-        title_rect,
-        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
-        title,
-    )
-    painter.setFont(
-        QFont(
-            tokens.typography.ui_family if classic else "Arial",
-            18 if classic else 20,
-            QFont.Weight.DemiBold,
+    if not dither:
+        title_color = (
+            QColor(tokens.text if tokens.dark_bevel else "#FFFFFF")
+            if classic
+            else fg
         )
-    )
-    painter.setPen(QColor(tokens.text) if classic else accent)
-    painter.drawText(QRectF(44 if classic else 74, 78, width - 320, 34), text.fixture.strip())
+        painter.setPen(title_color)
+        title_rect = QRectF(44 if classic else 72, 18 if classic else 16, width - 280, 58)
+        title, title_font = fit_title(text.title.strip() or "Curator", title_rect.width())
+        if classic:
+            title_font.setFamily(tokens.typography.heading_family)
+            title_font.setPointSize(min(title_font.pointSize(), 36))
+        painter.setFont(title_font)
+        painter.drawText(
+            title_rect,
+            Qt.AlignmentFlag.AlignLeft
+            | Qt.AlignmentFlag.AlignVCenter
+            | Qt.TextFlag.TextSingleLine,
+            title,
+        )
+        painter.setFont(
+            QFont(
+                tokens.typography.ui_family if classic else "Arial",
+                18 if classic else 20,
+                QFont.Weight.DemiBold,
+            )
+        )
+        painter.setPen(QColor(tokens.text) if classic else accent)
+        painter.drawText(
+            QRectF(44 if classic else 74, 78, width - 320, 34),
+            text.fixture.strip(),
+        )
 
     if classic:
         painter.fillRect(graph_rect, bg)
         _draw_classic_bevel(painter, graph_rect, tokens, recessed=True)
+    elif dither:
+        painter.setPen(QPen(QColor(tokens.border), 2))
+        painter.setBrush(QColor(tokens.plot_bg))
+        painter.drawRoundedRect(graph_rect, 12, 12)
     else:
         painter.setBrush(QColor(bg).lighter(108))
         painter.setPen(QPen(QColor("#313846"), 2))
@@ -136,13 +162,35 @@ def _draw_poster(
         -PLOT_INSET_RIGHT,
         -PLOT_INSET_BOTTOM,
     )
-    _draw_grid(painter, plot_rect, state.y_min, state.y_max, muted)
+    _draw_grid(
+        painter,
+        plot_rect,
+        state.y_min,
+        state.y_max,
+        QColor(tokens.plot_grid) if dither else muted,
+        label_color=QColor(tokens.plot_fg) if dither else None,
+        marker_color=QColor(tokens.plot_grid) if dither else None,
+    )
     painter.save()
     painter.setClipRect(plot_rect)
-    _draw_bounds(painter, plot_rect, state, retro=classic)
+    _draw_bounds(
+        painter,
+        plot_rect,
+        state,
+        retro=tokens.retro_graph,
+        dither_tokens=tokens if dither else None,
+    )
     visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
-    for layer, curve in visible_layers:
-        display_color = ensure_graph_color(layer.color, state.background)
+    trace_indexes_by_id = {layer.id: index for index, layer in enumerate(state.layers)}
+    visible_trace_indexes = [
+        trace_indexes_by_id.get(layer.id, fallback_index)
+        for fallback_index, (layer, _curve) in enumerate(visible_layers)
+    ]
+    for trace_index, (layer, curve) in zip(visible_trace_indexes, visible_layers):
+        display_color = ensure_graph_color(
+            layer.color,
+            tokens.plot_bg if dither else state.background,
+        )
         _draw_curve_data(
             painter,
             plot_rect,
@@ -150,7 +198,9 @@ def _draw_poster(
             display_color,
             state.y_min,
             state.y_max,
-            retro=classic,
+            retro=tokens.retro_graph,
+            trace_index=trace_index,
+            trace_tokens=tokens,
         )
     painter.restore()
     if state.show_layer_names:
@@ -160,7 +210,14 @@ def _draw_poster(
             visible_layers,
             light_background,
             classic_tokens=tokens if classic else None,
+            surface_tokens=tokens if dither else None,
+            trace_tokens=tokens,
+            trace_indexes=visible_trace_indexes,
         )
+
+    if dither:
+        _draw_dither_footer(painter, text, width, height, tokens)
+        return
 
     footer_rect = QRectF(72, height - 88, width - 144, 58)
     if classic:
@@ -168,16 +225,69 @@ def _draw_poster(
         _draw_classic_bevel(painter, footer_rect, tokens, recessed=True)
     painter.setFont(
         QFont(
-            tokens.typography.ui_family if classic else "Arial",
-            17 if classic else 18,
+            tokens.typography.ui_family if classic or dither else "Arial",
+            17 if classic or dither else 18,
             QFont.Weight.DemiBold,
         )
     )
-    painter.setPen(QColor(tokens.text) if classic else QColor("#3f4854" if light_background else "#cfd6df"))
+    painter.setPen(
+        QColor(tokens.text)
+        if classic or dither
+        else QColor("#3f4854" if light_background else "#cfd6df")
+    )
     footer = "    ".join(item for item in (text.hrtf_note.strip(), text.notes.strip()) if item)
     painter.drawText(
-        footer_rect.adjusted(14 if classic else 0, 0, -14 if classic else 0, 0),
+        footer_rect.adjusted(
+            14 if classic or dither else 0,
+            0,
+            -14 if classic or dither else 0,
+            0,
+        ),
         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        footer,
+    )
+
+
+def _draw_dither_footer(
+    painter: QPainter,
+    text,
+    width: int,
+    height: int,
+    tokens: ThemeTokens,
+) -> None:
+    footer_rect = QRectF(
+        0,
+        height - DITHER_FOOTER_HEIGHT,
+        width,
+        DITHER_FOOTER_HEIGHT,
+    )
+    painter.fillRect(footer_rect, QColor(tokens.text))
+
+    footer = "    ".join(
+        item for item in (text.hrtf_note.strip(), text.notes.strip()) if item
+    )
+    if not footer:
+        return
+
+    text_rect = footer_rect.adjusted(
+        DITHER_FOOTER_HORIZONTAL_MARGIN,
+        8,
+        -DITHER_FOOTER_HORIZONTAL_MARGIN,
+        -8,
+    )
+    font = QFont(tokens.typography.ui_family, 17, QFont.Weight.DemiBold)
+    for point_size in range(17, 0, -1):
+        font.setPointSize(point_size)
+        if QFontMetrics(font).horizontalAdvance(footer) <= text_rect.width():
+            break
+
+    painter.setFont(font)
+    painter.setPen(QColor(tokens.background))
+    painter.drawText(
+        text_rect,
+        Qt.AlignmentFlag.AlignLeft
+        | Qt.AlignmentFlag.AlignVCenter
+        | Qt.TextFlag.TextSingleLine,
         footer,
     )
 
@@ -194,6 +304,62 @@ def _draw_dither_strip(painter: QPainter, rect: QRectF, tokens: ThemeTokens) -> 
     for y in range(top, bottom, cell):
         for x in range(left, right, cell):
             painter.fillRect(QRectF(x, y, cell, cell), first if ((x + y) // cell) % 2 else second)
+
+
+def _draw_dither_masthead(painter: QPainter, text, width: int, tokens: ThemeTokens) -> None:
+    masthead = QRectF(0, 0, width, 118)
+    painter.fillRect(masthead, QColor(tokens.text))
+    knockout = QColor(tokens.background)
+
+    fixture_text = text.fixture.strip().upper()
+    fixture_limit = max(160.0, width * 0.34) if fixture_text else 0.0
+    fixture_font = QFont(tokens.typography.ui_family, 20, QFont.Weight.DemiBold)
+    if fixture_text:
+        for size in range(20, 9, -1):
+            fixture_font.setPointSize(size)
+            if QFontMetrics(fixture_font).horizontalAdvance(fixture_text) <= fixture_limit - 24:
+                break
+        fixture_width = min(
+            fixture_limit,
+            float(QFontMetrics(fixture_font).horizontalAdvance(fixture_text) + 24),
+        )
+    else:
+        fixture_width = 0.0
+
+    title_rect = QRectF(40, 4, max(120.0, width - fixture_width - 104), 110)
+    title, title_font = fit_title(
+        (text.title.strip() or "Curator").upper(),
+        title_rect.width(),
+        family=tokens.typography.heading_family,
+        maximum_size=58,
+        minimum_size=24,
+    )
+    title_font.setCapitalization(QFont.Capitalization.AllUppercase)
+    painter.setPen(knockout)
+    painter.setFont(title_font)
+    painter.drawText(
+        title_rect,
+        Qt.AlignmentFlag.AlignLeft
+        | Qt.AlignmentFlag.AlignVCenter
+        | Qt.TextFlag.TextSingleLine,
+        title,
+    )
+
+    if fixture_text:
+        fixture_rect = QRectF(
+            width - fixture_width - 40,
+            4,
+            fixture_width,
+            110,
+        )
+        painter.setFont(fixture_font)
+        painter.drawText(
+            fixture_rect,
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+            | Qt.TextFlag.TextSingleLine,
+            fixture_text,
+        )
 
 
 def _draw_classic_bevel(
@@ -220,10 +386,17 @@ def _draw_classic_bevel(
     painter.drawLine(rect.topRight(), rect.bottomRight())
 
 
-def fit_title(text: str, max_width: float) -> tuple[str, QFont]:
+def fit_title(
+    text: str,
+    max_width: float,
+    *,
+    family: str = "Arial",
+    maximum_size: int = 42,
+    minimum_size: int = 24,
+) -> tuple[str, QFont]:
     """Fit a single-line poster title, shrinking before eliding."""
-    font = QFont("Arial", 42, QFont.Weight.Black)
-    for size in range(42, 23, -1):
+    font = QFont(family, maximum_size, QFont.Weight.Black)
+    for size in range(maximum_size, minimum_size - 1, -1):
         font.setPointSize(size)
         if QFontMetrics(font).horizontalAdvance(text) <= max_width:
             return text, QFont(font)
@@ -238,6 +411,9 @@ def _draw_legend(
     light_background: bool,
     *,
     classic_tokens: ThemeTokens | None = None,
+    surface_tokens: ThemeTokens | None = None,
+    trace_tokens: ThemeTokens | None = None,
+    trace_indexes: list[int] | None = None,
 ) -> None:
     if not layers:
         return
@@ -246,7 +422,13 @@ def _draw_legend(
     rows = min(8, len(shown))
     row_height = 26.0
     font = QFont(
-        classic_tokens.typography.ui_family if classic_tokens is not None else "Arial",
+        (
+            classic_tokens.typography.ui_family
+            if classic_tokens is not None
+            else surface_tokens.typography.ui_family
+            if surface_tokens is not None
+            else "Arial"
+        ),
         15,
         QFont.Weight.DemiBold,
     )
@@ -263,6 +445,10 @@ def _draw_legend(
     if classic_tokens is not None:
         painter.fillRect(box, QColor(classic_tokens.control))
         _draw_classic_bevel(painter, box, classic_tokens, recessed=False)
+    elif surface_tokens is not None:
+        painter.setPen(QPen(QColor(surface_tokens.border), 1))
+        painter.setBrush(QColor(surface_tokens.panel))
+        painter.drawRoundedRect(box, 8, 8)
     else:
         painter.setPen(QPen(QColor(95, 105, 120, 170), 1))
         painter.setBrush(
@@ -272,6 +458,8 @@ def _draw_legend(
     text_color = QColor(
         classic_tokens.text
         if classic_tokens is not None
+        else surface_tokens.text
+        if surface_tokens is not None
         else ("#20252d" if light_background else "#f2f5f4")
     )
     for index, (layer, _curve) in enumerate(shown):
@@ -284,9 +472,17 @@ def _draw_legend(
         legend_color = (
             ensure_graph_color(layer.color, classic_tokens.control)
             if classic_tokens
+            else ensure_graph_color(layer.color, surface_tokens.panel)
+            if surface_tokens
             else QColor(layer.color)
         )
-        painter.setPen(QPen(legend_color, 4))
+        painter.setPen(
+            stipple_trace_pen(
+                QPen(legend_color, 4),
+                trace_indexes[index] if trace_indexes is not None else index,
+                trace_tokens or "dark",
+            )
+        )
         painter.drawLine(QPointF(x, y + 10), QPointF(x + 28, y + 10))
         painter.setPen(text_color)
         painter.drawText(
@@ -298,6 +494,8 @@ def _draw_legend(
         painter.setPen(
             QColor(classic_tokens.muted)
             if classic_tokens is not None
+            else QColor(surface_tokens.muted)
+            if surface_tokens is not None
             else QColor("#5f6977" if light_background else "#8f98a8")
         )
         painter.drawText(
@@ -307,17 +505,39 @@ def _draw_legend(
         )
 
 
-def _draw_grid(painter: QPainter, rect: QRectF, y_min: float, y_max: float, color: QColor) -> None:
+def _draw_grid(
+    painter: QPainter,
+    rect: QRectF,
+    y_min: float,
+    y_max: float,
+    color: QColor,
+    *,
+    label_color: QColor | None = None,
+    marker_color: QColor | None = None,
+) -> None:
     painter.setFont(QFont("Arial", 15, QFont.Weight.DemiBold))
+    labels = label_color or color
     for freq, label in FREQUENCY_TICKS:
         x = _x_for_freq(rect, freq)
         marker = FREQUENCY_MARKERS.get(freq)
         if marker is None:
             painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 70), 1))
+        elif marker_color is not None:
+            painter.setPen(
+                QPen(
+                    QColor(
+                        marker_color.red(),
+                        marker_color.green(),
+                        marker_color.blue(),
+                        marker[3],
+                    ),
+                    marker[4],
+                )
+            )
         else:
             painter.setPen(QPen(QColor(marker[0], marker[1], marker[2], marker[3]), marker[4]))
         painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
-        painter.setPen(color)
+        painter.setPen(labels)
         painter.drawText(
             QRectF(x - 28, rect.bottom() + 10, 56, 24),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
@@ -331,7 +551,7 @@ def _draw_grid(painter: QPainter, rect: QRectF, y_min: float, y_max: float, colo
         py = _y_for_db(rect, y, y_min, y_max)
         painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 55), 1))
         painter.drawLine(QPointF(rect.left(), py), QPointF(rect.right(), py))
-        painter.setPen(color)
+        painter.setPen(labels)
         painter.drawText(QRectF(rect.left() - 64, py - 11, 54, 22), f"{y:g}")
         y += step
 
@@ -342,6 +562,7 @@ def _draw_bounds(
     state: GraphState,
     *,
     retro: bool = False,
+    dither_tokens: ThemeTokens | None = None,
 ) -> None:
     bounds = state.bounds
     if not bounds.enabled or bounds.upper is None or bounds.lower is None:
@@ -368,6 +589,37 @@ def _draw_bounds(
         fill.lineTo(point)
     fill.closeSubpath()
     painter.save()
+    if dither_tokens is not None and dither_tokens.dither_chrome:
+        upper_points = [
+            (
+                (_x_for_freq(rect, float(freq)) - rect.left()) / rect.width(),
+                (_y_for_db(rect, float(value), state.y_min, state.y_max) - rect.top())
+                / rect.height(),
+            )
+            for freq, value in zip(freqs, upper_values)
+        ]
+        lower_points = [
+            (
+                (_x_for_freq(rect, float(freq)) - rect.left()) / rect.width(),
+                (_y_for_db(rect, float(value), state.y_min, state.y_max) - rect.top())
+                / rect.height(),
+            )
+            for freq, value in zip(freqs, lower_values)
+        ]
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        paint_aperiodic_dither_band(
+            painter,
+            rect,
+            upper_points,
+            lower_points,
+            foreground=QColor(dither_tokens.plot_grid),
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(dither_tokens.muted), 1))
+        painter.drawPath(upper_path)
+        painter.drawPath(lower_path)
+        painter.restore()
+        return
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setBrush(QColor(150, 150, 150, 102))
     painter.setPen(Qt.PenStyle.NoPen)
@@ -388,6 +640,8 @@ def _draw_curve_data(
     y_max: float,
     *,
     retro: bool = False,
+    trace_index: int = 0,
+    trace_tokens: ThemeTokens | None = None,
 ) -> None:
     if curve.kind == "fr" and curve.mag_db is not None:
         freqs = curve.freqs
@@ -397,14 +651,30 @@ def _draw_curve_data(
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(color, 3))
+        painter.setPen(
+            stipple_trace_pen(
+                QPen(color, 3),
+                trace_index,
+                trace_tokens or "dark",
+            )
+        )
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(_curve_path(rect, freqs, mag_db, y_min, y_max))
         painter.restore()
         return
 
     if curve.kind == "variation" and curve.p10_db is not None and curve.p90_db is not None:
-        _draw_variation_band(painter, rect, curve, color, y_min, y_max, retro=retro)
+        _draw_variation_band(
+            painter,
+            rect,
+            curve,
+            color,
+            y_min,
+            y_max,
+            retro=retro,
+            trace_index=trace_index,
+            trace_tokens=trace_tokens,
+        )
 
 
 def _draw_variation_band(
@@ -416,6 +686,8 @@ def _draw_variation_band(
     y_max: float,
     *,
     retro: bool = False,
+    trace_index: int = 0,
+    trace_tokens: ThemeTokens | None = None,
 ) -> None:
     if curve.p10_db is None or curve.p25_db is None or curve.median_db is None:
         return

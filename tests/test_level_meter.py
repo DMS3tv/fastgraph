@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import QApplication
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.style_tokens import (
     DARK_TOKENS,
+    DITHER_TOKENS,
     FASTGRAPH_95_DARK_TOKENS,
     FASTGRAPH_95_TOKENS,
     HACKERMAN_95_TOKENS,
@@ -43,10 +44,14 @@ def test_level_meter_uses_mode_tokens_and_nested_recessed_rects() -> None:
     for mode, tokens in (
         ("dark", DARK_TOKENS),
         ("light", LIGHT_TOKENS),
+        ("dither", DITHER_TOKENS),
         ("brand", BRAND_TOKENS),
     ):
         app.setProperty("fastgraphVisualMode", mode)
         assert meter._tokens() is tokens
+        assert not meter._uses_classic_blocks()
+        assert meter._uses_flat_dither() is (mode == "dither")
+        assert meter._control_paint_path() == ("flat" if mode == "dither" else "modern")
         meter.set_level(-18.0)
         image = meter.grab().toImage()
         assert not image.isNull()
@@ -103,5 +108,7 @@ def test_fastgraph95_level_meter_uses_separate_progress_blocks() -> None:
         meter.set_level(-7.0)
         meter._level_animation.setCurrentTime(meter._RISE_MS)
         assert meter._uses_classic_blocks()
+        assert not meter._uses_flat_dither()
+        assert meter._control_paint_path() == "classic"
         assert meter._tokens() is tokens
         assert not meter.grab().toImage().isNull()

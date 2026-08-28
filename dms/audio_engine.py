@@ -372,6 +372,61 @@ class LevelMonitor(QObject):
         pass
 
 
+class DualLevelMonitor(QObject):
+    """Monitor the first two input channels through one PortAudio stream."""
+
+    levels_updated = pyqtSignal(float, float)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._stream: Optional[sd.InputStream] = None
+        self._running = False
+
+    def start(self, device_index: int, device_label: str, fs: int, buffer_size: int) -> None:
+        self.stop()
+        dev = device_by_index(device_index, kind="input")
+        if dev is None or int(dev.get("max_input_channels", 0)) < 2:
+            self.error_occurred.emit(f"Two input channels are unavailable on {device_label}")
+            return
+        self._running = True
+        try:
+            self._stream = sd.InputStream(
+                device=device_index,
+                channels=2,
+                samplerate=fs,
+                blocksize=buffer_size,
+                dtype="float32",
+                callback=self._callback,
+                latency="low",
+            )
+            self._stream.start()
+        except Exception as exc:
+            self._running = False
+            self._stream = None
+            self.error_occurred.emit(f"Two-channel level monitor error: {exc}")
+
+    def stop(self) -> None:
+        self._running = False
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            try:
+                stream.stop(ignore_errors=True)
+                stream.close(ignore_errors=True)
+            except Exception:
+                pass
+
+    def _callback(self, indata: np.ndarray, _frames: int, _time_info, _status) -> None:
+        if not self._running or indata.shape[1] < 2:
+            return
+        levels: list[float] = []
+        for channel in (0, 1):
+            rms = float(np.sqrt(np.mean(indata[:, channel] ** 2)))
+            levels.append(20.0 * np.log10(rms) if rms > 0.0 else -120.0)
+        self.levels_updated.emit(levels[0], levels[1])
+
+
 # ---------------------------------------------------------------------------
 # Sweep worker — runs measurement in background thread
 # ---------------------------------------------------------------------------
@@ -407,6 +462,7 @@ class SweepWorker(QObject):
         start_alignment_confidence_min: float = 9.0,
         end_marker_confidence_min: float = 7.0,
         timing_drift_max_ms: float = 35.0,
+        output_channel: int | None = None,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -417,6 +473,7 @@ class SweepWorker(QObject):
                 output_device_label, input_device_label,
                 bluetooth_headphone_mode,
                 start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+                output_channel,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -428,6 +485,7 @@ class SweepWorker(QObject):
         fs, buffer_size, pre_silence, post_silence, latency,
         output_device_label, input_device_label, bluetooth_headphone_mode,
         start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+        output_channel=None,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)
@@ -449,6 +507,14 @@ class SweepWorker(QObject):
                 f"(device has {n_in_ch} ch)."
             )
             return
+        if output_channel is not None and (
+            output_channel < 0 or output_channel >= n_out_ch
+        ):
+            self.error.emit(
+                f"Output channel {output_channel} not available "
+                f"(device has {n_out_ch} ch)."
+            )
+            return
 
         layout = build_measurement_layout(
             sweep=sweep,
@@ -457,7 +523,11 @@ class SweepWorker(QObject):
             post_silence_s=post_silence,
             bluetooth_headphone_mode=bluetooth_headphone_mode,
         )
-        out_signal = build_output_signal(layout, n_out_ch)
+        routed_output = output_channel is not None
+        out_signal = build_output_signal(
+            layout,
+            1 if routed_output else n_out_ch,
+        )
         total_n = layout.total_samples
 
         if self._abort.is_set():
@@ -468,6 +538,7 @@ class SweepWorker(QObject):
                 out_signal,
                 samplerate=fs,
                 input_mapping=[input_channel + 1],  # 1-based
+                output_mapping=[output_channel + 1] if routed_output else None,
                 device=(input_device, output_device),
                 dtype="float32",
                 blocksize=buffer_size,

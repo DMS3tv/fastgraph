@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from dms import brand_brand
+from dms.dither_fonts import configure_dither_typography, dither_font_status
 from dms.settings_manager import SettingsManager
 from dms.ui.style_tokens import (
     BRAND_TOKENS,
@@ -22,6 +23,7 @@ LIGHT = "light"
 FASTGRAPH_95 = "fastgraph95"
 FASTGRAPH_95_DARK = "fastgraph95_dark"
 HACKERMAN_95 = "hackerman95"
+DITHER = "dither"
 VALID_THEMES = {definition.key for definition in theme_definitions()}
 
 
@@ -147,9 +149,17 @@ def _color_dict(
     return values
 
 
-def _status_accent_colors(light: bool) -> dict[str, tuple[str, str, str]]:
+def _status_accent_colors(tokens: ThemeTokens) -> dict[str, tuple[str, str, str]]:
     """(background, hover, text) triples for the semantic status buttons."""
-    if light:
+    if tokens.dither_chrome:
+        return {
+            "keep": ("#1E3A26", "#284A31", "#9CCFA6"),
+            "fail": ("#4A2320", "#5C2C28", "#EE8C86"),
+            "start": ("#4A2318", "#5C2D1E", "#E8845C"),
+            "cancel": ("#4E3520", "#603F26", "#E0A87A"),
+            "amber": ("#453A1C", "#554823", "#E3C67C"),
+        }
+    if tokens.name == LIGHT:
         return {
             "keep": ("#d9f2e1", "#c5e8d0", "#176b37"),
             "fail": ("#f7dddd", "#efc8c8", "#8a2525"),
@@ -175,7 +185,7 @@ def application_stylesheet(theme: str) -> str:
     base = _stylesheet_body(
         c,
         visual_tokens=token,
-        status=_status_accent_colors(light),
+        status=_status_accent_colors(token),
         tab_bg="#e5e9ee" if light else token.alternate,
         tab_selected=token.raised,
         group_bg=token.panel,
@@ -402,10 +412,178 @@ def _hackerman95_stylesheet(c: dict[str, str]) -> str:
     """
 
 
+def _dither_stylesheet(c: dict[str, str]) -> str:
+    """Return hard-edged print overrides for flat control themes."""
+
+    heading = dither_font_status().heading_family
+    return f"""
+    QWidget[ditherSurface="true"] {{
+        background: transparent;
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QWidget[surfaceLevel="panel"] {{
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QWidget[surfaceLevel="viewport"], QWidget[surfaceLevel="raised"] {{
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QMainWindow, QDialog, QMessageBox, QInputDialog, QFileDialog {{
+        background-color: {c['window']};
+        color: {c['text']};
+        border-radius: 0px;
+    }}
+    QMessageBox QLabel, QInputDialog QLabel, QFileDialog QLabel,
+    QDialogButtonBox {{ background: transparent; color: {c['text']}; border: none; }}
+    QPushButton, QDialogButtonBox QPushButton, QMessageBox QPushButton,
+    QInputDialog QPushButton, QFileDialog QPushButton {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        padding: 6px 14px;
+    }}
+    QPushButton:hover, QDialogButtonBox QPushButton:hover,
+    QMessageBox QPushButton:hover, QInputDialog QPushButton:hover,
+    QFileDialog QPushButton:hover {{
+        background-color: {c['control_hover']};
+        border-color: {c['text']};
+    }}
+    QPushButton:pressed, QDialogButtonBox QPushButton:pressed,
+    QMessageBox QPushButton:pressed, QInputDialog QPushButton:pressed,
+    QFileDialog QPushButton:pressed {{
+        background-color: {c['accent']};
+        color: {c['window']};
+        border-color: {c['accent']};
+        padding: 6px 14px;
+    }}
+    QPushButton:focus, QDialogButtonBox QPushButton:focus,
+    QMessageBox QPushButton:focus, QInputDialog QPushButton:focus,
+    QFileDialog QPushButton:focus {{ border: 2px solid {c['accent']}; }}
+    QPushButton:disabled, QDialogButtonBox QPushButton:disabled,
+    QMessageBox QPushButton:disabled, QInputDialog QPushButton:disabled,
+    QFileDialog QPushButton:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border: 1px solid {c['border']};
+    }}
+    QWidget#tab_header_controls QPushButton {{ border-radius: 0px; }}
+    QGroupBox {{
+        background-color: {c['panel']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QGroupBox::title {{
+        background-color: {c['panel']};
+        color: {c['text']};
+        font-family: '{heading}', 'DIN Condensed', 'Oswald', 'Archivo Narrow',
+            'Arial Narrow', 'Avenir Next Condensed', 'Inter', sans-serif;
+        font-weight: 700;
+        left: 8px;
+        padding: 0 5px;
+    }}
+    QTabWidget::pane {{
+        background: {c['viewport']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        top: -1px;
+    }}
+    QTabBar::tab {{
+        background: {c['alternate']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        margin-right: 1px;
+        padding: 7px 16px;
+    }}
+    QTabBar::tab:hover {{ background: {c['control']}; border-color: {c['text']}; }}
+    QTabBar::tab:selected {{
+        background: {c['accent']};
+        color: {c['window']};
+        border: 1px solid {c['accent']};
+    }}
+    QTabBar::tab:disabled {{
+        background: {c['alternate']};
+        color: {c['disabled']};
+        border-color: {c['border']};
+    }}
+    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit,
+    QTextEdit, QListWidget, QTreeWidget, QTableWidget, QKeySequenceEdit {{
+        background-color: {c['raised']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        selection-background-color: {c['accent']};
+        selection-color: {c['window']};
+    }}
+    QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover,
+    QPlainTextEdit:hover, QTextEdit:hover, QListWidget:hover,
+    QTreeWidget:hover, QTableWidget:hover {{ border-color: {c['text']}; }}
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+    QPlainTextEdit:focus, QTextEdit:focus, QListWidget:focus,
+    QTreeWidget:focus, QTableWidget:focus, QKeySequenceEdit:focus {{
+        border: 2px solid {c['accent']};
+    }}
+    QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
+    QDoubleSpinBox:disabled, QPlainTextEdit:disabled, QTextEdit:disabled,
+    QListWidget:disabled, QTreeWidget:disabled, QTableWidget:disabled {{
+        background-color: {c['alternate']}; color: {c['disabled']};
+    }}
+    QComboBox::drop-down {{
+        background: {c['control']};
+        border-left: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QComboBox QAbstractItemView {{
+        background: {c['raised']}; color: {c['text']};
+        border: 1px solid {c['border']};
+        selection-background-color: {c['accent']};
+        selection-color: {c['window']};
+    }}
+    QScrollBar:vertical {{
+        width: 13px; margin: 0; background: {c['alternate']};
+        border: 1px solid {c['border']}; border-radius: 0px;
+    }}
+    QScrollBar:horizontal {{
+        height: 13px; margin: 0; background: {c['alternate']};
+        border: 1px solid {c['border']}; border-radius: 0px;
+    }}
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+        min-width: 18px; min-height: 18px;
+        background: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+    }}
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+        background: {c['accent']};
+    }}
+    QScrollBar::add-line, QScrollBar::sub-line {{
+        width: 0px; height: 0px; background: transparent; border: none;
+    }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: {c['alternate']}; }}
+    QMenuBar, QMenu {{
+        background: {c['panel']}; color: {c['text']};
+        border: 1px solid {c['border']}; border-radius: 0px;
+    }}
+    QMenuBar::item:selected, QMenu::item:selected {{
+        background: {c['accent']}; color: {c['window']};
+    }}
+    QMenu::item:disabled {{ color: {c['disabled']}; background: {c['panel']}; }}
+    QToolTip {{
+        background: {c['text']}; color: {c['window']};
+        border: 1px solid {c['accent']}; border-radius: 0px;
+        padding: 3px;
+    }}
+    """
+
+
 _STYLE_FAMILY_BUILDERS = {
     "fastgraph95": _fastgraph95_stylesheet,
     "fastgraph95_dark": _fastgraph95_dark_stylesheet,
     "hackerman95": _hackerman95_stylesheet,
+    "dither": _dither_stylesheet,
 }
 
 
@@ -515,7 +693,7 @@ def brand_application_stylesheet() -> str:
     base = _stylesheet_body(
         c,
         visual_tokens=BRAND_TOKENS,
-        status=_status_accent_colors(light=False),
+        status=_status_accent_colors(BRAND_TOKENS),
         tab_bg=c["alternate"],
         tab_selected=c["base"],
         group_bg=c["panel"],
@@ -648,7 +826,12 @@ class ThemeController(QObject):
             self._app.setProperty("fastgraphVisualMode", "brand")
             self._app.setPalette(_brand_palette())
             self._app.setStyleSheet(brand_application_stylesheet())
+            configure_dither_typography(self._app, False)
         else:
             self._app.setProperty("fastgraphVisualMode", self._theme)
             self._app.setPalette(_palette(self._theme))
             self._app.setStyleSheet(application_stylesheet(self._theme))
+            configure_dither_typography(
+                self._app,
+                tokens_for(self._theme).flat_controls,
+            )

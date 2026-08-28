@@ -1,9 +1,11 @@
 from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QColor, QFont, QFontDatabase
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from dms.theme import (
     DARK,
+    DITHER,
     FASTGRAPH_95,
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
@@ -11,11 +13,13 @@ from dms.theme import (
     ThemeController,
     application_stylesheet,
 )
+import dms.dither_fonts as dither_fonts
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import (
     DARK_TOKENS,
+    DITHER_TOKENS,
     BRAND_TOKENS,
     LIGHT_TOKENS,
     FASTGRAPH_95_TOKENS,
@@ -23,6 +27,11 @@ from dms.ui.style_tokens import (
     HACKERMAN_95_TOKENS,
     theme_definitions,
     tokens_for,
+)
+from dms.ui.theme_surface import (
+    _dither_tile,
+    aperiodic_dither_band_image,
+    dither_brush,
 )
 
 
@@ -69,6 +78,7 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert tokens_for(FASTGRAPH_95) is FASTGRAPH_95_TOKENS
     assert tokens_for(FASTGRAPH_95_DARK) is FASTGRAPH_95_DARK_TOKENS
     assert tokens_for(HACKERMAN_95) is HACKERMAN_95_TOKENS
+    assert tokens_for(DITHER) is DITHER_TOKENS
     assert tokens_for(DARK, brand_mode=True) is BRAND_TOKENS
     assert [definition.label for definition in theme_definitions()] == [
         "Default dark",
@@ -76,7 +86,71 @@ def test_theme_surface_tokens_and_brand_values() -> None:
         "FastGraph 95",
         "FastGraph 95 Dark",
         "Hackerman 95",
+        "Dither",
     ]
+
+
+def test_dither_is_registered_with_reusable_behavior_flags() -> None:
+    definitions = theme_definitions()
+    by_key = {definition.key: definition for definition in definitions}
+
+    assert by_key["dither"].label == "Dither"
+    assert by_key["dither"].tokens is DITHER_TOKENS
+    assert DITHER_TOKENS.dither_chrome is True
+    assert DITHER_TOKENS.stipple_traces is True
+    assert DITHER_TOKENS.classic_controls is False
+    assert DITHER_TOKENS.flat_controls is True
+    assert by_key["dither"].style_family == "dither"
+    assert all(
+        not definition.tokens.dither_chrome
+        and not definition.tokens.stipple_traces
+        and not definition.tokens.flat_controls
+        for definition in definitions
+        if definition.key != "dither"
+    )
+    assert DITHER_TOKENS.geometry.radius_button == 0
+    assert DITHER_TOKENS.geometry.focus_border_px == 2
+    assert DITHER_TOKENS.motion.hover_in_ms == 120
+    assert DITHER_TOKENS.motion.hover_out_ms == 160
+    assert DITHER_TOKENS.motion.press_ms == 0
+    assert DITHER_TOKENS.motion.hover_tint_alpha == 0.0
+    assert DITHER_TOKENS.motion.focus_glow_strength == 0.0
+    assert DITHER_TOKENS.motion.hover_glow_alpha == 0
+    assert DITHER_TOKENS.motion.rest_shadow_alpha == 0
+    assert DITHER_TOKENS.motion.rest_shadow_blur == 0.0
+    assert DITHER_TOKENS.motion.hover_shadow_blur == 0.0
+    assert DITHER_TOKENS.typography.heading_family == "DIN Condensed"
+
+
+def test_dither_font_resolver_reports_a_missing_din_condensed(monkeypatch) -> None:
+    _app()
+    dither_fonts.reset_font_cache()
+    monkeypatch.setattr(
+        QFontDatabase,
+        "families",
+        staticmethod(lambda: ["Inter", "Arial Narrow"]),
+    )
+
+    status = dither_fonts.dither_font_status()
+    font = dither_fonts.dither_heading_font(QFont("Inter"))
+
+    assert status.heading_family == "Arial Narrow"
+    assert status.missing_families == ("DIN Condensed",)
+    assert status.uses_fallback is True
+    assert font.capitalization() == QFont.Capitalization.AllUppercase
+    assert font.letterSpacing() == 1.0
+    dither_fonts.reset_font_cache()
+
+
+def test_dither_style_family_uses_square_solid_selected_tabs() -> None:
+    stylesheet = application_stylesheet(DITHER)
+
+    assert "QTabBar::tab:selected" in stylesheet
+    assert "background: #c4542e" in stylesheet
+    assert "color: #0a0a09" in stylesheet
+    assert "border-radius: 0px" in stylesheet
+    assert "QMessageBox, QInputDialog, QFileDialog" in stylesheet
+    assert "gradient" not in stylesheet.lower()
 
 
 def test_stylesheet_exposes_surface_and_tab_hierarchy() -> None:
@@ -162,6 +236,84 @@ def test_fastgraph95_button_disables_glow_and_uses_square_geometry() -> None:
     assert button._effective_hover() == 0.0
     assert button._glow_profile()["center_alpha"] == 0
     assert FASTGRAPH_95_TOKENS.geometry.radius_button == 0
+
+
+def test_dither_button_selects_the_flat_third_paint_path() -> None:
+    app = _app()
+    button = ModernButton("Action")
+
+    app.setProperty("fastgraphVisualMode", DITHER)
+    assert button._control_paint_path() == "flat"
+    assert button._glow_profile()["center_alpha"] == 0
+    assert button._flat_role_color(DITHER_TOKENS).name().upper() == DITHER_TOKENS.text
+
+    app.setProperty("fastgraphVisualMode", FASTGRAPH_95)
+    assert button._control_paint_path() == "classic"
+    app.setProperty("fastgraphVisualMode", DARK)
+    assert button._control_paint_path() == "modern"
+
+
+def test_dither_button_hover_uses_cached_discrete_density_steps() -> None:
+    app = _app()
+    app.setProperty("fastgraphVisualMode", DITHER)
+    button = ModernButton("Action")
+
+    button._set_hover_progress(0.18)
+    first_state = button._flat_hover_dither_state()
+    button._set_hover_progress(0.20)
+    assert button._flat_hover_dither_state() == first_state
+    button._set_hover_progress(0.30)
+    later_state = button._flat_hover_dither_state()
+    assert later_state[0] > first_state[0]
+    assert later_state[1] > first_state[1]
+
+    button._animate_hover(1.0)
+    assert button._hover_animation.duration() == 120
+    button._hover_animation.stop()
+    button._set_hover_progress(0.5)
+    button._animate_hover(0.0)
+    assert button._hover_animation.duration() == 160
+    button._hover_animation.stop()
+
+    role_color = button._flat_role_color(DITHER_TOKENS)
+    _dither_tile.cache_clear()
+    first_brush = dither_brush(role_color, density=first_state[0])
+    dither_brush(role_color, density=first_state[0])
+    assert _dither_tile.cache_info().hits == 1
+    tile = first_brush.texture().toImage()
+    ink_alphas = {
+        tile.pixelColor(x, y).alpha()
+        for y in range(tile.height())
+        for x in range(tile.width())
+        if tile.pixelColor(x, y).alpha() > 0
+    }
+    assert ink_alphas == {255}
+
+    button.setEnabled(False)
+    button._animate_hover(1.0)
+    assert button._flat_hover_dither_state() == (0.0, 0.0)
+
+
+def test_aperiodic_bounds_dither_is_denser_near_boundaries() -> None:
+    ink = QColor(DITHER_TOKENS.plot_grid)
+    image = aperiodic_dither_band_image(
+        320,
+        120,
+        [(0.0, 0.2), (1.0, 0.2)],
+        [(0.0, 0.8), (1.0, 0.8)],
+        foreground=ink,
+    )
+
+    def ink_count(y_start: int, y_stop: int) -> int:
+        return sum(
+            image.pixelColor(x, y).rgba() == ink.rgba()
+            for y in range(y_start, y_stop)
+            for x in range(image.width())
+        )
+
+    boundary_coverage = ink_count(24, 34) + ink_count(86, 96)
+    center_coverage = 2 * ink_count(55, 65)
+    assert boundary_coverage > center_coverage * 2
 
 
 def test_fastgraph95_dark_uses_classic_renderer_without_bright_surfaces() -> None:

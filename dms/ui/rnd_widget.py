@@ -38,6 +38,7 @@ from dms.curator.models import PreferenceBounds
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.theme_surface import DitherSurface, aperiodic_dither_band_item
 from dms.ui.style_tokens import tokens_for
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
@@ -51,7 +52,12 @@ from dms.rnd.models import (
 from dms.rnd.photos import RnDPhotoStore
 from dms.hrtf import HRTFCurve
 from dms import brand_brand
-from dms.graph_display import retro_step_series, uses_retro_steps
+from dms.graph_display import (
+    retro_step_group,
+    retro_step_series,
+    stipple_trace_pen,
+    uses_retro_steps,
+)
 from dms.theme import (
     LIGHT,
     ensure_graph_color,
@@ -211,14 +217,28 @@ class RnDPlotWidget(QWidget):
 
         top_curves = []
         bottom_curves = []
-        for measurement, mag_db in top_measurements:
+        trace_tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
+        trace_palette = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
+
+        def trace_index_for(measurement: RnDMeasurement, fallback: int) -> int:
+            try:
+                return trace_palette.index(measurement.color)
+            except ValueError:
+                return fallback
+
+        for fallback_index, (measurement, mag_db) in enumerate(top_measurements):
+            trace_index = trace_index_for(measurement, fallback_index)
             item = self._plot_curve(
                 self.top_plot,
                 measurement.freqs,
                 mag_db,
-                pen=pg.mkPen(
-                    self._display_color(measurement.color),
-                    width=2.4 if measurement.milestone else 1.2,
+                pen=stipple_trace_pen(
+                    pg.mkPen(
+                        self._display_color(measurement.color),
+                        width=2.4 if measurement.milestone else 1.2,
+                    ),
+                    trace_index,
+                    trace_tokens,
                 ),
             )
             self._items.append(item)
@@ -229,24 +249,39 @@ class RnDPlotWidget(QWidget):
             glow_color = QColor(color)
             glow_color.setAlpha(72)
             glow = self._plot_curve(
-                self.top_plot, freqs, mag_db, pen=pg.mkPen(glow_color, width=8.0)
+                self.top_plot,
+                freqs,
+                mag_db,
+                pen=pg.mkPen(glow_color, width=8.0),
             )
             item = self._plot_curve(
-                self.top_plot, freqs, mag_db, pen=pg.mkPen(color, width=2.5)
+                self.top_plot,
+                freqs,
+                mag_db,
+                pen=stipple_trace_pen(
+                    pg.mkPen(color, width=2.5),
+                    0,
+                    trace_tokens,
+                ),
             )
             self._items.extend([glow, item])
             top_curves.append((freqs, mag_db))
         delta_measurements = delta_measurements or []
         delta_group_variations = delta_group_variations or []
         if delta_mode_active:
-            for measurement, freqs, mag_db in delta_measurements:
+            for fallback_index, (measurement, freqs, mag_db) in enumerate(delta_measurements):
+                trace_index = trace_index_for(measurement, fallback_index)
                 item = self._plot_curve(
                     self.bottom_plot,
                     freqs,
                     mag_db,
-                    pen=pg.mkPen(
-                        self._display_color(measurement.color),
-                        width=2.4 if measurement.milestone else 1.5,
+                    pen=stipple_trace_pen(
+                        pg.mkPen(
+                            self._display_color(measurement.color),
+                            width=2.4 if measurement.milestone else 1.5,
+                        ),
+                        trace_index,
+                        trace_tokens,
                     ),
                 )
                 self._items.append(item)
@@ -254,14 +289,19 @@ class RnDPlotWidget(QWidget):
             for group, variation in delta_group_variations:
                 bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
         else:
-            for measurement, mag_db in pinned_measurements:
+            for fallback_index, (measurement, mag_db) in enumerate(pinned_measurements):
+                trace_index = trace_index_for(measurement, fallback_index)
                 item = self._plot_curve(
                     self.bottom_plot,
                     measurement.freqs,
                     mag_db,
-                    pen=pg.mkPen(
-                        self._display_color(measurement.color),
-                        width=2.4 if measurement.milestone else 1.5,
+                    pen=stipple_trace_pen(
+                        pg.mkPen(
+                            self._display_color(measurement.color),
+                            width=2.4 if measurement.milestone else 1.5,
+                        ),
+                        trace_index,
+                        trace_tokens,
                     ),
                 )
                 self._items.append(item)
@@ -357,6 +397,31 @@ class RnDPlotWidget(QWidget):
         lower = np.interp(freqs, bounds.lower.freqs, bounds.lower.mag_db)
         if len(freqs) < 2:
             return []
+        tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
+        if tokens.dither_chrome:
+            display_freqs, display_upper, display_lower = retro_step_group(
+                freqs, (upper, lower)
+            )
+            fill = aperiodic_dither_band_item(
+                np.log10(display_freqs),
+                display_upper,
+                display_lower,
+                foreground=QColor(tokens.plot_grid),
+                sample_width=max(64, min(1024, plot.viewport().width())),
+                sample_height=max(48, min(512, plot.viewport().height())),
+            )
+            if fill is not None:
+                plot.addItem(fill)
+                self._items.append(fill)
+            edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
+            upper_item = plot.plot(
+                display_freqs, display_upper, pen=edge_pen, antialias=False
+            )
+            lower_item = plot.plot(
+                display_freqs, display_lower, pen=edge_pen, antialias=False
+            )
+            self._items.extend([upper_item, lower_item])
+            return [(freqs, upper), (freqs, lower)]
         bounds_color = self._display_color("#969696")
         upper_pen = QColor(bounds_color)
         upper_pen.setAlpha(185)
@@ -755,7 +820,7 @@ class RnDWidget(QWidget):
         viewport_layout.addWidget(self._build_footer_controls())
         splitter.addWidget(viewport_panel)
 
-        panel = QWidget()
+        panel = DitherSurface()
         panel.setObjectName("controlPanel")
         panel.setProperty("surfaceLevel", "panel")
         panel.setMinimumWidth(360)

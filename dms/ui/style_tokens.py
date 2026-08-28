@@ -78,9 +78,12 @@ class ThemeTokens:
     geometry: GeometryTokens = GeometryTokens()
     motion: MotionTokens = MotionTokens()
     classic_controls: bool = False
+    flat_controls: bool = False
     dark_bevel: bool = False
     retro_graph: bool = False
     terminal_chrome: bool = False
+    dither_chrome: bool = False
+    stipple_traces: bool = False
     trace_palette: tuple[str, ...] = ()
 
 
@@ -142,6 +145,37 @@ FASTGRAPH_95_GEOMETRY = GeometryTokens(
 FASTGRAPH_95_MOTION = MotionTokens(
     hover_in_ms=0,
     hover_out_ms=0,
+    press_ms=0,
+    hover_tint_alpha=0.0,
+    focus_glow_strength=0.0,
+    hover_glow_alpha=0,
+    rest_shadow_alpha=0,
+    rest_shadow_blur=0.0,
+    hover_shadow_blur=0.0,
+)
+
+DITHER_TYPOGRAPHY = TypographyTokens(
+    ui_family="Inter",
+    heading_family="DIN Condensed",
+    technical_family="Inconsolata",
+)
+
+DITHER_GEOMETRY = GeometryTokens(
+    radius_micro=0,
+    radius_field=0,
+    radius_tab=0,
+    radius_button=0,
+    radius_surface=0,
+    border_px=1,
+    focus_border_px=2,
+    button_height=32,
+    compact_button_height=26,
+    primary_button_height=36,
+)
+
+DITHER_MOTION = MotionTokens(
+    hover_in_ms=120,
+    hover_out_ms=160,
     press_ms=0,
     hover_tint_alpha=0.0,
     focus_glow_strength=0.0,
@@ -307,6 +341,48 @@ HACKERMAN_95_TOKENS = ThemeTokens(
     ),
 )
 
+DITHER_TOKENS = ThemeTokens(
+    name="dither",
+    background="#0A0A09",
+    viewport="#121210",
+    panel="#1A1A17",
+    raised="#22221E",
+    control="#2A2A25",
+    control_hover="#37372F",
+    alternate="#0F0F0D",
+    text="#E9E2D4",
+    muted="#9C968A",
+    disabled="#635F57",
+    border="#4A463D",
+    selected="#4A2318",
+    accent="#C4542E",
+    focus="#C4542E",
+    shadow="#000000",
+    danger="#EE8C86",
+    positive="#9CCFA6",
+    warning="#E3C67C",
+    plot_bg="#050504",
+    plot_fg="#B8B1A4",
+    plot_grid="#554E42",
+    typography=DITHER_TYPOGRAPHY,
+    geometry=DITHER_GEOMETRY,
+    motion=DITHER_MOTION,
+    flat_controls=True,
+    retro_graph=True,
+    dither_chrome=True,
+    stipple_traces=True,
+    trace_palette=(
+        "#E9E2D4",
+        "#C4542E",
+        "#6470F0",
+        "#E8A33C",
+        "#8FBF9E",
+        "#C77BB8",
+        "#7FB9C9",
+        "#B8A06A",
+    ),
+)
+
 BRAND_TOKENS = ThemeTokens(
     name="brand",
     background=DARK_TOKENS.background,
@@ -345,6 +421,7 @@ THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
         "fastgraph95_dark",
     ),
     ThemeDefinition("hackerman95", "Hackerman 95", HACKERMAN_95_TOKENS, "hackerman95"),
+    ThemeDefinition("dither", "Dither", DITHER_TOKENS, "dither"),
 )
 
 _THEMES_BY_KEY = {definition.key: definition for definition in THEME_DEFINITIONS}

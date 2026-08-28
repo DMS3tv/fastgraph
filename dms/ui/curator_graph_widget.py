@@ -10,13 +10,20 @@ from PyQt6.QtWidgets import QWidget
 
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
-from dms.graph_display import retro_step_group, retro_step_series, uses_retro_steps
+from dms.graph_display import (
+    retro_step_group,
+    retro_step_series,
+    stipple_trace_pen,
+    uses_retro_steps,
+)
 from dms.theme import (
     ensure_graph_color,
     brand_theme_colors,
     normalize_theme,
     theme_colors,
 )
+from dms.ui.style_tokens import tokens_for
+from dms.ui.theme_surface import aperiodic_dither_band_item
 
 
 FREQ_MIN = 20.0
@@ -213,12 +220,23 @@ class GraphWidget(LockedPlotWidget):
             self._draw_bounds_data(self._exiting_bounds.bounds, 1.0 - self._wipe_progress)
         bounds_progress = self._wipe_progress if self._entering_bounds else 1.0
         self._draw_bounds(state, bounds_progress)
-        for snapshot in self._exiting_layers:
-            self._draw_curve(snapshot.curve, snapshot.layer.color, 1.0 - self._wipe_progress)
+        trace_indexes = {layer.id: index for index, layer in enumerate(state.layers)}
+        for fallback_index, snapshot in enumerate(self._exiting_layers):
+            self._draw_curve(
+                snapshot.curve,
+                snapshot.layer.color,
+                1.0 - self._wipe_progress,
+                trace_indexes.get(snapshot.layer.id, fallback_index),
+            )
         visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
-        for layer, curve in visible_layers:
+        for fallback_index, (layer, curve) in enumerate(visible_layers):
             progress = self._wipe_progress if layer.id in self._entering_layer_ids else 1.0
-            self._draw_curve(curve, layer.color, progress)
+            self._draw_curve(
+                curve,
+                layer.color,
+                progress,
+                trace_indexes.get(layer.id, fallback_index),
+            )
         if state.show_layer_names:
             self._draw_legend(visible_layers)
 
@@ -296,6 +314,28 @@ class GraphWidget(LockedPlotWidget):
             return
         if self._uses_retro_steps():
             freqs, upper_mag, lower_mag = retro_step_group(freqs, (upper_mag, lower_mag))
+        tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
+        if tokens.dither_chrome:
+            fill = aperiodic_dither_band_item(
+                np.log10(freqs),
+                upper_mag,
+                lower_mag,
+                foreground=QColor(tokens.plot_grid),
+                sample_width=max(64, min(1024, self.viewport().width())),
+                sample_height=max(48, min(512, self.viewport().height())),
+            )
+            if fill is not None:
+                self.addItem(fill)
+                self._items.append(fill)
+            edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
+            upper_item = self.plot(
+                freqs, upper_mag, pen=edge_pen, antialias=False
+            )
+            lower_item = self.plot(
+                freqs, lower_mag, pen=edge_pen, antialias=False
+            )
+            self._items.extend([upper_item, lower_item])
+            return
         bounds_color = self._display_color("#969696")
         bounds_pen = QColor(bounds_color)
         bounds_pen.setAlpha(185)
@@ -311,7 +351,14 @@ class GraphWidget(LockedPlotWidget):
         self.addItem(fill)
         self._items.extend([upper_item, lower_item, fill])
 
-    def _draw_curve(self, curve: CurveData, color: str, progress: float) -> None:
+    def _draw_curve(
+        self,
+        curve: CurveData,
+        color: str,
+        progress: float,
+        trace_index: int,
+    ) -> None:
+        trace_tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
         if curve.kind == "fr" and curve.mag_db is not None:
             freqs, mag = _trim_series(curve.freqs, curve.mag_db, progress)
             if len(freqs) < 2:
@@ -322,7 +369,11 @@ class GraphWidget(LockedPlotWidget):
                 self.plot(
                     freqs,
                     mag,
-                    pen=pg.mkPen(self._display_color(color), width=2.0),
+                    pen=stipple_trace_pen(
+                        pg.mkPen(self._display_color(color), width=2.0),
+                        trace_index,
+                        trace_tokens,
+                    ),
                     antialias=True,
                 )
             )
@@ -359,7 +410,10 @@ class GraphWidget(LockedPlotWidget):
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         self.addItem(fill75)
         median = self.plot(
-            freqs, median_values, pen=pg.mkPen(qcolor, width=2.2), antialias=antialias
+            freqs,
+            median_values,
+            pen=pg.mkPen(qcolor, width=2.2),
+            antialias=antialias,
         )
         self._items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median])
 

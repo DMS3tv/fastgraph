@@ -3,23 +3,40 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QImage
-from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox, QPushButton, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QColorDialog,
+    QGroupBox,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from dms.curator.export_image import (
     ACCENT_COLOR,
+    DITHER_FOOTER_HEIGHT,
     FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
     _draw_legend,
     export_graph_image,
     fit_title,
 )
 import dms.curator.export_image as export_image_module
-from dms.curator.models import CurveData
-from dms.theme import DARK, FASTGRAPH_95, FASTGRAPH_95_DARK, HACKERMAN_95
+from dms.curator.models import CurveData, GraphState, PreferenceBounds
+from dms.theme import (
+    DARK,
+    DITHER,
+    FASTGRAPH_95,
+    FASTGRAPH_95_DARK,
+    HACKERMAN_95,
+    theme_trace_palette,
+)
+from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions
 from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 import dms.ui.curator_widget as main_window_module
 from dms.ui.curator_widget import CuratorWidget
+from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.console import ConsoleEventStore
 
 
@@ -114,9 +131,56 @@ def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(qapp) 
     window.close()
 
 
+def test_color_dialog_standard_swatches_follow_active_theme_and_background(
+    qapp, monkeypatch
+) -> None:
+    standard_colors: dict[int, str] = {}
+    opened_palettes: list[dict[int, str]] = []
+
+    def fake_set_standard_color(index: int, color: QColor) -> None:
+        standard_colors[index] = color.name()
+
+    def fake_get_color(*_args, **_kwargs) -> QColor:
+        opened_palettes.append(dict(standard_colors))
+        return QColor()
+
+    monkeypatch.setattr(
+        QColorDialog,
+        "setStandardColor",
+        staticmethod(fake_set_standard_color),
+    )
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(fake_get_color))
+
+    curve = CurveData(
+        kind="fr",
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([1.0, 0.0]),
+    )
+    window = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    layer = window.add_curve(curve, "Layer", animate=False)
+    window._choose_layer_color(layer.id, QPushButton())
+
+    dither_palette = theme_trace_palette(DITHER)
+    assert [opened_palettes[-1][index] for index in range(len(dither_palette))] == [
+        QColor(color).name() for color in dither_palette
+    ]
+
+    window.apply_theme(DARK)
+    window._choose_background()
+
+    dark_palette = theme_trace_palette(DARK)
+    assert [opened_palettes[-1][index] for index in range(len(dark_palette))] == [
+        QColor(color).name() for color in dark_palette
+    ]
+    assert opened_palettes[-1][6] != QColor(dither_palette[6]).name()
+    assert opened_palettes[-1][7] != QColor(dither_palette[7]).name()
+    window.close()
+
+
 class _PenRecorder:
     def __init__(self) -> None:
         self.widths: list[float] = []
+        self.pens = []
 
     def setBrush(self, _brush) -> None:
         pass
@@ -133,6 +197,7 @@ class _PenRecorder:
     def setPen(self, pen) -> None:
         if hasattr(pen, "widthF"):
             self.widths.append(pen.widthF())
+            self.pens.append(pen)
 
     def drawPath(self, _path) -> None:
         pass
@@ -158,9 +223,53 @@ def test_standard_export_curve_uses_only_solid_stroke(monkeypatch) -> None:
         QColor("#6E6E6E"),
         -10.0,
         10.0,
+        trace_index=1,
+        trace_tokens=DITHER_TOKENS,
     )
 
     assert painter.widths == [pytest.approx(3.0)]
+    assert painter.pens[0].style() == Qt.PenStyle.SolidLine
+    assert painter.pens[0].dashPattern() == []
+
+
+def test_dither_curator_variation_median_matches_solid_measure_median(qapp) -> None:
+    variation = CurveData(
+        kind="variation",
+        freqs=np.array([100.0, 1000.0]),
+        p10_db=np.array([-2.0, -1.0]),
+        p25_db=np.array([-1.0, 0.0]),
+        median_db=np.array([0.0, 1.0]),
+        p75_db=np.array([1.0, 2.0]),
+        p90_db=np.array([2.0, 3.0]),
+    )
+    curator = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    curator.add_curve(variation, "Variation", animate=False)
+    curator._redraw()
+    curator_median = next(
+        item
+        for item in curator._graph._items
+        if isinstance(item, pg.PlotDataItem)
+        and item.opts["pen"].widthF() == pytest.approx(2.2)
+    )
+
+    measure = DualPlotWidget()
+    measure.apply_theme(DITHER)
+    measure.update_curves([], None, variation=(
+        variation.freqs,
+        variation.p10_db,
+        variation.p25_db,
+        variation.p75_db,
+        variation.p90_db,
+        variation.median_db,
+    ), bottom_mode="variation")
+    measure_median = measure._bot_extra_items[-1]
+
+    assert curator_median.opts["pen"].style() == Qt.PenStyle.SolidLine
+    assert curator_median.opts["pen"].dashPattern() == []
+    assert measure_median.opts["pen"].style() == Qt.PenStyle.SolidLine
+    assert measure_median.opts["pen"].dashPattern() == []
+    curator.close()
+    measure.close()
 
 
 def test_layer_row_checkbox_toggles_visibility(qapp, tmp_path: Path) -> None:
@@ -515,6 +624,134 @@ def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
     assert image.pixelColor(10, 1068).name().upper() == "#3C3C3C"
     assert image.pixelColor(100, 1018).name().upper() != "#202020"
     window.close()
+
+
+def test_existing_export_themes_keep_matching_classic_and_retro_flags() -> None:
+    for definition in theme_definitions():
+        if definition.key == DITHER:
+            continue
+        assert definition.tokens.classic_controls is definition.tokens.retro_graph
+    assert BRAND_TOKENS.classic_controls is BRAND_TOKENS.retro_graph
+
+
+def test_dither_export_uses_tokens_and_excludes_gold_accent(qapp, tmp_path: Path) -> None:
+    source = tmp_path / "dither-curve.txt"
+    source.write_text("100 1\n1000 2\n", encoding="utf-8")
+    window = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    window.import_files([source])
+    window.graph_state.export_text.title = "Dither Export"
+    window.graph_state.export_text.fixture = "Fixture"
+    output = tmp_path / "poster-dither.png"
+
+    export_graph_image(
+        window.graph_state,
+        output,
+        size=(1920, 1080),
+        theme=DITHER,
+    )
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    assert image.pixelColor(10, 1068).name().upper() == DITHER_TOKENS.text
+    assert image.pixelColor(0, 0).name().upper() == DITHER_TOKENS.text
+    assert image.pixelColor(1919, 117).name().upper() == DITHER_TOKENS.text
+    assert image.pixelColor(100, 124).name().upper() == DITHER_TOKENS.background
+    assert image.pixelColor(200, 200).name().upper() == DITHER_TOKENS.plot_bg
+    assert image.pixelColor(1800, 1018).name().upper() == DITHER_TOKENS.text
+
+    bits = image.constBits()
+    bits.setsize(image.sizeInBytes())
+    rows = np.frombuffer(bits, dtype=np.uint8).reshape(image.height(), image.bytesPerLine())
+    pixels = rows[:, : image.width() * 4].reshape(image.height(), image.width(), 4)
+    gold = np.array(QColor(ACCENT_COLOR).getRgb()[:3], dtype=np.uint8)
+    assert not np.any(np.all(pixels[:, :, :3] == gold, axis=2))
+    window.close()
+
+
+def test_dither_export_masthead_is_filled_with_knocked_out_text(
+    qapp, tmp_path: Path
+) -> None:
+    state = GraphState()
+    state.export_text.title = "Test Masthead"
+    state.export_text.fixture = "711 Fixture"
+    output = tmp_path / "masthead.png"
+    export_graph_image(state, output, size=(800, 600), theme=DITHER)
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    block = DITHER_TOKENS.text
+    knockout = QColor(DITHER_TOKENS.background).rgba()
+    assert image.pixelColor(0, 0).name().upper() == block
+    assert image.pixelColor(799, 0).name().upper() == block
+    assert image.pixelColor(0, 117).name().upper() == block
+    assert image.pixelColor(799, 117).name().upper() == block
+    assert sum(
+        image.pixelColor(x, y).rgba() == knockout
+        for y in range(20, 100)
+        for x in range(30, 770)
+    ) > 500
+    assert image.pixelColor(100, 124).name().upper() == DITHER_TOKENS.background
+
+
+def test_dither_export_footer_is_square_filled_and_uses_knockout_text(
+    qapp, tmp_path: Path
+) -> None:
+    state = GraphState()
+    state.export_text.hrtf_note = "Test Fixture"
+    state.export_text.notes = ""
+    output = tmp_path / "footer.png"
+    export_graph_image(state, output, size=(800, 600), theme=DITHER)
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    footer_top = image.height() - int(DITHER_FOOTER_HEIGHT)
+    ink = QColor(DITHER_TOKENS.text).rgba()
+    knockout = QColor(DITHER_TOKENS.background).rgba()
+
+    assert all(image.pixelColor(x, footer_top).rgba() == ink for x in range(image.width()))
+    assert all(image.pixelColor(x, image.height() - 1).rgba() == ink for x in range(image.width()))
+    assert all(
+        image.pixelColor(0, y).rgba() == ink
+        and image.pixelColor(image.width() - 1, y).rgba() == ink
+        for y in range(footer_top, image.height())
+    )
+
+    text_pixels = [
+        (x, y)
+        for y in range(footer_top + 1, image.height() - 1)
+        for x in range(1, image.width() - 1)
+        if image.pixelColor(x, y).rgba() == knockout
+    ]
+    assert text_pixels
+    assert 40 <= min(x for x, _y in text_pixels) <= 45
+    assert max(x for x, _y in text_pixels) < image.width() - 40
+    assert min(y for _x, y in text_pixels) > footer_top
+    assert max(y for _x, y in text_pixels) < image.height() - 1
+
+
+def test_dither_export_bounds_density_varies_from_edge_to_center(
+    qapp, tmp_path: Path
+) -> None:
+    freqs = np.array([20.0, 20000.0])
+    state = GraphState(y_min=-10.0, y_max=10.0)
+    state.bounds = PreferenceBounds(
+        enabled=True,
+        upper=CurveData(kind="fr", freqs=freqs, mag_db=np.array([5.0, 5.0])),
+        lower=CurveData(kind="fr", freqs=freqs, mag_db=np.array([-5.0, -5.0])),
+    )
+    output = tmp_path / "bounds-dither.png"
+    export_graph_image(state, output, size=(800, 600), theme=DITHER)
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    ink = QColor(DITHER_TOKENS.plot_grid).rgba()
+
+    def coverage(y_start: int, y_stop: int) -> int:
+        return sum(
+            image.pixelColor(x, y).rgba() == ink
+            for y in range(y_start, y_stop)
+            for x in range(140, 640)
+        )
+
+    near_edges = coverage(229, 237) + coverage(344, 352)
+    center = 2 * coverage(286, 294)
+    assert near_edges > center * 2
 
 
 def test_export_uses_gold_accent_constant() -> None:

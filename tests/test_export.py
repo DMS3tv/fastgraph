@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from dms.export import build_variation_filename, export_variation
+from dms.export import build_filename, build_variation_filename, export_variation
 from dms.session import SessionData
 
 
@@ -26,6 +26,20 @@ def test_build_variation_filename_uses_asset_tag_and_comp_suffix() -> None:
     )
 
     assert build_variation_filename(session, compensated=True) == "Unit 7 KB501X COMP VAR.txt"
+
+
+def test_two_channel_filename_labels_are_explicit() -> None:
+    session = SessionData(rig="GRAS", brand="DMS", model="Example")
+
+    assert build_filename(
+        session, compensated=False, channel_label="L"
+    ) == "DMS Example GRAS L RAW AVG.txt"
+    assert build_filename(
+        session, compensated=True, channel_label="BOTH"
+    ) == "DMS Example GRAS BOTH COMP AVG.txt"
+    assert build_variation_filename(
+        session, compensated=False, channel_label="R"
+    ) == "DMS Example GRAS R RAW VAR.txt"
 
 
 def test_export_variation_writes_metadata_and_six_columns(tmp_path: Path) -> None:

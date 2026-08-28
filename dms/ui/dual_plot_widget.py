@@ -19,7 +19,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
 from dms import brand_brand
-from dms.graph_display import retro_step_group, retro_step_series, uses_retro_steps
+from dms.graph_display import (
+    retro_step_group,
+    retro_step_series,
+    stipple_trace_pen,
+    uses_retro_steps,
+)
 from dms.theme import (
     FASTGRAPH_95,
     LIGHT,
@@ -337,6 +342,14 @@ class DualPlotWidget(QWidget):
         self._footer_widget = widget
         self.layout().addWidget(widget, 0)
 
+    def release_shared_widgets(self) -> None:
+        """Release header/control/footer widgets so another plot page can use them."""
+        for name in ("_header_widget", "_between_plots_widget", "_footer_widget"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                self.layout().removeWidget(widget)
+                setattr(self, name, None)
+
     def bottom_plot_global_rect(self) -> QRect:
         top_left = self._bot_plot.mapToGlobal(self._bot_plot.rect().topLeft())
         return QRect(top_left, self._bot_plot.size())
@@ -413,6 +426,11 @@ class DualPlotWidget(QWidget):
             else:
                 color = (90, 98, 108, 180) if self._uses_light_plot() else _GREY
                 pen = pg.mkPen(color=color, width=1.0)
+            pen = stipple_trace_pen(
+                pen,
+                i,
+                tokens_for(self._theme, brand_mode=self._brand_mode),
+            )
             display_freqs, display_mag = self._display_curve(freqs, mag_db)
             item = self._top_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
             self._top_items.append(item)
@@ -446,6 +464,11 @@ class DualPlotWidget(QWidget):
             freqs, mag_db = average
             display_freqs, display_mag = self._display_curve(freqs, mag_db)
             pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
+            pen = stipple_trace_pen(
+                pen,
+                0,
+                tokens_for(self._theme, brand_mode=self._brand_mode),
+            )
             self._bot_item = self._bot_plot.plot(
                 display_freqs, display_mag, pen=pen, antialias=True
             )

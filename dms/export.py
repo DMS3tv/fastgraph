@@ -12,9 +12,13 @@ from dms.hrtf import HRTFCurve
 def build_filename(
     session: SessionData,
     compensated: bool,
+    channel_label: str = "",
 ) -> str:
     """Build export filename per spec."""
     suffix = "COMP AVG" if compensated else "RAW AVG"
+    label = " ".join(str(channel_label).strip().split())
+    if label:
+        suffix = f"{label} {suffix}"
     rig = session.rig.strip()
 
     if session.asset_tag.strip():
@@ -29,9 +33,13 @@ def build_filename(
 def build_variation_filename(
     session: SessionData,
     compensated: bool,
+    channel_label: str = "",
 ) -> str:
     """Build variation export filename per spec."""
     suffix = "COMP VAR" if compensated else "RAW VAR"
+    label = " ".join(str(channel_label).strip().split())
+    if label:
+        suffix = f"{label} {suffix}"
     rig = session.rig.strip()
 
     if session.asset_tag.strip():

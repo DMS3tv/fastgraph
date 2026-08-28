@@ -40,6 +40,7 @@ from dms.automation import (
 )
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.theme_surface import DitherSurface
 
 
 class AutomationGuideWidget(QWidget):
@@ -140,7 +141,7 @@ class AutomationGuideWidget(QWidget):
         layout.addWidget(guide, 1)
 
 
-class EventsWidget(QWidget):
+class EventsWidget(DitherSurface):
     run_requested = pyqtSignal(object)
     status_message = pyqtSignal(str)
 

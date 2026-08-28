@@ -45,6 +45,8 @@ from dms.curator.transforms import (
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.style_tokens import theme_definitions
+from dms.ui.theme_surface import DitherSurface
 from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
 from dms.ui.toggle_switch import ToggleSwitch
@@ -61,6 +63,14 @@ LOWER_BOUNDS_PATH = BOUNDS_DIR / "- Lower Bounds.txt"
 DEFAULT_Y_MIN = -17.5
 DEFAULT_Y_MAX = 17.5
 SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
+_STANDARD_SWATCH_PREFIX_SIZE = max(
+    len(brand_brand.TRACE_PALETTE),
+    *(len(definition.tokens.trace_palette) for definition in theme_definitions()),
+)
+_DEFAULT_STANDARD_SWATCHES = tuple(
+    QColor(QColorDialog.standardColor(index))
+    for index in range(_STANDARD_SWATCH_PREFIX_SIZE)
+)
 
 
 class LayerListRow(QWidget):
@@ -633,7 +643,7 @@ class CuratorWidget(QWidget):
 
 
     def _build_panel(self) -> QWidget:
-        panel = QWidget()
+        panel = DitherSurface()
         panel.setObjectName("controlPanel")
         panel.setProperty("surfaceLevel", "panel")
         panel.setMinimumWidth(390)
@@ -1268,6 +1278,7 @@ class CuratorWidget(QWidget):
                 )
             menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
             return
+        self._set_theme_standard_swatches()
         color = QColorDialog.getColor(QColor(layer.color), self, "Choose Layer Color")
         if not color.isValid():
             return
@@ -1369,6 +1380,7 @@ class CuratorWidget(QWidget):
             self._show_status("Upper dB limit must be greater than lower limit.")
 
     def _choose_background(self) -> None:
+        self._set_theme_standard_swatches()
         color = QColorDialog.getColor(QColor(self._state.background), self, "Choose Background")
         if not color.isValid():
             return
@@ -1376,6 +1388,14 @@ class CuratorWidget(QWidget):
         self._custom_background = True
         self._redraw()
         self._log("INFO", "Graph background changed", color=self._state.background)
+
+    def _set_theme_standard_swatches(self) -> None:
+        for index, color in enumerate(_DEFAULT_STANDARD_SWATCHES):
+            QColorDialog.setStandardColor(index, color)
+        for index, hex_color in enumerate(
+            theme_trace_palette(self._theme, brand_mode=self._brand_mode)
+        ):
+            QColorDialog.setStandardColor(index, QColor(hex_color))
 
     def _on_bounds_enabled_changed(self, _state: int) -> None:
         enabling = self._bounds_enabled.isChecked()

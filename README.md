@@ -10,6 +10,27 @@ measurement. It plays log sweeps through `sounddevice`, records the fixture
 response, plots live/kept curves with `pyqtgraph`, supports HRTF compensation,
 and can export or upload TXT measurements for Squiglink workflows.
 
+## Two-Channel Measure
+
+Enable **Two Channel** on the Measure tab to use the first two physical input
+and output channels. Fastgraph treats channel 1 as `L` and channel 2 as `R`.
+Each queue item measures both channels and presents the complete pair for one
+Keep or Fail decision. A failed stage causes Fastgraph to discard and retry the
+complete pair.
+
+The top viewports show channel 2/R on the left and channel 1/L on the right.
+The bottom result can show one Combined power average or separate R and L
+results. Select a separate bottom viewport to route Export, Send to R&D, Send
+to Curator, Squiglink upload, and BRAND Export All through that channel.
+
+Use the two-label mode switch to select **Frequency Response** or **Channel
+Balance**. Channel Balance sends the same continuous
+sine or band-limited square signal to output channels 1 and 2. It shows an L/R
+overlay scope, an `L - R` scope, and live L, R, and signed level-difference
+values. The generator starts at a 500 Hz sine and uses the current Measure
+output level. Fastgraph stops the generator when the mode, tab, or audio device
+changes and when the application closes.
+
 Current beta version: `0.4.0`
 
 ## What's New in 0.4.0

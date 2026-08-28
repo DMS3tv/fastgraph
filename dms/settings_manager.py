@@ -18,6 +18,8 @@ _DEFAULTS: dict[str, Any] = {
     "output_device": None,
     "input_device": None,
     "input_channel": 0,
+    "measure_two_channel_enabled": False,
+    "measure_two_channel_bottom_mode": "combined",
     "windows_advanced_audio_drivers": False,
     "queue_count": 5,
     "queue_output_level_db": -6.0,

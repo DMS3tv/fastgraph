@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.theme import application_stylesheet, brand_application_stylesheet
+from dms.dither_fonts import configure_dither_typography
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.style_tokens import mode_tokens
@@ -176,6 +177,7 @@ def main() -> int:
         "fastgraph95",
         "fastgraph95_dark",
         "hackerman95",
+        "dither",
         "brand",
     ):
         app.setProperty("fastgraphVisualMode", mode)
@@ -185,6 +187,7 @@ def main() -> int:
             else application_stylesheet(mode)
         )
         gallery = build_gallery(mode)
+        configure_dither_typography(app, mode_tokens(mode).flat_controls)
         gallery.show()
         app.processEvents()
         gallery.grab().save(str(args.output_dir / f"ui-style-{mode}.png"))

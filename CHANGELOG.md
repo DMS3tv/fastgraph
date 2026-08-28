@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- Added Two Channel measurement to the Measure tab. Each queue item now captures
+  channel 1/L and channel 2/R as one pair with explicit input and output routing.
+- Added Combined and Separate two-channel result layouts. Separate mode routes
+  exports and transfers through the selected L or R viewport. Combined mode uses
+  the power mean and the `BOTH` file label.
+- Added Channel Balance with synchronized L/R and L-minus-R scopes, live RMS
+  values, and a continuous sine or band-limited square generator.
+
+### Improved
+
+- Added one shared 1 kHz pair offset. The offset preserves the L/R level
+  difference while it places the pair's power mean at 0 dB.
+- Kept separate single-channel and two-channel Measure workspaces in memory.
+  Undo and Clear All now operate on the active workspace.
+- Added theme-aware two-channel plot panes for all standard themes and BRAND
+  mode.
+- Replaced the two-channel mode dropdown with a themed two-label switch for
+  Frequency Response and Channel Balance.
+
 ## [0.4.1] - 2026-08-14
 
 ### Added

@@ -1,4 +1,8 @@
+import hashlib
+import os
 from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PyQt6.QtCore import QPoint, Qt
@@ -9,11 +13,13 @@ import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
 from dms.theme import (
     DARK,
+    DITHER,
     LIGHT,
     FASTGRAPH_95,
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
     ThemeController,
+    _status_accent_colors,
     application_stylesheet,
     ensure_graph_color,
     graph_contrast_ratio,
@@ -22,6 +28,7 @@ from dms.theme import (
     normalize_theme,
     theme_trace_palette,
 )
+from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
@@ -43,6 +50,8 @@ def test_theme_defaults_and_validation() -> None:
     assert normalize_theme("FastGraph95") == FASTGRAPH_95
     assert normalize_theme("FastGraph95_Dark") == FASTGRAPH_95_DARK
     assert normalize_theme("Hackerman95") == HACKERMAN_95
+    assert normalize_theme("Dither") == DITHER
+    assert tokens_for("dither") is DITHER_TOKENS
     assert "#f3f5f8" in application_stylesheet(LIGHT)
     assert "QWidget[ditherSurface=\"true\"]" in application_stylesheet(FASTGRAPH_95)
     assert "border-top: 2px solid #ffffff" in application_stylesheet(FASTGRAPH_95)
@@ -55,6 +64,57 @@ def test_theme_defaults_and_validation() -> None:
     assert "border-top: 2px solid #596259" in terminal_classic
     assert "background-color: #121512" in terminal_classic
     assert theme_trace_palette(HACKERMAN_95)[0] == "#39FF14"
+
+
+def test_dither_trace_palette_has_contrast_and_distinct_entries() -> None:
+    palette = theme_trace_palette(DITHER)
+
+    assert palette[0] == "#E9E2D4"
+    assert len(palette) == 8
+    assert len(set(palette)) == 8
+    assert all(
+        graph_contrast_ratio(color, DITHER_TOKENS.plot_bg) >= 4.5
+        for color in palette
+    )
+
+
+def test_status_accent_colors_use_dither_rust_and_keep_dark_blue() -> None:
+    assert _status_accent_colors(DITHER_TOKENS)["start"] == (
+        "#4A2318",
+        "#5C2D1E",
+        "#E8845C",
+    )
+    assert _status_accent_colors(DARK_TOKENS)["start"] == (
+        "#204f73",
+        "#296082",
+        "#9ad3f6",
+    )
+
+
+def test_dither_stylesheet_uses_rust_start_accent() -> None:
+    stylesheet = application_stylesheet(DITHER)
+
+    assert "#E8845C" in stylesheet
+    assert "#9ad3f6" not in stylesheet
+
+
+def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
+    expected = {
+        DARK: "b4717891666cf9e35b70915d57e4b9651190fead79b158219bd2e4829e0c9f21",
+        LIGHT: "d8e4e3e31bf9fd0c18ac5ccb2432802cc4cea91f0fc6eda4b2a77e49eb130e41",
+        FASTGRAPH_95: "150ad693bb744457d8c4296a253d9f5ddbfc05527fe41e3ff060e87e88b93e96",
+        FASTGRAPH_95_DARK: "263208e4bcc4bfb1f6a596b0ac8b79996e4a791c7023902cc38213ba06d7cf9d",
+        HACKERMAN_95: "805fd325910a15ddcbcf1e4a704b51431336e779ca41a24088c03f39114fc41f",
+    }
+
+    for theme, expected_digest in expected.items():
+        stylesheet = application_stylesheet(theme)
+        assert hashlib.sha256(stylesheet.encode()).hexdigest() == expected_digest
+
+    brand_stylesheet = brand_application_stylesheet()
+    assert hashlib.sha256(brand_stylesheet.encode()).hexdigest() == (
+        "a11bbda1bf7753d17ffd06388387342cc1681f016b67105799b4a9752736f4d2"
+    )
 
 
 def test_graph_colors_are_adjusted_for_light_and_dark_backgrounds() -> None:

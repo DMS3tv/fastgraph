@@ -5,10 +5,54 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPen
 
-from dms.ui.style_tokens import tokens_for
+from dms.ui.style_tokens import ThemeTokens, tokens_for
 
 RETRO_GRAPH_MAX_BINS = 256
+STIPPLE_DASH_PATTERNS: tuple[tuple[float, ...] | None, ...] = (
+    None,
+    (6.0, 3.0),
+    (1.0, 3.0),
+    (6.0, 3.0, 1.0, 3.0),
+    (3.0, 3.0),
+    (6.0, 3.0, 1.0, 3.0, 1.0, 3.0),
+    (1.0, 2.0),
+    (10.0, 3.0, 1.0, 3.0),
+)
+
+
+def stipple_trace_pen(
+    pen_or_color: QPen | QColor | str | tuple[int, ...],
+    trace_index: int,
+    theme_or_tokens: object,
+) -> QPen:
+    """Return a trace pen with the active theme's display-only line pattern."""
+    if isinstance(pen_or_color, QPen):
+        pen = QPen(pen_or_color)
+    elif isinstance(pen_or_color, QColor):
+        pen = QPen(QColor(pen_or_color))
+    elif isinstance(pen_or_color, tuple):
+        pen = QPen(QColor(*pen_or_color))
+    else:
+        pen = QPen(QColor(str(pen_or_color)))
+
+    tokens = (
+        theme_or_tokens
+        if isinstance(theme_or_tokens, ThemeTokens)
+        else tokens_for(str(theme_or_tokens or "dark"))
+    )
+    if not tokens.stipple_traces:
+        return pen
+
+    pattern = STIPPLE_DASH_PATTERNS[int(trace_index) % len(STIPPLE_DASH_PATTERNS)]
+    if pattern is None:
+        pen.setStyle(Qt.PenStyle.SolidLine)
+    else:
+        pen.setStyle(Qt.PenStyle.CustomDashLine)
+        pen.setDashPattern(list(pattern))
+    return pen
 
 
 def uses_retro_steps(theme: object, *, brand_mode: bool = False) -> bool:

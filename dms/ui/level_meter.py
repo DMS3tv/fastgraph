@@ -14,6 +14,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from dms.ui.style_tokens import ThemeTokens, mode_tokens
+from dms.ui.theme_surface import paint_dither
 
 
 def _mix(first: QColor, second: QColor, amount: float) -> QColor:
@@ -63,6 +64,17 @@ class LevelMeterWidget(QWidget):
 
     def _uses_classic_blocks(self) -> bool:
         return self._tokens().classic_controls
+
+    def _uses_flat_dither(self) -> bool:
+        return self._tokens().flat_controls
+
+    def _control_paint_path(self) -> str:
+        tokens = self._tokens()
+        if tokens.classic_controls:
+            return "classic"
+        if tokens.flat_controls:
+            return "flat"
+        return "modern"
 
     @classmethod
     def _fraction(cls, db: float) -> float:
@@ -139,6 +151,10 @@ class LevelMeterWidget(QWidget):
         painter = QPainter(self)
         if tokens.classic_controls:
             self._paint_classic_blocks(painter, tokens)
+            painter.end()
+            return
+        if tokens.flat_controls:
+            self._paint_flat_dither(painter, tokens)
             painter.end()
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -254,6 +270,33 @@ class LevelMeterWidget(QWidget):
         painter.setPen(QPen(border, 1.0))
         painter.drawRoundedRect(track, radius, radius)
         painter.end()
+
+    def _paint_flat_dither(self, painter: QPainter, tokens: ThemeTokens) -> None:
+        """Paint level as ordered pixel density inside a hard square track."""
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        outer = self.rect().adjusted(0, 0, -1, -1)
+        track = outer.adjusted(3, 3, -3, -3)
+        painter.fillRect(outer, QColor(tokens.control))
+        painter.fillRect(track, QColor(tokens.alternate))
+
+        fraction = self._fraction(self._display_db)
+        if fraction > 0.0:
+            paint_dither(
+                painter,
+                track.adjusted(1, 1, -1, -1),
+                foreground=self._glow_color(tokens, self._display_db),
+                density=fraction,
+            )
+
+        border = QColor(
+            tokens.danger
+            if self._display_db >= self._DANGER_BLEND_DB
+            else tokens.border
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(border, tokens.geometry.border_px))
+        painter.drawRect(track)
 
     def _paint_classic_blocks(self, painter: QPainter, tokens: ThemeTokens) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)

@@ -42,6 +42,8 @@ _OBJECT_ROLES = {
 
 _FLAT_HOVER_DITHER_STEPS = 7
 _FLAT_HOVER_DITHER_DENSITY = 0.38
+_FLAT_LABEL_HORIZONTAL_INSET = 8
+_FLAT_PAINT_RECT_WIDTH_LOSS = 1
 
 
 def _mix(first: QColor, second: QColor, amount: float) -> QColor:
@@ -313,7 +315,8 @@ class ModernButton(QPushButton):
 
     def sizeHint(self):
         hint = super().sizeHint()
-        geometry = self._tokens().geometry
+        tokens = self._tokens()
+        geometry = tokens.geometry
         role = self.role()
         if role == "compact":
             minimum = geometry.compact_button_height
@@ -322,6 +325,18 @@ class ModernButton(QPushButton):
         else:
             minimum = geometry.button_height
         hint.setHeight(max(hint.height(), minimum + 4))
+        if tokens.flat_controls and role != "swatch":
+            font = dither_heading_font(self.font())
+            label_width = QFontMetrics(font).horizontalAdvance(self.text().upper())
+            border_width = max(geometry.border_px, geometry.focus_border_px)
+            painted_width = (
+                label_width
+                + 2 * _FLAT_LABEL_HORIZONTAL_INSET
+                + 2 * border_width
+            )
+            hint.setWidth(
+                max(hint.width(), painted_width + _FLAT_PAINT_RECT_WIDTH_LOSS)
+            )
         return hint
 
     def minimumSizeHint(self):
@@ -504,7 +519,12 @@ class ModernButton(QPushButton):
         option.text = self.text()
         option.icon = self.icon()
         option.iconSize = self.iconSize()
-        option.rect = rect.adjusted(8, 1, -8, -1)
+        option.rect = rect.adjusted(
+            _FLAT_LABEL_HORIZONTAL_INSET,
+            1,
+            -_FLAT_LABEL_HORIZONTAL_INSET,
+            -1,
+        )
         option.fontMetrics = QFontMetrics(font)
         option.palette = QPalette(option.palette)
         option.palette.setColor(QPalette.ColorRole.ButtonText, label)

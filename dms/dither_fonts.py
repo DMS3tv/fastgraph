@@ -80,10 +80,19 @@ def _set_flat_font(widget: QWidget, enabled: bool) -> None:
     if enabled:
         if original is None:
             widget.setProperty(original_property, QFont(widget.font()))
-        widget.setFont(dither_heading_font(widget.font()))
+        base = QFont(widget.font())
+        font = dither_heading_font(base)
+        if widget.__class__.__name__ == "ModernButton":
+            # ModernButton resolves the heading family in its custom size and
+            # paint paths. Keep the stylesheet family here so Qt gives startup
+            # and runtime theme changes the same native size-hint input.
+            font.setFamilies(base.families())
+        widget.setFont(font)
     elif isinstance(original, QFont):
         widget.setFont(original)
         widget.setProperty(original_property, None)
+    widget.updateGeometry()
+    widget.update()
 
 
 class _DitherTypographyFilter(QObject):

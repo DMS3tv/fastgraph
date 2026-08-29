@@ -1,8 +1,12 @@
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QColor, QFont, QFontDatabase
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QWidget
+import pytest
 
+from PyQt6.QtCore import QEvent, QSize, Qt
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
+
+import dms.settings_manager as settings_module
+from dms.settings_manager import SettingsManager
 from dms.theme import (
     DARK,
     DITHER,
@@ -12,6 +16,9 @@ from dms.theme import (
     LIGHT,
     ThemeController,
     application_stylesheet,
+    brand_application_stylesheet,
+    brand_theme_colors,
+    theme_colors,
 )
 import dms.dither_fonts as dither_fonts
 from dms.ui.modern_button import ModernButton
@@ -166,6 +173,36 @@ def test_stylesheet_exposes_surface_and_tab_hierarchy() -> None:
     assert "QToolButton#section_toggle" in stylesheet
 
 
+@pytest.mark.parametrize(
+    "theme",
+    (DARK, LIGHT, FASTGRAPH_95, FASTGRAPH_95_DARK, HACKERMAN_95, DITHER),
+)
+def test_each_theme_styles_measure_submode_selected_state(theme: str) -> None:
+    stylesheet = application_stylesheet(theme)
+    selected_selector = 'QPushButton[measureSegment="true"]:checked {'
+    selected_start = stylesheet.rfind(selected_selector)
+
+    assert selected_start >= 0
+    selected_rule = stylesheet[selected_start:].split("}", 1)[0]
+    assert f"background-color: {theme_colors(theme)['accent']}" in selected_rule
+    assert 'QPushButton[measureSegment="true"]:hover' in stylesheet
+    assert 'QPushButton[measureSegment="true"]:focus' in stylesheet
+    assert 'QPushButton[measureSegment="true"]:checked:disabled' in stylesheet
+
+
+def test_brand_styles_measure_submode_selected_state() -> None:
+    stylesheet = brand_application_stylesheet()
+    selected_selector = 'QPushButton[measureSegment="true"]:checked {'
+    selected_start = stylesheet.rfind(selected_selector)
+
+    assert selected_start >= 0
+    selected_rule = stylesheet[selected_start:].split("}", 1)[0]
+    assert f"background-color: {brand_theme_colors()['accent']}" in selected_rule
+    assert 'QPushButton[measureSegment="true"]:hover' in stylesheet
+    assert 'QPushButton[measureSegment="true"]:focus' in stylesheet
+    assert 'QPushButton[measureSegment="true"]:checked:disabled' in stylesheet
+
+
 def test_modern_button_roles_cover_semantic_actions() -> None:
     app = _app()
     assert app is not None
@@ -183,6 +220,95 @@ def test_modern_button_roles_cover_semantic_actions() -> None:
     start_queue.setObjectName("btn_start")
     assert measure._has_persistent_outline() is True
     assert start_queue._has_persistent_outline() is True
+
+
+def _painted_button_label_requirement(button: ModernButton) -> int:
+    tokens = button._tokens()
+    path = button._control_paint_path()
+    if path == "flat":
+        base = QFont()
+        base.setPixelSize(tokens.typography.body_px)
+        font = dither_fonts.dither_heading_font(base)
+        text = button.text().upper()
+        border_width = max(
+            tokens.geometry.border_px,
+            tokens.geometry.focus_border_px,
+        )
+        horizontal_space = 2 * 8 + 2 * border_width
+    elif path == "classic":
+        font = button.font()
+        text = button.text()
+        horizontal_space = 1 + 2 * 1 + 2 * 5
+    else:
+        font = button.font()
+        text = button.text()
+        horizontal_space = 2 * 4 + 2 * 8
+    return QFontMetrics(font).horizontalAdvance(text) + horizontal_space
+
+
+def test_modern_button_size_hints_fit_painted_labels_in_each_theme(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    app = _app()
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    controller = ThemeController(app, SettingsManager())
+    labels = (
+        "Measure",
+        "Cancel Queue",
+        "Inputs",
+        "Headphone Metadata",
+        "Clear Metadata",
+    )
+
+    for theme in (
+        DARK,
+        LIGHT,
+        FASTGRAPH_95,
+        FASTGRAPH_95_DARK,
+        HACKERMAN_95,
+        DITHER,
+    ):
+        controller.set_brand_mode(False, persist=False)
+        controller.set_theme(theme, persist=False)
+        for label in labels:
+            button = ModernButton(label)
+            button.ensurePolished()
+            required_width = _painted_button_label_requirement(button)
+
+            assert button.sizeHint().width() > required_width
+            assert button.minimumSizeHint().width() > required_width
+
+    controller.set_brand_mode(True, persist=False)
+    for label in labels:
+        button = ModernButton(label)
+        button.ensurePolished()
+        required_width = _painted_button_label_requirement(button)
+
+        assert button.sizeHint().width() > required_width
+        assert button.minimumSizeHint().width() > required_width
+
+
+def test_dither_button_size_hint_does_not_depend_on_plain_style_measurement(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    app = _app()
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    controller = ThemeController(app, SettingsManager())
+    controller.set_theme(DITHER, persist=False)
+    button = ModernButton("Headphone Metadata")
+    button.ensurePolished()
+    required_width = _painted_button_label_requirement(button)
+    base_height = QPushButton.sizeHint(button).height()
+    monkeypatch.setattr(
+        QPushButton,
+        "sizeHint",
+        lambda _button: QSize(required_width, base_height),
+    )
+
+    assert button.sizeHint().width() > required_width
+    assert button.minimumSizeHint().width() > required_width
 
 
 def test_modern_button_can_use_a_dark_mode_only_accent() -> None:

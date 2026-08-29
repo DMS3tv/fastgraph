@@ -23,7 +23,7 @@ The bottom result can show one Combined power average or separate R and L
 results. Select a separate bottom viewport to route Export, Send to R&D, Send
 to Curator, Squiglink upload, and BRAND Export All through that channel.
 
-Use the two-label mode switch to select **Frequency Response** or **Channel
+Use the segmented mode control to select **Frequency Response** or **Channel
 Balance**. Channel Balance sends the same continuous
 sine or band-limited square signal to output channels 1 and 2. It shows an L/R
 overlay scope, an `L - R` scope, and live L, R, and signed level-difference
@@ -31,7 +31,40 @@ values. The generator starts at a 500 Hz sine and uses the current Measure
 output level. Fastgraph stops the generator when the mode, tab, or audio device
 changes and when the application closes.
 
-Current beta version: `0.4.0`
+Current beta version: `0.4.2`
+
+## What's New in 0.4.2
+
+Fastgraph now supports paired two-channel measurements. Each queue item measures
+channel 1/L and channel 2/R with explicit input and output routing. Fastgraph
+keeps or retries the complete pair. Single-channel and two-channel results stay
+in separate workspaces.
+
+The Measure tab can show a Combined power average or separate L and R results.
+In Separate mode, the selected result controls exports, R&D and Curator
+transfers, Squiglink uploads, and BRAND Export All. Combined variation first
+calculates the channel mean for each pair before it calculates percentiles.
+
+Channel Balance adds synchronized L/R and L-minus-R scopes. Its continuous
+generator sends a 500 Hz sine by default and also supports a band-limited square
+wave. The generator uses the current Measure output level and stops when its
+audio path or application mode changes.
+
+The Frequency Response and Channel Balance selector is now a themed segmented
+control with complete labels. Dither button sizing now accounts for its painted
+uppercase font, so button labels stay complete at startup and after a theme
+change.
+
+## What's New in 0.4.1
+
+Fastgraph added Default dark, Default light, FastGraph 95, FastGraph 95 Dark,
+and Hackerman 95 themes. A registered theme system now supplies shared colors,
+typography, geometry, motion, graph palettes, and renderer families.
+
+The 95 themes add classic interface surfaces, stepped graph rendering, and a
+segmented level meter. Headphone metadata now uses a menu that matches the
+Inputs menu. Curator exports use theme-aware graph styles and keep complete
+legend names.
 
 ## What's New in 0.4.0
 
@@ -507,11 +540,11 @@ GitHub Actions builds release packages for Apple Silicon macOS, Windows x64, and
 Linux x64. Update `dms/version.py` and `CHANGELOG.md`, push the release commit
 to `main`, then choose one of these release paths:
 
-- Push a tag such as `v0.4.0`; the workflow builds all three packages and
+- Push a tag such as `v0.4.2`; the workflow builds all three packages and
   publishes a GitHub release automatically.
 - In **Actions → Release builds → Run workflow**, choose the source ref, enable
   **Create or update a GitHub release**, and enter a release tag such as
-  `v0.4.0`. This creates the tag at the selected ref and publishes the release.
+  `v0.4.2`. This creates the tag at the selected ref and publishes the release.
 
 Leaving **Create or update a GitHub release** disabled runs a build-only job.
 Its downloadable artifacts are useful for testing before publishing. Release
@@ -547,8 +580,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.4.0",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.4.0",
-  "summary": "Adds R&D recovery, BRAND exports, and the revised Measure interface"
+  "version": "0.4.2",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.4.2",
+  "summary": "Adds paired two-channel measurement and Channel Balance"
 }
 ```

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.4.2] - 2026-08-29
+
 ### Added
 
 - Added Two Channel measurement to the Measure tab. Each queue item now captures
@@ -20,8 +22,12 @@
   Undo and Clear All now operate on the active workspace.
 - Added theme-aware two-channel plot panes for all standard themes and BRAND
   mode.
-- Replaced the two-channel mode dropdown with a themed two-label switch for
-  Frequency Response and Channel Balance.
+- Replaced the two-channel mode switch with a themed segmented control for
+  Frequency Response and Channel Balance. Each segment keeps its full label.
+
+### Fixed
+
+- Prevented Dither button labels from cutting off at the left and right edges.
 
 ## [0.4.1] - 2026-08-14
 

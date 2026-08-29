@@ -82,6 +82,19 @@ mode. Move the label by one pixel when the user presses the button.
 The global Inputs button uses purple `#A970FF` in the standard dark theme. It
 uses the normal mode accent in the standard light and brand themes.
 
+## Segmented Controls
+
+Use a segmented control for two or more named modes. Join the checkable buttons
+with no gap. Fill the selected segment with the theme accent. Keep the other
+segments muted and readable.
+
+Use a 12 px radius on the two outer ends in modern themes. Use square ends in
+FastGraph 95 and Dither themes. Show a clear hover state and keyboard-focus
+border. Keep the selected segment clear when the control is disabled.
+
+Size each segment from its full label and its current font metrics. Do not let a
+layout make a segment narrower than its label.
+
 ## Input Level Meter
 
 Use the shared visual tokens for the input meter in all modes. Draw the meter

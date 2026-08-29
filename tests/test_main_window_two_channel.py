@@ -5,15 +5,36 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QEvent, QSize
+from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtWidgets import (
+    QApplication,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
+)
 
 import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
+import dms.dither_fonts as dither_fonts
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
-from dms.theme import ThemeController
+from dms.theme import (
+    DARK,
+    DITHER,
+    FASTGRAPH_95,
+    FASTGRAPH_95_DARK,
+    HACKERMAN_95,
+    LIGHT,
+    ThemeController,
+)
 from dms.two_channel import TwoChannelCurvePair
 from dms.ui.main_window import AppState, MainWindow
+from dms.ui.modern_button import (
+    _FLAT_LABEL_HORIZONTAL_INSET,
+    _FLAT_PAINT_RECT_WIDTH_LOSS,
+)
+from dms.ui.style_tokens import DITHER_TOKENS
 
 
 @pytest.fixture(scope="module")
@@ -21,12 +42,19 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
+def _window(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    theme: str = DARK,
+) -> MainWindow:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path / "config")
     monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
     monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
     settings = SettingsManager()
+    settings.set("theme", theme)
     settings.set("measure_two_channel_enabled", True)
     settings.set("measure_two_channel_bottom_mode", "separate")
     window = MainWindow(
@@ -38,11 +66,87 @@ def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
     return window
 
 
+def _process_theme_change(qapp) -> None:
+    for _ in range(8):
+        qapp.processEvents()
+
+
+def _independent_dither_label_width(label: str) -> int:
+    base = QFont()
+    base.setPixelSize(DITHER_TOKENS.typography.body_px)
+    heading = dither_fonts.dither_heading_font(base)
+    label_width = QFontMetrics(heading).horizontalAdvance(label.upper())
+    border_width = max(
+        DITHER_TOKENS.geometry.border_px,
+        DITHER_TOKENS.geometry.focus_border_px,
+    )
+    return (
+        label_width
+        + 2 * _FLAT_LABEL_HORIZONTAL_INSET
+        + 2 * border_width
+        + _FLAT_PAINT_RECT_WIDTH_LOSS
+    )
+
+
 def _curve(level: float):
     return (
         np.array([100.0, 1000.0, 10000.0]),
         np.array([level, level, level]),
     )
+
+
+_MEASURE_SEGMENT_STATES = (
+    ("resting", QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Off),
+    (
+        "focus",
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_Off
+        | QStyle.StateFlag.State_HasFocus,
+    ),
+    (
+        "hover",
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_Off
+        | QStyle.StateFlag.State_MouseOver,
+    ),
+    ("checked", QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_On),
+    (
+        "checked focus",
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_On
+        | QStyle.StateFlag.State_HasFocus,
+    ),
+    (
+        "checked hover",
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_On
+        | QStyle.StateFlag.State_MouseOver,
+    ),
+)
+
+
+def _resolved_segment_width(button, state: QStyle.StateFlag) -> tuple[int, int]:
+    metrics = QFontMetrics(button.font())
+    text_width = metrics.horizontalAdvance(button.text())
+    option = QStyleOptionButton()
+    option.initFrom(button)
+    option.text = button.text()
+    option.state = state
+    required_width = button.style().sizeFromContents(
+        QStyle.ContentsType.CT_PushButton,
+        option,
+        QSize(text_width, metrics.height()),
+        button,
+    ).width()
+    return text_width, required_width
+
+
+def _settle_segment_width_refresh(qapp, window: MainWindow) -> None:
+    for _ in range(4):
+        qapp.processEvents()
+        if not window._measure_submode_control._width_refresh_pending:
+            break
+    assert window._measure_submode_control._width_refresh_pending is False
 
 
 def test_restores_two_channel_layout_but_starts_in_frequency_response(
@@ -53,14 +157,15 @@ def test_restores_two_channel_layout_but_starts_in_frequency_response(
     assert window._two_channel_enabled is True
     assert window._plots._stack.currentWidget() is window._plots.two
     assert window._two_channel_bottom_mode == "separate"
-    assert window._measure_submode_toggle.isChecked() is False
-    assert window._measure_frequency_label.property("tone") == "accent"
-    assert window._measure_balance_label.property("tone") == "muted"
+    assert window._measure_frequency_button.isChecked() is True
+    assert window._measure_balance_button.isChecked() is False
+    assert window._measure_frequency_button.text() == "Frequency Response"
+    assert window._measure_balance_button.text() == "Channel Balance"
     assert window._channel_balance_active is False
     window.close()
 
 
-def test_measure_submode_switch_changes_mode_and_stops_generator(
+def test_measure_submode_segments_change_mode_and_stop_generator(
     qapp, monkeypatch, tmp_path: Path
 ) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
@@ -72,29 +177,164 @@ def test_measure_submode_switch_changes_mode_and_stops_generator(
     )
 
     assert window._measure_submode_control.isHidden() is False
-    window._measure_submode_toggle.setChecked(True)
+    window._measure_balance_button.setChecked(True)
     assert window._channel_balance_mode_active() is True
-    assert window._measure_frequency_label.property("tone") == "muted"
-    assert window._measure_balance_label.property("tone") == "accent"
+    assert window._measure_frequency_button.isChecked() is False
+    assert window._measure_balance_button.isChecked() is True
 
-    window._measure_submode_toggle.setChecked(False)
+    window._measure_frequency_button.setChecked(True)
     assert window._channel_balance_mode_active() is False
+    assert window._measure_frequency_button.isChecked() is True
+    assert window._measure_balance_button.isChecked() is False
     assert stop_calls
 
     window._two_channel_toggle.setChecked(False)
     assert window._measure_submode_control.isHidden() is True
-    assert window._measure_submode_toggle.isChecked() is False
+    assert window._measure_frequency_button.isChecked() is True
+    assert window._measure_balance_button.isChecked() is False
     window.close()
 
 
-def test_measure_submode_switch_is_disabled_while_busy(
+def test_measure_submode_segments_are_disabled_while_busy(
     qapp, monkeypatch, tmp_path: Path
 ) -> None:
     window = _window(qapp, monkeypatch, tmp_path)
+    window._measure_balance_button.setChecked(True)
     window._state = AppState.QUEUE_RUNNING
     window._apply_state_ui()
 
-    assert window._measure_submode_toggle.isEnabled() is False
+    assert window._measure_submode_control.isEnabled() is False
+    assert window._measure_frequency_button.isEnabled() is False
+    assert window._measure_balance_button.isEnabled() is False
+    assert window._measure_balance_button.isChecked() is True
+    window.close()
+
+
+def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+    window.show()
+    _settle_segment_width_refresh(qapp, window)
+
+    profiles = (
+        (DARK, False),
+        (LIGHT, False),
+        (FASTGRAPH_95, False),
+        (FASTGRAPH_95_DARK, False),
+        (HACKERMAN_95, False),
+        (DITHER, False),
+        (DARK, True),
+    )
+    for theme, brand_mode in profiles:
+        window._theme_controller.set_brand_mode(brand_mode)
+        if not brand_mode:
+            window._theme_controller.set_theme(theme)
+        _settle_segment_width_refresh(qapp, window)
+
+        for button in (
+            window._measure_frequency_button,
+            window._measure_balance_button,
+        ):
+            for state_name, state in _MEASURE_SEGMENT_STATES:
+                text_width, required_width = _resolved_segment_width(button, state)
+                chrome_width = required_width - text_width
+                context = f"{theme=} {brand_mode=} {button.text()=} {state_name=}"
+                assert chrome_width > 0, context
+                assert button.width() - text_width > chrome_width, context
+                assert button.minimumWidth() > required_width, context
+            assert (
+                button.sizePolicy().horizontalPolicy()
+                == QSizePolicy.Policy.Fixed
+            )
+
+    assert (
+        window._measure_submode_control.sizePolicy().horizontalPolicy()
+        == QSizePolicy.Policy.Fixed
+    )
+    window.close()
+
+
+def test_measure_button_width_matches_dither_startup_and_switch_paths(
+    qapp,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    startup_window = _window(
+        qapp,
+        monkeypatch,
+        tmp_path / "dither-startup",
+        theme=DITHER,
+    )
+    startup_window.show()
+    _process_theme_change(qapp)
+    startup_button = startup_window._start_queue_btn
+    startup_image = startup_button.grab().toImage()
+    startup_width = startup_image.width()
+    startup_hint_width = startup_button.sizeHint().width()
+
+    assert startup_image.isNull() is False
+    assert startup_width >= _independent_dither_label_width("Measure")
+
+    startup_window.close()
+    startup_window.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    switch_window = _window(
+        qapp,
+        monkeypatch,
+        tmp_path / "dither-switch",
+        theme=DARK,
+    )
+    switch_window.show()
+    _process_theme_change(qapp)
+    switch_button = switch_window._start_queue_btn
+    dark_width = switch_button.grab().toImage().width()
+    dark_hint_width = switch_button.sizeHint().width()
+
+    switch_window._theme_controller.set_theme(DITHER, persist=False)
+    _process_theme_change(qapp)
+    switch_image = switch_button.grab().toImage()
+
+    assert switch_image.isNull() is False
+    assert switch_image.width() >= _independent_dither_label_width("Measure")
+    assert switch_image.width() == startup_width
+    assert switch_button.sizeHint().width() == startup_hint_width
+
+    switch_window._theme_controller.set_theme(DARK, persist=False)
+    _process_theme_change(qapp)
+
+    assert switch_button.grab().toImage().width() == dark_width
+    assert switch_button.sizeHint().width() == dark_hint_width
+    switch_window.close()
+
+
+def test_measure_submode_accessibility_and_responsive_width(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    window = _window(qapp, monkeypatch, tmp_path)
+
+    assert window._measure_submode_control.accessibleName() == "Measure mode"
+    assert window._measure_submode_control.toolTip()
+    assert window._measure_frequency_button.accessibleName()
+    assert window._measure_frequency_button.toolTip()
+    assert window._measure_balance_button.accessibleName()
+    assert window._measure_balance_button.toolTip()
+    assert window._queue_bar.compact_breakpoint == (
+        window._queue_bar._BASE_COMPACT_WIDTH
+        + window._measure_submode_control.minimum_control_width
+    )
+    expanded_breakpoint = window._queue_bar.compact_breakpoint
+    window._queue_bar._update_compact_state(expanded_breakpoint - 1)
+    assert window._queue_bar_compact is True
+    window._queue_bar._update_compact_state(expanded_breakpoint)
+    assert window._queue_bar_compact is False
+
+    window._two_channel_toggle.setChecked(False)
+    assert (
+        window._queue_bar.compact_breakpoint
+        == window._queue_bar._BASE_COMPACT_WIDTH
+    )
     window.close()
 
 

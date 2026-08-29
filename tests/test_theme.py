@@ -100,11 +100,11 @@ def test_dither_stylesheet_uses_rust_start_accent() -> None:
 
 def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
     expected = {
-        DARK: "b4717891666cf9e35b70915d57e4b9651190fead79b158219bd2e4829e0c9f21",
-        LIGHT: "d8e4e3e31bf9fd0c18ac5ccb2432802cc4cea91f0fc6eda4b2a77e49eb130e41",
-        FASTGRAPH_95: "150ad693bb744457d8c4296a253d9f5ddbfc05527fe41e3ff060e87e88b93e96",
-        FASTGRAPH_95_DARK: "263208e4bcc4bfb1f6a596b0ac8b79996e4a791c7023902cc38213ba06d7cf9d",
-        HACKERMAN_95: "805fd325910a15ddcbcf1e4a704b51431336e779ca41a24088c03f39114fc41f",
+        DARK: "f08dd7ee40fad3aa38e441596f6ce1d4f59afc4849887ec0dda9ee60de5c0c0f",
+        LIGHT: "b0c41c6ef5a85db3ee68bb2264d29c098bd8a99776f5a5ce8b4e42c9ca680741",
+        FASTGRAPH_95: "bc3b97e6949eb76d9363c11780c154b01f6a701d3c748617ad78658778f78c72",
+        FASTGRAPH_95_DARK: "99a28cf3738a5216c22104dffbf3413069691cf02432ac6123c44423c3fe7a63",
+        HACKERMAN_95: "235ff7e5cf43ac3b15ed6af47ef62e79b5d5eeacbb6a95e610a477a21426724c",
     }
 
     for theme, expected_digest in expected.items():
@@ -113,7 +113,7 @@ def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
 
     brand_stylesheet = brand_application_stylesheet()
     assert hashlib.sha256(brand_stylesheet.encode()).hexdigest() == (
-        "a11bbda1bf7753d17ffd06388387342cc1681f016b67105799b4a9752736f4d2"
+        "944b3a73f2681d07cfdeb66ae68238afc0919bd592c24a9b4548b7251c7403ae"
     )
 
 

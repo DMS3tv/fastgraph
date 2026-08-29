@@ -15,9 +15,21 @@ from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QRect, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PyQt6.QtCore import (
+    QEvent,
+    QEasingCurve,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    QThread,
+    QTimer,
+    Qt,
+    QUrl,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QDesktopServices, QFontMetrics, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -32,10 +44,12 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
-    QPushButton,
+    QPushButton as NativePushButton,
     QScrollArea,
     QSizePolicy,
     QStatusBar,
+    QStyle,
+    QStyleOptionButton,
     QTabWidget,
     QKeySequenceEdit,
     QToolButton,
@@ -777,17 +791,178 @@ class SquiglinkUploadMetadataDialog(QDialog):
 
 class _ResponsiveQueueBar(QWidget):
     compact_changed = pyqtSignal(bool)
+    _BASE_COMPACT_WIDTH = 1250
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._compact: bool | None = None
+        self._additional_compact_width = 0
 
-    def resizeEvent(self, event) -> None:
-        compact = event.size().width() < 1250
+    @property
+    def compact_breakpoint(self) -> int:
+        return self._BASE_COMPACT_WIDTH + self._additional_compact_width
+
+    def set_additional_compact_width(self, width: int) -> None:
+        width = max(0, int(width))
+        if width == self._additional_compact_width:
+            return
+        self._additional_compact_width = width
+        self._update_compact_state(self.width())
+
+    def _update_compact_state(self, width: int) -> None:
+        compact = width < self.compact_breakpoint
         if compact != self._compact:
             self._compact = compact
             self.compact_changed.emit(compact)
+
+    def resizeEvent(self, event) -> None:
+        self._update_compact_state(event.size().width())
         super().resizeEvent(event)
+
+
+class _MeasureSubmodeControl(QWidget):
+    """Two joined buttons that select the Measure tab submode."""
+
+    balance_toggled = pyqtSignal(bool)
+    minimum_width_changed = pyqtSignal(int)
+    _TEXT_WIDTH_HEADROOM = 4
+    _WIDTH_STATES = (
+        QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Off,
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_Off
+        | QStyle.StateFlag.State_HasFocus,
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_Off
+        | QStyle.StateFlag.State_MouseOver,
+        QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_On,
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_On
+        | QStyle.StateFlag.State_HasFocus,
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_On
+        | QStyle.StateFlag.State_MouseOver,
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._width_refresh_pending = False
+        self._minimum_width = 0
+        self.setObjectName("measure_submode_control")
+        self.setProperty("layoutRole", "transparent")
+        self.setAccessibleName("Measure mode")
+        self.setToolTip("Select Frequency Response or Channel Balance.")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.frequency_button = self._make_segment(
+            "Frequency Response",
+            "first",
+            "Frequency Response measure mode",
+            "Use Frequency Response mode.",
+        )
+        self.balance_button = self._make_segment(
+            "Channel Balance",
+            "last",
+            "Channel Balance measure mode",
+            "Use Channel Balance mode.",
+        )
+
+        self._button_group = QButtonGroup(self)
+        self._button_group.setExclusive(True)
+        self._button_group.addButton(self.frequency_button, 0)
+        self._button_group.addButton(self.balance_button, 1)
+        layout.addWidget(self.frequency_button)
+        layout.addWidget(self.balance_button)
+
+        self.frequency_button.setChecked(True)
+        self.balance_button.toggled.connect(self.balance_toggled)
+        self.refresh_segment_widths()
+
+    def _make_segment(
+        self,
+        text: str,
+        position: str,
+        accessible_name: str,
+        tooltip: str,
+    ) -> NativePushButton:
+        button = NativePushButton(text, self)
+        button.setCheckable(True)
+        button.setProperty("measureSegment", True)
+        button.setProperty("segmentPosition", position)
+        button.setAccessibleName(accessible_name)
+        button.setToolTip(tooltip)
+        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+        button.installEventFilter(self)
+        return button
+
+    @property
+    def minimum_control_width(self) -> int:
+        return self._minimum_width
+
+    @classmethod
+    def _required_width_for_state(
+        cls,
+        button: NativePushButton,
+        state: QStyle.StateFlag,
+    ) -> int:
+        metrics = QFontMetrics(button.font())
+        text_size = QSize(
+            metrics.horizontalAdvance(button.text()),
+            metrics.height(),
+        )
+        option = QStyleOptionButton()
+        option.initFrom(button)
+        option.text = button.text()
+        option.state = state
+        return button.style().sizeFromContents(
+            QStyle.ContentsType.CT_PushButton,
+            option,
+            text_size,
+            button,
+        ).width()
+
+    def refresh_segment_widths(self) -> None:
+        self._width_refresh_pending = False
+        widths = []
+        for button in (self.frequency_button, self.balance_button):
+            required_width = max(
+                self._required_width_for_state(button, state)
+                for state in self._WIDTH_STATES
+            )
+            width = required_width + self._TEXT_WIDTH_HEADROOM
+            button.setFixedWidth(width)
+            widths.append(width)
+        minimum_width = sum(widths)
+        self.setFixedWidth(minimum_width)
+        if minimum_width != self._minimum_width:
+            self._minimum_width = minimum_width
+            self.minimum_width_changed.emit(minimum_width)
+
+    def _schedule_width_refresh(self) -> None:
+        if self._width_refresh_pending:
+            return
+        self._width_refresh_pending = True
+        QTimer.singleShot(0, self.refresh_segment_widths)
+
+    def eventFilter(self, watched, event) -> bool:
+        if bool(watched.property("measureSegment")) and event.type() in {
+            QEvent.Type.ApplicationFontChange,
+            QEvent.Type.FontChange,
+            QEvent.Type.Polish,
+            QEvent.Type.StyleChange,
+        }:
+            self._schedule_width_refresh()
+        return super().eventFilter(watched, event)
 
 
 class MainWindow(QMainWindow):
@@ -1051,11 +1226,12 @@ class MainWindow(QMainWindow):
         enabled = bool(self._two_channel_toggle.isChecked())
         if not enabled:
             self._stop_channel_balance()
-            self._measure_submode_toggle.setChecked(False)
+            self._measure_frequency_button.setChecked(True)
         self._two_channel_enabled = enabled
         self._settings.set("measure_two_channel_enabled", enabled)
         self._plots.set_two_channel_enabled(enabled)
         self._measure_submode_control.setVisible(enabled)
+        self._sync_queue_bar_submode_width()
         self._level_meter_2.setVisible(enabled)
         self._level_status_label_2.setVisible(enabled)
         self._bottom_layout_label.setVisible(enabled)
@@ -1069,29 +1245,14 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Measure mode: {mode}.")
 
     def _channel_balance_mode_active(self) -> bool:
-        toggle = getattr(self, "_measure_submode_toggle", None)
+        balance_button = getattr(self, "_measure_balance_button", None)
         return bool(
             getattr(self, "_two_channel_enabled", False)
-            and toggle is not None
-            and toggle.isChecked()
+            and balance_button is not None
+            and balance_button.isChecked()
         )
 
-    def _update_measure_submode_label_tones(self) -> None:
-        toggle = getattr(self, "_measure_submode_toggle", None)
-        frequency_label = getattr(self, "_measure_frequency_label", None)
-        balance_label = getattr(self, "_measure_balance_label", None)
-        if toggle is None or frequency_label is None or balance_label is None:
-            return
-        balance = toggle.isChecked()
-        frequency_label.setProperty("tone", "muted" if balance else "accent")
-        balance_label.setProperty("tone", "accent" if balance else "muted")
-        for label in (frequency_label, balance_label):
-            label.style().unpolish(label)
-            label.style().polish(label)
-            label.update()
-
     def _on_measure_submode_toggled(self, _checked: bool) -> None:
-        self._update_measure_submode_label_tones()
         balance = self._channel_balance_mode_active()
         if not balance:
             self._stop_channel_balance()
@@ -1553,6 +1714,9 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
         brand = self._theme_controller.brand_mode
+        submode_control = getattr(self, "_measure_submode_control", None)
+        if submode_control is not None:
+            submode_control.refresh_segment_widths()
         plots = getattr(self, "_plots", None)
         if plots is not None:
             plots.apply_theme(theme, brand_mode=brand)
@@ -2444,6 +2608,7 @@ class MainWindow(QMainWindow):
 
     def _build_measure_queue_bar(self) -> QWidget:
         bar = _ResponsiveQueueBar()
+        self._queue_bar = bar
         bar.setObjectName("measure_queue_bar")
         bar.setProperty("surfaceLevel", "raised")
         outer = QVBoxLayout(bar)
@@ -2481,26 +2646,20 @@ class MainWindow(QMainWindow):
         self._two_channel_toggle.stateChanged.connect(self._on_two_channel_toggled)
         primary.addWidget(self._two_channel_toggle)
 
-        self._measure_submode_control = QWidget()
-        self._measure_submode_control.setProperty("layoutRole", "transparent")
-        submode_layout = QHBoxLayout(self._measure_submode_control)
-        submode_layout.setContentsMargins(0, 0, 0, 0)
-        submode_layout.setSpacing(4)
-        self._measure_frequency_label = QLabel("Frequency Response")
-        submode_layout.addWidget(self._measure_frequency_label)
-        self._measure_submode_toggle = ToggleSwitch("")
-        self._measure_submode_toggle.setAccessibleName("Measure mode")
-        self._measure_submode_toggle.setToolTip(
-            "Switch between Frequency Response and Channel Balance."
+        self._measure_submode_control = _MeasureSubmodeControl()
+        self._measure_frequency_button = (
+            self._measure_submode_control.frequency_button
         )
-        self._measure_submode_toggle.toggled.connect(
+        self._measure_balance_button = (
+            self._measure_submode_control.balance_button
+        )
+        self._measure_submode_control.balance_toggled.connect(
             self._on_measure_submode_toggled
         )
-        submode_layout.addWidget(self._measure_submode_toggle)
-        self._measure_balance_label = QLabel("Channel Balance")
-        submode_layout.addWidget(self._measure_balance_label)
+        self._measure_submode_control.minimum_width_changed.connect(
+            self._sync_queue_bar_submode_width
+        )
         self._measure_submode_control.setVisible(self._two_channel_enabled)
-        self._update_measure_submode_label_tones()
         primary.addWidget(self._measure_submode_control)
 
         n_label = QLabel("Count")
@@ -2572,7 +2731,16 @@ class MainWindow(QMainWindow):
         bar.compact_changed.connect(self._set_queue_bar_compact)
         self._queue_bar_compact = True
         self._set_queue_bar_compact(True)
+        self._sync_queue_bar_submode_width()
         return bar
+
+    def _sync_queue_bar_submode_width(self, _width: int | None = None) -> None:
+        bar = getattr(self, "_queue_bar", None)
+        control = getattr(self, "_measure_submode_control", None)
+        if bar is None or control is None:
+            return
+        reservation = 0 if control.isHidden() else control.minimum_control_width
+        bar.set_additional_compact_width(reservation)
 
     def _set_queue_bar_compact(self, compact: bool) -> None:
         self._queue_bar_compact = bool(compact)
@@ -3320,7 +3488,7 @@ class MainWindow(QMainWindow):
             widget.setEnabled(idle)
 
         self._two_channel_toggle.setEnabled(idle)
-        self._measure_submode_toggle.setEnabled(idle)
+        self._measure_submode_control.setEnabled(idle)
         self._bottom_layout_combo.setEnabled(idle)
         self._ch_combo.setEnabled(idle and not self._two_channel_enabled)
 

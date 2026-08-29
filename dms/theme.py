@@ -211,6 +211,7 @@ def _fastgraph95_stylesheet(
     field_bg = c["raised"]
     field_text = c["text"]
     selection_text = c["text"] if terminal_variant else ("#eeeeee" if dark_variant else "#ffffff")
+    segment_text = "#000000" if dark_variant or terminal_variant else "#ffffff"
     tooltip_bg = c["raised"] if terminal_variant else ("#303030" if dark_variant else "#ffffe1")
     font_stack = "'Monaco', 'Courier New', monospace" if terminal_variant else "'Tahoma', 'MS Sans Serif', sans-serif"
     return f"""
@@ -240,6 +241,49 @@ def _fastgraph95_stylesheet(
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['control']}; padding: 5px 9px 3px 11px; }}
     QPushButton:disabled {{ color: {c['disabled']}; background-color: {c['control']}; }}
+    QPushButton[measureSegment="true"] {{
+        background-color: {c['control']};
+        color: {c['muted']};
+        border-top: 2px solid {highlight};
+        border-left: 2px solid {highlight};
+        border-right: 2px solid #000000;
+        border-bottom: 2px solid #000000;
+        border-radius: 0px;
+        padding: 4px 10px;
+        min-height: 22px;
+    }}
+    QPushButton[measureSegment="true"]:hover {{
+        background-color: {c['control_hover']};
+        color: {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:focus {{
+        border: 2px dotted {c['accent']};
+        color: {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:checked {{
+        background-color: {c['accent']};
+        color: {segment_text};
+        border-top: 2px solid #000000;
+        border-left: 2px solid #000000;
+        border-right: 2px solid {highlight};
+        border-bottom: 2px solid {highlight};
+    }}
+    QPushButton[measureSegment="true"]:checked:hover {{
+        border-color: {segment_text};
+    }}
+    QPushButton[measureSegment="true"]:checked:focus {{
+        border: 2px dotted {segment_text};
+    }}
+    QPushButton[measureSegment="true"]:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border-color: {c['border']};
+    }}
+    QPushButton[measureSegment="true"]:checked:disabled {{
+        background-color: {c['selected']};
+        color: {selection_text};
+        border: 2px dotted {c['disabled']};
+    }}
     QMessageBox, QInputDialog, QFileDialog, QDialog {{
         background-color: {c['panel']};
         color: {c['text']};
@@ -469,6 +513,48 @@ def _dither_stylesheet(c: dict[str, str]) -> str:
         color: {c['disabled']};
         border: 1px solid {c['border']};
     }}
+    QPushButton[measureSegment="true"] {{
+        background-color: {c['control']};
+        color: {c['muted']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        padding: 5px 12px;
+        min-height: 24px;
+        font-family: '{heading}', 'DIN Condensed', 'Oswald', 'Archivo Narrow',
+            'Arial Narrow', 'Avenir Next Condensed', 'Inter', sans-serif;
+        font-weight: 700;
+    }}
+    QPushButton[measureSegment="true"]:hover {{
+        background-color: {c['control_hover']};
+        color: {c['text']};
+        border-color: {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:focus {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: 2px solid {c['accent']};
+    }}
+    QPushButton[measureSegment="true"]:checked {{
+        background-color: {c['accent']};
+        color: #000000;
+        border: 1px solid {c['accent']};
+    }}
+    QPushButton[measureSegment="true"]:checked:hover {{
+        border: 2px solid {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:checked:focus {{
+        border: 2px solid {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border: 1px solid {c['border']};
+    }}
+    QPushButton[measureSegment="true"]:checked:disabled {{
+        background-color: {c['selected']};
+        color: {c['muted']};
+        border: 1px solid {c['accent']};
+    }}
     QWidget#tab_header_controls QPushButton {{ border-radius: 0px; }}
     QGroupBox {{
         background-color: {c['panel']};
@@ -603,6 +689,7 @@ def _stylesheet_body(
     amber_bg, amber_hover, amber_text = status["amber"]
     geometry = visual_tokens.geometry
     typography = visual_tokens.typography
+    segment_checked_text = visual_tokens.background
     return f"""
     QWidget {{ background-color: {c['window']}; color: {c['text']}; font-family: '{typography.ui_family}', 'Helvetica Neue', Arial, sans-serif; font-size: {typography.body_px}px; }}
     QMainWindow, QDialog {{ background-color: {c['window']}; }}
@@ -624,6 +711,54 @@ def _stylesheet_body(
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['alternate']}; padding-top: 7px; }}
     QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
+    QPushButton[measureSegment="true"] {{
+        background-color: {c['control']};
+        color: {c['muted']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        padding: 5px 12px;
+        min-height: 24px;
+    }}
+    QPushButton[measureSegment="true"][segmentPosition="first"] {{
+        border-top-left-radius: {geometry.radius_button}px;
+        border-bottom-left-radius: {geometry.radius_button}px;
+        border-right: 0px;
+    }}
+    QPushButton[measureSegment="true"][segmentPosition="last"] {{
+        border-top-right-radius: {geometry.radius_button}px;
+        border-bottom-right-radius: {geometry.radius_button}px;
+    }}
+    QPushButton[measureSegment="true"]:hover {{
+        background-color: {c['control_hover']};
+        color: {c['text']};
+        border-color: {c['accent']};
+    }}
+    QPushButton[measureSegment="true"]:focus {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: 2px solid {c['accent']};
+    }}
+    QPushButton[measureSegment="true"]:checked {{
+        background-color: {c['accent']};
+        color: {segment_checked_text};
+        border: 1px solid {c['accent']};
+    }}
+    QPushButton[measureSegment="true"]:checked:hover {{
+        border: 2px solid {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:checked:focus {{
+        border: 2px solid {c['text']};
+    }}
+    QPushButton[measureSegment="true"]:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border-color: {c['border']};
+    }}
+    QPushButton[measureSegment="true"]:checked:disabled {{
+        background-color: {c['selected']};
+        color: {c['text']};
+        border-color: {c['disabled']};
+    }}
     QWidget#tab_header_controls QPushButton {{ min-height: 20px; max-height: 26px; padding: 2px 10px; border-radius: 12px; }}
     QWidget#tab_header_controls QPushButton:pressed {{ padding-top: 3px; }}
     QPushButton#btn_keep {{ background-color: {keep_bg}; color: {keep_text}; font-weight: bold; }}
@@ -706,6 +841,41 @@ def brand_application_stylesheet() -> str:
     QTabBar::tab:selected {{
         border-bottom: 3px solid {brand_brand.GRADIENT_ORANGE};
         color: {brand_brand.OFF_WHITE};
+    }}
+    QPushButton[measureSegment="true"] {{
+        background-color: {c['control']};
+        color: {c['muted']};
+        border-color: {c['border']};
+        font-family: 'Heading', 'Inter', sans-serif;
+    }}
+    QPushButton[measureSegment="true"]:hover {{
+        background-color: {c['control_hover']};
+        color: {brand_brand.OFF_WHITE};
+        border-color: {brand_brand.GRADIENT_ORANGE};
+    }}
+    QPushButton[measureSegment="true"]:focus {{
+        background-color: {c['control']};
+        color: {brand_brand.OFF_WHITE};
+        border: 2px solid {brand_brand.GRADIENT_ORANGE};
+    }}
+    QPushButton[measureSegment="true"]:checked {{
+        background-color: {brand_brand.GRADIENT_ORANGE};
+        color: {BRAND_TOKENS.background};
+        border-color: {brand_brand.GRADIENT_ORANGE};
+    }}
+    QPushButton[measureSegment="true"]:checked:hover,
+    QPushButton[measureSegment="true"]:checked:focus {{
+        border: 2px solid {brand_brand.OFF_WHITE};
+    }}
+    QPushButton[measureSegment="true"]:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border-color: {c['border']};
+    }}
+    QPushButton[measureSegment="true"]:checked:disabled {{
+        background-color: {c['selected']};
+        color: {c['muted']};
+        border-color: {c['disabled']};
     }}
     QListWidget::item:selected {{
         border-left: 3px solid {brand_brand.GRADIENT_ORANGE};

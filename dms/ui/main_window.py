@@ -6208,6 +6208,9 @@ class MainWindow(QMainWindow):
 
         compensated = self._is_hrtf_active()
         channel_label = self._active_measure_label()
+        # Squiglink requires exactly one channel side per file and has no way to
+        # represent a combined L/R result. A Combined ("BOTH") upload is sent as
+        # the L side on purpose; the "BOTH L" name modifier below marks it.
         required_side = (
             "R" if channel_label == "R" else "L"
         ) if self._two_channel_enabled else None

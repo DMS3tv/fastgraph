@@ -6,3 +6,4 @@ fastgraph.ico
 __pycache__
 **/*.DS_Store
 *.aep
+/releases

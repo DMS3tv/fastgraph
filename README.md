@@ -414,6 +414,11 @@ can prompt for missing metadata, write side-aware TXT filenames into the remote
 `data/` directory, and merge measurement entries into the account's
 `data/phone_book.json` when available.
 
+Squiglink accepts one channel side per file and cannot represent a combined
+L/R result. A Two Channel **Combined** upload therefore carries the `L` side
+and the `BOTH L` name modifier so it can be told apart from a true left-only
+measurement. This is a limitation of the site, not of Fastgraph.
+
 Configure the Squiglink SFTP host in the app settings file:
 
 - macOS: `~/Library/Application Support/DMSFastgraph/settings.json`
@@ -424,7 +429,8 @@ Example:
 
 ```json
 {
-  "squiglink_sftp_host": "your-sftp-host.example"
+  "squiglink_host": "your-sftp-host.example",
+  "squiglink_port": 2022
 }
 ```
 

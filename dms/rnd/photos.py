@@ -63,8 +63,12 @@ class RnDPhotoStore:
         missing: list[str] = []
         source_dir = attachment_directory(session_path)
         for photo in session_photos(session):
-            source = source_dir / Path(photo.file_name).name
-            destination = self.root / photo.file_name
+            # ``file_name`` comes from session JSON, so it is basenamed on every
+            # write path: a crafted "../../secret.jpg" must never escape the
+            # sidecar or the staging directory.
+            file_name = Path(photo.file_name).name
+            source = source_dir / file_name
+            destination = self.root / file_name
             # A merge can theoretically contain two photos with the same UUID.
             # Keep both by assigning the incoming photo a fresh managed name.
             if source.is_file() and destination.is_file() and source.read_bytes() != destination.read_bytes():
@@ -85,12 +89,13 @@ class RnDPhotoStore:
         photos = list(session_photos(session))
         if photos:
             destination_dir.mkdir(parents=True, exist_ok=True)
-        expected = {photo.file_name for photo in photos}
+        expected = {Path(photo.file_name).name for photo in photos}
         for photo in photos:
-            source = Path(photo.runtime_path) if photo.runtime_path else self.root / photo.file_name
+            file_name = Path(photo.file_name).name
+            source = Path(photo.runtime_path) if photo.runtime_path else self.root / file_name
             if not source.is_file():
                 continue
-            destination = destination_dir / photo.file_name
+            destination = destination_dir / file_name
             shutil.copy2(source, destination)
         if destination_dir.exists():
             for child in destination_dir.iterdir():

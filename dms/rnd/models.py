@@ -15,6 +15,15 @@ from dms.session import SessionData
 SCHEMA_VERSION = 1
 
 
+class UnsupportedSessionVersion(ValueError):
+    """A session file written by a newer Fastgraph than this one.
+
+    It is a distinct type so callers can tell "this file is from the future"
+    apart from "this file is damaged": the first is recoverable by updating
+    Fastgraph, the second is not.
+    """
+
+
 @dataclass
 class RnDMeasurement:
     name: str
@@ -197,6 +206,10 @@ class RnDSession:
     delta_mode_enabled: bool = False
     schema_version: int = SCHEMA_VERSION
     saved_app_version: str = ""
+    # Runtime-only: the file this session was loaded from or last saved to. It
+    # is deliberately not serialized so a session file stays portable, and it
+    # is what lets a Save As avoid deleting the destination's attachments.
+    source_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -223,10 +236,15 @@ class RnDSession:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RnDSession":
         version = int(data.get("schema_version") or 0)
-        if version != SCHEMA_VERSION:
-            raise ValueError(f"Unsupported R&D session schema version: {version}")
+        if version > SCHEMA_VERSION:
+            raise UnsupportedSessionVersion(
+                f"Unsupported R&D session schema version: {version}. "
+                "This session was saved by a newer Fastgraph."
+            )
+        # Older files are read with this version's defaults for anything they
+        # do not carry, and are upgraded in memory so a re-save is current.
         session = cls(
-            schema_version=version,
+            schema_version=SCHEMA_VERSION,
             saved_app_version=str(data.get("saved_app_version") or ""),
             measurements=[
                 RnDMeasurement.from_dict(item)

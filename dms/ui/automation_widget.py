@@ -43,6 +43,32 @@ from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.theme_surface import DitherSurface
 
 
+#: One column per step field, in table order.
+_STEP_COLUMNS = (
+    "If",
+    "Left",
+    "Op",
+    "If Value",
+    "Action",
+    "Target",
+    "Value",
+    "Ask",
+    "Skip",
+)
+_STEP_COLUMN_WIDTHS = (132, 110, 90, 130, 150, 165, 170, 62, 62)
+(
+    _COL_CONDITION,
+    _COL_LEFT,
+    _COL_OPERATOR,
+    _COL_CONDITION_VALUE,
+    _COL_ACTION,
+    _COL_TARGET,
+    _COL_VALUE,
+    _COL_CONFIRM,
+    _COL_SKIP,
+) = range(len(_STEP_COLUMNS))
+
+
 class AutomationGuideWidget(QWidget):
     close_requested = pyqtSignal()
 
@@ -80,7 +106,9 @@ class AutomationGuideWidget(QWidget):
               variable name, message text, or export target for the action.</li>
               <li><b>Value</b>: the text or number the action should use. You can
               reuse variables with braces, such as <code>{answer}</code>.</li>
-              <li><b>Confirm / Skip</b>: risky steps normally ask first. Check Skip
+              <li><b>Op</b> and <b>If Value</b>: the comparison the condition
+              makes, kept separate from the action's own Value.</li>
+              <li><b>Ask / Skip</b>: risky steps normally ask first. Check Skip
               only for automations you trust.</li>
             </ul>
 
@@ -199,15 +227,14 @@ class EventsWidget(DitherSurface):
 
         steps_box = QGroupBox("Event Rows")
         steps_layout = QVBoxLayout(steps_box)
-        self._steps = QTableWidget(0, 6)
-        self._steps.setHorizontalHeaderLabels(["If", "Left", "Action", "Target", "Value", "Confirm"])
+        # Every field of a step has its own column. Sharing one column between
+        # the condition's value and the step's value silently rewrote files on
+        # the first save after a load.
+        self._steps = QTableWidget(0, len(_STEP_COLUMNS))
+        self._steps.setHorizontalHeaderLabels(list(_STEP_COLUMNS))
         self._steps.horizontalHeader().setStretchLastSection(False)
-        self._steps.setColumnWidth(0, 132)
-        self._steps.setColumnWidth(1, 120)
-        self._steps.setColumnWidth(2, 150)
-        self._steps.setColumnWidth(3, 165)
-        self._steps.setColumnWidth(4, 170)
-        self._steps.setColumnWidth(5, 84)
+        for column, width in enumerate(_STEP_COLUMN_WIDTHS):
+            self._steps.setColumnWidth(column, width)
         steps_layout.addWidget(self._steps, 1)
         step_buttons = QHBoxLayout()
         add_step = QPushButton("Add Row")
@@ -261,9 +288,13 @@ class EventsWidget(DitherSurface):
         self._load_into_editor(AutomationDefinition(), None)
 
     def duplicate_automation(self) -> None:
+        """Open a copy of the current automation, leaving the original intact."""
         current = self.current_automation()
-        current.id = ""
-        copy = AutomationDefinition.from_dict(current.to_dict() | {"id": "", "name": current.name + " Copy"})
+        # The source keeps its own id: blanking it used to make the next save
+        # of the original write a second file under a new identity.
+        copy = AutomationDefinition.from_dict(
+            current.to_dict() | {"id": "", "name": current.name + " Copy"}
+        )
         self._load_into_editor(copy, None)
 
     def _load_selected_library_item(self, row: int) -> None:
@@ -324,38 +355,51 @@ class EventsWidget(DitherSurface):
         condition = QComboBox()
         condition.addItems(CONDITIONS)
         condition.setCurrentText(step.condition.kind)
-        self._steps.setCellWidget(row, 0, condition)
-        self._steps.setItem(row, 1, QTableWidgetItem(step.condition.left))
+        self._steps.setCellWidget(row, _COL_CONDITION, condition)
+        self._steps.setItem(row, _COL_LEFT, QTableWidgetItem(step.condition.left))
+        self._steps.setItem(row, _COL_OPERATOR, QTableWidgetItem(step.condition.operator))
+        self._steps.setItem(row, _COL_CONDITION_VALUE, QTableWidgetItem(step.condition.value))
         action = QComboBox()
         action.addItems(ACTIONS)
         action.setCurrentText(step.action)
-        self._steps.setCellWidget(row, 2, action)
-        self._steps.setItem(row, 3, QTableWidgetItem(step.target))
-        self._steps.setItem(row, 4, QTableWidgetItem(step.value))
-        confirm = QCheckBox()
-        confirm.setToolTip("Skip risky-action confirmation for this step")
-        confirm.setChecked(step.skip_risky_confirmation)
-        confirm.setText("Skip")
-        self._steps.setCellWidget(row, 5, confirm)
+        self._steps.setCellWidget(row, _COL_ACTION, action)
+        self._steps.setItem(row, _COL_TARGET, QTableWidgetItem(step.target))
+        self._steps.setItem(row, _COL_VALUE, QTableWidgetItem(step.value))
+        ask = QCheckBox("Ask")
+        ask.setToolTip(
+            "Saved with the step: this step may ask before it runs. "
+            "Use Skip to bypass the prompt."
+        )
+        ask.setChecked(step.confirm_risky)
+        self._steps.setCellWidget(row, _COL_CONFIRM, ask)
+        skip = QCheckBox("Skip")
+        skip.setToolTip("Skip risky-action confirmation for this step")
+        skip.setChecked(step.skip_risky_confirmation)
+        self._steps.setCellWidget(row, _COL_SKIP, skip)
 
     def _steps_from_table(self) -> list[AutomationStep]:
         steps: list[AutomationStep] = []
         for row in range(self._steps.rowCount()):
-            condition_widget = self._steps.cellWidget(row, 0)
-            action_widget = self._steps.cellWidget(row, 2)
-            confirm_widget = self._steps.cellWidget(row, 5)
+            condition_widget = self._steps.cellWidget(row, _COL_CONDITION)
+            action_widget = self._steps.cellWidget(row, _COL_ACTION)
+            ask_widget = self._steps.cellWidget(row, _COL_CONFIRM)
+            skip_widget = self._steps.cellWidget(row, _COL_SKIP)
             condition = AutomationCondition(
                 kind=condition_widget.currentText() if isinstance(condition_widget, QComboBox) else "always",
-                left=self._item_text(row, 1),
-                value=self._item_text(row, 4),
+                left=self._item_text(row, _COL_LEFT),
+                operator=self._item_text(row, _COL_OPERATOR) or "equals",
+                value=self._item_text(row, _COL_CONDITION_VALUE),
             )
             steps.append(AutomationStep(
                 action=action_widget.currentText() if isinstance(action_widget, QComboBox) else "navigate",
-                target=self._item_text(row, 3),
-                value=self._item_text(row, 4),
+                target=self._item_text(row, _COL_TARGET),
+                value=self._item_text(row, _COL_VALUE),
                 condition=condition,
+                confirm_risky=(
+                    ask_widget.isChecked() if isinstance(ask_widget, QCheckBox) else True
+                ),
                 skip_risky_confirmation=(
-                    confirm_widget.isChecked() if isinstance(confirm_widget, QCheckBox) else False
+                    skip_widget.isChecked() if isinstance(skip_widget, QCheckBox) else False
                 ),
             ))
         return steps
@@ -369,7 +413,13 @@ class EventsWidget(DitherSurface):
         self._automation.steps = self._steps_from_table()
         return self._automation
 
-    def save_current(self, *, force_new: bool = False) -> Path:
+    def save_current(self, *, force_new: bool = False) -> Path | None:
+        """Save the editor's automation. Returns ``None`` if the user declines.
+
+        A Save As derives its filename from the automation's name, so it can
+        land on another automation's file without the user ever seeing a file
+        dialog. That case asks first.
+        """
         automation = self.current_automation()
         automation.updated_app_version = str(self._version_provider())
         if not automation.created_app_version:
@@ -377,11 +427,24 @@ class EventsWidget(DitherSurface):
         path = None if force_new else self._current_path
         if path is None:
             path = self.automation_directory() / safe_automation_filename(automation.name)
+            if path.exists() and path != self._current_path and not self._confirm_replace(path):
+                self._set_status("Save canceled")
+                return None
         save_automation(path, automation)
         self._current_path = path
         self.reload_library()
         self._set_status(f"Saved: {path}")
         return path
+
+    def _confirm_replace(self, path: Path) -> bool:
+        choice = QMessageBox.question(
+            self,
+            "Replace Automation?",
+            f"Replace {path.name}?\n\n{path.parent}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
 
     def load_file(self, path: Path) -> None:
         self._load_into_editor(load_automation(path), path)

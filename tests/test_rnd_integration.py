@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pyqtgraph as pg
 import pytest
@@ -7,6 +9,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
     QCheckBox,
+    QDialog,
     QMessageBox,
     QToolButton,
     QWidget,
@@ -386,6 +389,9 @@ def test_rnd_group_variation_follows_group_viewport_visibility(make_main_window)
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     second.mag_db = np.array([2.0, 1.0])
+    # View 2 draws the rows that are pinned, so the band needs pinned rows.
+    first.pinned = True
+    second.pinned = True
     group = RnDGroup(
         id="g1",
         name="Prototype A",
@@ -439,10 +445,13 @@ def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(make_main_w
     assert window._rnd_widget._status_label.text() == "Ready - Var needs 2 measurements: Prototype A"
 
 
-def test_rnd_group_bottom_toggle_shows_all_group_children(make_main_window) -> None:
+def test_rnd_group_view_2_honours_each_row_checkbox(make_main_window) -> None:
+    """C2: a group's View 2 toggle gates the group; the row gates the row."""
     window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
+    first.pinned = True
+    second.pinned = False
     group = RnDGroup(id="g1", name="Prototype A", pinned=True, measurement_ids=["m1", "m2"])
     window._rnd_widget.session.measurements = [first, second]
     window._rnd_widget.session.groups = [group]
@@ -452,7 +461,18 @@ def test_rnd_group_bottom_toggle_shows_all_group_children(make_main_window) -> N
     window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
     window._rnd_widget._redraw()
 
-    assert [measurement.name for measurement, _mag in calls[-1]["pinned_measurements"]] == ["First", "Second"]
+    assert [measurement.name for measurement, _mag in calls[-1]["pinned_measurements"]] == ["First"]
+
+    second.pinned = True
+    window._rnd_widget._redraw()
+    assert [measurement.name for measurement, _mag in calls[-1]["pinned_measurements"]] == [
+        "First",
+        "Second",
+    ]
+
+    group.pinned = False
+    window._rnd_widget._redraw()
+    assert calls[-1]["pinned_measurements"] == []
 
 
 def test_rnd_offsets_are_additive_for_display_and_curator_send(make_main_window) -> None:
@@ -647,6 +667,8 @@ def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_wi
         _measurement("b1", "B 1"),
         _measurement("b2", "B 2"),
     ]
+    for measurement in measurements:
+        measurement.pinned = True
     window._rnd_widget.session.measurements = measurements
     window._rnd_widget.session.groups = [group_a, group_b]
     window._rnd_widget.session.delta_mode_enabled = True
@@ -1159,3 +1181,263 @@ def test_rnd_default_splitter_stays_half_across_window_sizes(
 
     sizes = window._rnd_widget._splitter.sizes()
     assert sizes[0] / sum(sizes) == pytest.approx(0.5, abs=0.02)
+
+
+def test_rnd_rows_reject_drops_onto_items(make_main_window) -> None:
+    """C3: measurements reorder between rows; a group stays a drop target."""
+    window = make_main_window()
+    measurement = _measurement("m1", "First")
+    group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m1"])
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.groups = [group]
+    window._rnd_widget.session.ungrouped_order = []
+    window._rnd_widget._sync_tree()
+
+    group_item = window._rnd_widget._tree.topLevelItem(0)
+    child_item = group_item.child(0)
+
+    assert group_item.flags() & Qt.ItemFlag.ItemIsDropEnabled
+    assert not child_item.flags() & Qt.ItemFlag.ItemIsDropEnabled
+    assert group_item.flags() & Qt.ItemFlag.ItemIsDragEnabled
+    assert child_item.flags() & Qt.ItemFlag.ItemIsDragEnabled
+
+
+def test_rnd_nested_group_returns_its_measurements_to_the_parent(
+    caplog,
+    make_main_window,
+) -> None:
+    """C3: a nested group can only ever appear by accident; salvage its rows."""
+    window = make_main_window()
+    outer = RnDGroup(id="outer", name="Outer", measurement_ids=[])
+    inner = RnDGroup(id="inner", name="Inner", measurement_ids=[])
+    measurement = _measurement("m1", "Nested")
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.groups = [outer, inner]
+    window._rnd_widget.session.ungrouped_order = ["m1"]
+    window._rnd_widget._sync_tree()
+
+    tree = window._rnd_widget._tree
+    outer_item = next(
+        tree.topLevelItem(index)
+        for index in range(tree.topLevelItemCount())
+        if tree.topLevelItem(index).data(0, rnd_widget_module.ROLE_ID) == "outer"
+    )
+    inner_item = next(
+        tree.topLevelItem(index)
+        for index in range(tree.topLevelItemCount())
+        if tree.topLevelItem(index).data(0, rnd_widget_module.ROLE_ID) == "inner"
+    )
+    measurement_item = next(
+        tree.topLevelItem(index)
+        for index in range(tree.topLevelItemCount())
+        if tree.topLevelItem(index).data(0, rnd_widget_module.ROLE_ID) == "m1"
+    )
+    tree.takeTopLevelItem(tree.indexOfTopLevelItem(measurement_item))
+    inner_item.addChild(measurement_item)
+    tree.takeTopLevelItem(tree.indexOfTopLevelItem(inner_item))
+    outer_item.addChild(inner_item)
+
+    with caplog.at_level("WARNING", logger="dms.ui.rnd_widget"):
+        window._rnd_widget._on_tree_structure_changed()
+
+    assert outer.measurement_ids == ["m1"]
+    assert window._rnd_widget.session.measurement_by_id("m1") is not None
+    assert any("nested group" in record.getMessage() for record in caplog.records)
+
+
+def test_rnd_remove_takes_every_selected_row_after_one_prompt(
+    monkeypatch,
+    make_main_window,
+) -> None:
+    """C9: multi-select Remove asks once and removes everything selected."""
+    window = make_main_window()
+    measurements = [_measurement(f"m{i}", f"Row {i}") for i in range(1, 4)]
+    group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m3"])
+    window._rnd_widget.session.measurements = measurements
+    window._rnd_widget.session.groups = [group]
+    window._rnd_widget.session.ungrouped_order = ["m1", "m2"]
+    window._rnd_widget._sync_tree()
+
+    prompts: list[str] = []
+
+    def fake_question(_parent, _title, text, *args, **kwargs):
+        prompts.append(text)
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(rnd_widget_module.QMessageBox, "question", fake_question)
+    tree = window._rnd_widget._tree
+    for index in range(tree.topLevelItemCount()):
+        item = tree.topLevelItem(index)
+        if item.data(0, rnd_widget_module.ROLE_ID) in {"m1", "m2"}:
+            item.setSelected(True)
+
+    window._rnd_widget._remove_selected()
+
+    assert len(prompts) == 1
+    assert "2 measurements" in prompts[0]
+    assert [item.id for item in window._rnd_widget.session.measurements] == ["m3"]
+    # The group and its member survive: neither was selected.
+    assert [item.id for item in window._rnd_widget.session.groups] == ["g1"]
+    assert group.measurement_ids == ["m3"]
+
+
+def test_rnd_remove_can_be_declined_and_keeps_single_row_behaviour(
+    monkeypatch,
+    make_main_window,
+) -> None:
+    window = make_main_window()
+    measurement = _measurement("m1", "Only")
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.ungrouped_order = ["m1"]
+    window._rnd_widget._sync_tree()
+    window._rnd_widget._select_id("m1")
+
+    monkeypatch.setattr(
+        rnd_widget_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    window._rnd_widget._remove_selected()
+    assert [item.id for item in window._rnd_widget.session.measurements] == ["m1"]
+
+    monkeypatch.setattr(
+        rnd_widget_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._rnd_widget._remove_selected()
+    assert window._rnd_widget.session.measurements == []
+
+
+def test_rnd_group_rename_keeps_parenthesised_names(make_main_window) -> None:
+    """C10: only the row's own " (3)" count suffix is stripped."""
+    window = make_main_window()
+    measurement = _measurement("m1", "First")
+    group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m1"])
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.groups = [group]
+    window._rnd_widget.session.ungrouped_order = []
+    window._rnd_widget._sync_tree()
+
+    group_item = window._rnd_widget._tree.topLevelItem(0)
+    assert group_item.text(0) == "Prototype (1)"
+
+    group_item.setText(0, "Prototype (v2) (1)")
+    window._rnd_widget._on_item_changed(group_item, 0)
+    assert group.name == "Prototype (v2)"
+
+    group_item.setText(0, "Prototype (v2)")
+    window._rnd_widget._on_item_changed(group_item, 0)
+    assert group.name == "Prototype (v2)"
+
+
+def test_rnd_hrtf_files_are_parsed_once_per_file_version(tmp_path, monkeypatch) -> None:
+    """C11: a redraw reuses one parsed HRTF instead of re-reading per row."""
+    path = tmp_path / "hrtf.txt"
+    path.write_text("100 1\n1000 2\n", encoding="utf-8")
+    rnd_widget_module._HRTF_CACHE.clear()
+    reads: list[str] = []
+
+    real_curve = rnd_widget_module.HRTFCurve
+
+    class CountingCurve(real_curve):
+        def __init__(self, curve_path: str) -> None:
+            reads.append(curve_path)
+            super().__init__(curve_path)
+
+    monkeypatch.setattr(rnd_widget_module, "HRTFCurve", CountingCurve)
+
+    first = rnd_widget_module.cached_hrtf_curve(str(path))
+    second = rnd_widget_module.cached_hrtf_curve(str(path))
+
+    assert first is second
+    assert reads == [str(path)]
+
+    os.utime(path, (0, 0))
+    third = rnd_widget_module.cached_hrtf_curve(str(path))
+    assert third is not first
+    assert len(reads) == 2
+    rnd_widget_module._HRTF_CACHE.clear()
+
+
+def test_rnd_photo_caption_survives_removing_another_photo(
+    monkeypatch,
+    make_main_window,
+) -> None:
+    """A caption typed in the viewer is kept even when a photo is removed."""
+    window = make_main_window()
+    measurement = _measurement("m1", "With Photos")
+    store = window._rnd_widget.photo_store
+    image = QImage(16, 16, QImage.Format.Format_RGB32)
+    measurement.photos.append(store.add_image(image, display_name="One"))
+    measurement.photos.append(store.add_image(image, display_name="Two"))
+    window._rnd_widget.session.measurements = [measurement]
+    window._rnd_widget.session.ungrouped_order = ["m1"]
+    window._rnd_widget._sync_tree()
+    window._rnd_widget._select_id("m1")
+
+    class RemovingViewer:
+        remove_requested = True
+        remove_index = 0
+        captions = ["gone", "kept caption"]
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(rnd_widget_module, "PhotoViewerDialog", RemovingViewer)
+
+    window._rnd_widget._open_photo(measurement.photos[0])
+
+    assert [photo.caption for photo in measurement.photos] == ["kept caption"]
+
+
+def test_rnd_save_as_over_another_session_asks_first(
+    monkeypatch,
+    make_main_window,
+    tmp_path,
+) -> None:
+    """C1: the canonical extension is added after the dialog's own check."""
+    window = make_main_window()
+    window._rnd_widget.add_measurement(_measurement())
+    existing = tmp_path / "prototype.fastgraph-rnd.json"
+    existing.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(tmp_path / "prototype"), ""),
+    )
+    prompts: list[str] = []
+
+    def decline(_parent, _title, text, *args, **kwargs):
+        prompts.append(text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", decline)
+
+    assert window._save_rnd_session() is False
+    assert prompts and "Replace prototype.fastgraph-rnd.json?" in prompts[0]
+    assert existing.read_text(encoding="utf-8") == "{}"
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    assert window._save_rnd_session() is True
+    assert "measurements" in existing.read_text(encoding="utf-8")
+
+
+def test_rnd_status_line_reports_a_degraded_recovery_rotation(make_main_window) -> None:
+    """C5: the newest snapshot still saves; the status line says it is degraded."""
+    window = make_main_window()
+
+    window._rnd_recovery.rotation_degraded = True
+    window._on_rnd_recovery_saved()
+    assert window._rnd_widget._status_label.text() == "R&D recovery degraded"
+
+    window._rnd_recovery.rotation_degraded = False
+    window._on_rnd_recovery_saved()
+    assert window._rnd_widget._status_label.text() != "R&D recovery degraded"

@@ -14,10 +14,10 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 | 2 | Measurement integrity gate for standard mode | done 2026-09-08 |
 | 3 | Bluetooth reliability | done 2026-09-08 (hardware acceptance pending, Phase 10) |
 | 4 | Measurement queue extraction and audio-thread hygiene | queue + runner integrated 2026-09-08 (B1–B8, B11 closed); level-monitor ring buffer and device-poll worker still pending |
-| 5 | Persistence and transport hardening (PR #9 themes, credited) | 5a done 2026-09-08; 5b (R&D, automation editor) pending |
+| 5 | Persistence and transport hardening (PR #9 themes, credited) | 5a done 2026-09-08; 5b R&D/automation done 2026-09-08 |
 | 6 | Curator correctness and rendering | done 2026-09-08 |
 | 7 | Release engineering | done 2026-09-08 (signing slot documented, not enabled) |
-| 8 | DSP upgrade (deconvolution, distortion, band averaging, SPL) | pending |
+| 8 | DSP upgrade (deconvolution, distortion, band averaging, SPL) | core done 2026-09-08 (5fc343f); window wiring pending |
 | 9 | Measure sessions and comparison features | pending |
 | 10 | Hardware acceptance (when hardware is available) | pending |
 

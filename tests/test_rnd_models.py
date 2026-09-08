@@ -8,6 +8,7 @@ from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
     RnDSession,
+    UnsupportedSessionVersion,
     generate_measurement_name,
     group_variation,
 )
@@ -114,6 +115,28 @@ def test_rnd_session_old_offset_and_bounds_fields_default_to_zero_and_off() -> N
 def test_rnd_session_rejects_unknown_schema() -> None:
     with pytest.raises(ValueError, match="Unsupported R&D session schema"):
         RnDSession.from_dict({"schema_version": 999})
+
+
+def test_rnd_session_reads_older_schema_and_flags_newer_one() -> None:
+    """C8: only a *newer* file is refused, and with its own exception type."""
+    measurement = _measurement("a", "A")
+    older = RnDSession(measurements=[measurement], ungrouped_order=["a"]).to_dict()
+    older["schema_version"] = 0
+    older.pop("smoothing_fraction")
+    older.pop("delta_mode_enabled")
+
+    loaded = RnDSession.from_dict(older)
+
+    assert [item.id for item in loaded.measurements] == ["a"]
+    assert loaded.smoothing_fraction == 48
+    assert loaded.delta_mode_enabled is False
+    # Reading an older file upgrades it in memory, so a re-save is current.
+    assert loaded.schema_version == 1
+
+    newer = RnDSession().to_dict() | {"schema_version": 2}
+    with pytest.raises(UnsupportedSessionVersion, match="newer Fastgraph"):
+        RnDSession.from_dict(newer)
+    assert issubclass(UnsupportedSessionVersion, ValueError)
 
 
 def test_rnd_photo_round_trip_and_legacy_default() -> None:

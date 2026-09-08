@@ -1,7 +1,12 @@
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
+import dms.file_io as file_io
+import dms.ui.main_window as main_window_module
 from dms.automation import (
     AutomationCondition,
     AutomationDefinition,
@@ -12,7 +17,7 @@ from dms.automation import (
     scan_automation_directory,
 )
 from dms.ui.automation_widget import AutomationWidget
-from dms.ui.main_window import AppState
+from dms.ui.main_window import AppState, MainWindow
 
 
 def _automation_window(make_main_window, tmp_path: Path):
@@ -145,3 +150,159 @@ def test_automation_unavailable_channel_logs_failure(
     window._run_automation(automation)
 
     assert any("Automation failed" in event.message for event in window._console_events.events())
+
+
+def _completed_names(window) -> list[str]:
+    return [
+        event.details.get("name")
+        for event in window._console_events.events()
+        if event.message == "Automation complete"
+    ]
+
+
+def test_console_command_steps_are_treated_as_risky(make_main_window, tmp_path: Path) -> None:
+    """C4: the console can start a queue or export, so those ask first."""
+    risky = [
+        AutomationStep(action="console_command", target="measure start 20"),
+        AutomationStep(action="console_command", target="EXPORT average"),
+        AutomationStep(action="console_command", target="settings set queue_count 5"),
+        AutomationStep(action="console_command", target="curator export png"),
+        AutomationStep(action="console_command", target="rnd save"),
+        AutomationStep(action="console_command", value="measure start"),
+    ]
+    safe = [
+        AutomationStep(action="console_command", target="status"),
+        AutomationStep(action="console_command", target="devices"),
+        AutomationStep(action="console_command", target="settings show"),
+    ]
+
+    assert all(MainWindow._automation_step_is_risky(step) for step in risky)
+    assert not any(MainWindow._automation_step_is_risky(step) for step in safe)
+
+    window = _automation_window(make_main_window, tmp_path)
+    asked: list[str] = []
+    automation = AutomationDefinition(
+        name="Console",
+        steps=[AutomationStep(action="console_command", target="measure start 1")],
+    )
+
+    def refuse(_parent, _title, text, *args, **kwargs):
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    with patch.object(main_window_module.QMessageBox, "question", refuse), patch.object(
+        main_window_module.QMessageBox, "warning", lambda *a, **k: None
+    ):
+        window._run_automation(automation)
+
+    assert asked and "console_command" in asked[0]
+    assert any("Automation failed" in event.message for event in window._console_events.events())
+
+
+def test_two_automations_on_one_trigger_both_run(make_main_window, tmp_path: Path) -> None:
+    """C12: the second automation for a trigger is queued, not dropped."""
+    directory = tmp_path / "automations"
+    for name in ("First", "Second"):
+        save_automation(
+            directory / f"{name.lower()}.fastgraph-automation.json",
+            AutomationDefinition(
+                name=name,
+                trigger="queue_complete",
+                steps=[AutomationStep(action="set_variable", target="ran", value=name)],
+            ),
+        )
+    window = _automation_window(make_main_window, tmp_path)
+    window._automation_widget.events.reload_library()
+
+    window._run_automation_trigger("queue_complete")
+    assert _completed_names(window) == ["First", "Second"]
+
+    # The same trigger raised while a step is still running: both automations
+    # are queued and run afterwards instead of being dropped with a warning.
+    window._console_events.clear()
+    window._automation_running = True
+    window._run_automation_trigger("queue_complete")
+    assert len(window._automation_pending()) == 2
+    assert _completed_names(window) == []
+
+    window._automation_running = False
+    window._drain_automation_queue()
+    assert _completed_names(window) == ["First", "Second"]
+    assert window._automation_pending() == []
+
+
+def test_export_complete_trigger_keeps_its_re_entrancy_guard(
+    make_main_window, tmp_path: Path
+) -> None:
+    """C12: a trigger an automation raises itself must not queue itself."""
+    directory = tmp_path / "automations"
+    save_automation(
+        directory / "loop.fastgraph-automation.json",
+        AutomationDefinition(
+            name="Loop",
+            trigger="export_complete",
+            steps=[AutomationStep(action="set_variable", target="ran", value="1")],
+        ),
+    )
+    window = _automation_window(make_main_window, tmp_path)
+    window._automation_widget.events.reload_library()
+    window._automation_running = True
+
+    window._run_automation_trigger("export_complete")
+
+    assert window._automation_pending() == []
+    window._automation_running = False
+
+
+def test_variable_substitution_is_single_pass(make_main_window, tmp_path: Path) -> None:
+    """C14: a value that contains a placeholder is not expanded again."""
+    window = _automation_window(make_main_window, tmp_path)
+
+    expanded = window._expand_automation_text(
+        "{first}/{second}/{missing}",
+        {"first": "{second}", "second": "kept"},
+    )
+
+    assert expanded == "{second}/kept/{missing}"
+
+
+def test_increment_variable_keeps_integers_integral(make_main_window, tmp_path: Path) -> None:
+    """C14: a counter that started as an int stays an int."""
+    window = _automation_window(make_main_window, tmp_path)
+    variables: dict[str, object] = {"count": 1, "ratio": 1.5}
+
+    window._execute_automation_step(
+        AutomationStep(action="increment_variable", target="count"), variables
+    )
+    window._execute_automation_step(
+        AutomationStep(action="increment_variable", target="fresh", value="2"), variables
+    )
+    window._execute_automation_step(
+        AutomationStep(action="decrement_variable", target="count"), variables
+    )
+    window._execute_automation_step(
+        AutomationStep(action="increment_variable", target="ratio"), variables
+    )
+
+    assert variables["count"] == 1 and isinstance(variables["count"], int)
+    assert variables["fresh"] == 2 and isinstance(variables["fresh"], int)
+    assert variables["ratio"] == pytest.approx(2.5)
+
+
+def test_automation_files_are_written_atomically(monkeypatch, tmp_path: Path) -> None:
+    """C13: a crash mid-save must leave the previous file readable."""
+    path = tmp_path / "demo.fastgraph-automation.json"
+    save_automation(path, AutomationDefinition(name="Original"))
+    real_replace = os.replace
+
+    def fail_replace(source, destination):
+        if Path(destination) == path:
+            raise OSError("simulated interruption")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(file_io.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated interruption"):
+        save_automation(path, AutomationDefinition(name="Replacement"))
+
+    assert load_automation(path).name == "Original"
+    assert [item.name for item in tmp_path.iterdir()] == [path.name]

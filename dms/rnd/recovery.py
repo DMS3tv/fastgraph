@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from dms.rnd.models import RnDSession
+from dms.rnd.models import RnDSession, UnsupportedSessionVersion
 from dms.rnd.persistence import (
     copy_session_bundle,
     load_rnd_session,
@@ -19,6 +20,8 @@ from dms.rnd.persistence import (
     save_rnd_snapshot,
 )
 from dms.rnd.photos import attachment_directory
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -28,11 +31,20 @@ class RecoveryCandidate:
     preserved_at: datetime
     measurement_count: int
     group_count: int
+    #: Set when the file is readable JSON that this Fastgraph cannot open, so
+    #: the recovery dialog can explain it instead of the file being quarantined.
+    error: str = ""
+
+    @property
+    def unsupported(self) -> bool:
+        return bool(self.error)
 
     @property
     def label(self) -> str:
         kind = "Kept for later" if self.kind == "deferred" else "Crash recovery"
         stamp = self.preserved_at.astimezone().strftime("%Y-%m-%d %I:%M:%S %p")
+        if self.error:
+            return f"{kind} — {stamp} — {self.error}"
         return (
             f"{kind} — {stamp} — {self.measurement_count} measurements, "
             f"{self.group_count} groups"
@@ -59,6 +71,10 @@ class RnDRecoveryManager(QObject):
         self.root = Path(root)
         self.current_path = self.root / "current.fastgraph-rnd.json"
         self.previous_path = self.root / "previous.fastgraph-rnd.json"
+        self.staging_path = self.root / "staging.fastgraph-rnd.json"
+        #: True while the previous-generation copy is failing. The newest
+        #: snapshot is still saved; only the second generation is missing.
+        self.rotation_degraded = False
         self.deferred_root = self.root / "deferred"
         self.quarantine_root = self.root / "quarantine"
         self._snapshot_provider = snapshot_provider
@@ -96,6 +112,7 @@ class RnDRecoveryManager(QObject):
         if self._future is None:
             remove_session_bundle(self.current_path)
             remove_session_bundle(self.previous_path)
+            remove_session_bundle(self.staging_path)
 
     def candidates(self) -> list[RecoveryCandidate]:
         found: list[RecoveryCandidate] = []
@@ -146,6 +163,7 @@ class RnDRecoveryManager(QObject):
         self._future = None
         remove_session_bundle(self.current_path)
         remove_session_bundle(self.previous_path)
+        remove_session_bundle(self.staging_path)
 
     def _dispatch(self) -> None:
         if not self._enabled or self._closing or not self._pending:
@@ -169,14 +187,45 @@ class RnDRecoveryManager(QObject):
         self._future.add_done_callback(self._worker_finished.emit)
 
     def _save_snapshot(self, snapshot: dict[str, Any], sources: dict[str, Path]) -> None:
-        if self.current_path.is_file():
-            copy_session_bundle(self.current_path, self.previous_path)
+        """Write the newest snapshot first, then rotate the older generation.
+
+        The new state is written to a staging bundle before anything else is
+        touched, so a failure while copying current → previous can never cost
+        the user the newest snapshot: the staging bundle still becomes the new
+        current, and only the second generation is skipped.
+        """
+        remove_session_bundle(self.staging_path)
         save_rnd_snapshot(
             snapshot,
             sources,
-            self.current_path,
+            self.staging_path,
             cleanup_stale_photos=False,
         )
+        try:
+            if self.current_path.is_file():
+                copy_session_bundle(self.current_path, self.previous_path)
+        except Exception as exc:
+            self._note_rotation_failure(exc)
+        else:
+            self._note_rotation_success()
+        copy_session_bundle(self.staging_path, self.current_path)
+        remove_session_bundle(self.staging_path)
+
+    def _note_rotation_failure(self, exc: BaseException) -> None:
+        """Log one failure per degraded stretch instead of on every debounce."""
+        if not self.rotation_degraded:
+            _LOG.warning(
+                "R&D recovery could not keep a previous generation (%s -> %s): %s",
+                self.current_path,
+                self.previous_path,
+                exc,
+            )
+        self.rotation_degraded = True
+
+    def _note_rotation_success(self) -> None:
+        if self.rotation_degraded:
+            _LOG.info("R&D recovery generation rotation recovered.")
+        self.rotation_degraded = False
 
     def _on_worker_finished(self, future: Future) -> None:
         if future is not self._future:
@@ -197,8 +246,23 @@ class RnDRecoveryManager(QObject):
         try:
             session, _missing = load_rnd_session(path)
             modified = datetime.fromtimestamp(path.stat().st_mtime)
-        except Exception:
-            self._quarantine(path)
+        except UnsupportedSessionVersion:
+            # The file is intact; this build is simply too old to read it.
+            # Quarantining it would hide a perfectly good session, so report it.
+            try:
+                modified = datetime.fromtimestamp(path.stat().st_mtime)
+            except OSError:
+                modified = datetime.now()
+            return RecoveryCandidate(
+                path=path,
+                kind=kind,
+                preserved_at=modified,
+                measurement_count=0,
+                group_count=0,
+                error="saved by a newer Fastgraph",
+            )
+        except Exception as exc:
+            self._quarantine(path, exc)
             return None
         return RecoveryCandidate(
             path=path,
@@ -208,10 +272,16 @@ class RnDRecoveryManager(QObject):
             group_count=len(session.groups),
         )
 
-    def _quarantine(self, path: Path) -> None:
+    def _quarantine(self, path: Path, error: BaseException | None = None) -> None:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         destination_dir = self.quarantine_root / stamp
         destination_dir.mkdir(parents=True, exist_ok=True)
+        _LOG.warning(
+            "Quarantined an unreadable R&D recovery file: %s -> %s (%s)",
+            path,
+            destination_dir / path.name,
+            error,
+        )
         try:
             shutil.move(str(path), str(destination_dir / path.name))
         except FileNotFoundError:

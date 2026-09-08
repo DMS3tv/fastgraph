@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+import logging
+import os
+import re
 import sys
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -82,6 +85,30 @@ ROLE_KIND = Qt.ItemDataRole.UserRole
 ROLE_ID = Qt.ItemDataRole.UserRole + 1
 KIND_GROUP = "group"
 KIND_MEASUREMENT = "measurement"
+
+_LOG = logging.getLogger(__name__)
+
+#: Trailing " (3)" count suffix that group rows show after their name.
+_GROUP_COUNT_SUFFIX = re.compile(r"\s\(\d+\)$")
+
+#: Parsed HRTF files keyed by (path, mtime_ns, size). A redraw asks for the
+#: same handful of files once per measurement; without this every one of those
+#: reads and interpolates the file again.
+_HRTF_CACHE: dict[tuple[str, int, int], HRTFCurve] = {}
+_HRTF_CACHE_LIMIT = 24
+
+
+def cached_hrtf_curve(path: str) -> HRTFCurve:
+    """Return a parsed ``HRTFCurve``, reusing one while the file is unchanged."""
+    stat = os.stat(path)
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    curve = _HRTF_CACHE.get(key)
+    if curve is None:
+        curve = HRTFCurve(path)
+        if len(_HRTF_CACHE) >= _HRTF_CACHE_LIMIT:
+            _HRTF_CACHE.clear()
+        _HRTF_CACHE[key] = curve
+    return curve
 
 
 class _NoWheelPlotWidget(pg.PlotWidget):
@@ -1124,10 +1151,15 @@ class RnDWidget(QWidget):
         item = QTreeWidgetItem([measurement.name, "", "", "", "", "", ""])
         item.setData(0, ROLE_KIND, KIND_MEASUREMENT)
         item.setData(0, ROLE_ID, measurement.id)
+        # Drops land between rows, never on one: dropping onto an item is what
+        # used to nest a group inside a group and empty it.
         item.setFlags(
-            item.flags()
-            | Qt.ItemFlag.ItemIsEditable
-            | Qt.ItemFlag.ItemIsDragEnabled
+            (
+                item.flags()
+                | Qt.ItemFlag.ItemIsEditable
+                | Qt.ItemFlag.ItemIsDragEnabled
+            )
+            & ~Qt.ItemFlag.ItemIsDropEnabled
         )
         item.setText(1, "")
         item.setText(2, "")
@@ -1143,9 +1175,14 @@ class RnDWidget(QWidget):
         item = QTreeWidgetItem([label, "", "", "", "", "", ""])
         item.setData(0, ROLE_KIND, KIND_GROUP)
         item.setData(0, ROLE_ID, group.id)
+        # Dropping a measurement onto a group is the natural way to file it,
+        # so groups stay drop targets. A group dropped onto another group has
+        # no place in the session model; _on_tree_structure_changed moves its
+        # measurements back to the parent level and warns.
         item.setFlags(
             item.flags()
             | Qt.ItemFlag.ItemIsEditable
+            | Qt.ItemFlag.ItemIsDragEnabled
             | Qt.ItemFlag.ItemIsDropEnabled
         )
         item.setText(1, "")
@@ -1402,9 +1439,11 @@ class RnDWidget(QWidget):
             if group is None:
                 return
             if column == 0:
-                text = item.text(0).strip()
+                # Rows read "Name (3)"; only that trailing count is stripped, so
+                # a group genuinely called "Prototype (v2)" keeps its name.
+                text = _GROUP_COUNT_SUFFIX.sub("", item.text(0).strip()).strip()
                 if text:
-                    group.name = text.rsplit(" (", 1)[0]
+                    group.name = text
         self._redraw()
         self.state_changed.emit()
 
@@ -1524,11 +1563,12 @@ class RnDWidget(QWidget):
         dialog = PhotoViewerDialog(entries, index, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        # Captions are applied first: removing one photo must not throw away
+        # the caption the user just typed on another.
+        for item, caption in zip(photos, dialog.captions):
+            item.caption = caption
         if dialog.remove_requested and dialog.remove_index is not None:
             photos.pop(dialog.remove_index)
-        else:
-            for item, caption in zip(photos, dialog.captions):
-                item.caption = caption
         self._sync_photo_panel()
         self.state_changed.emit()
 
@@ -1687,26 +1727,72 @@ class RnDWidget(QWidget):
         self.state_changed.emit()
 
     def _remove_selected(self) -> None:
-        item = self._tree.currentItem()
-        if item is None:
+        items = list(self._tree.selectedItems())
+        current = self._tree.currentItem()
+        if not items and current is not None:
+            items = [current]
+        measurement_ids: list[str] = []
+        group_ids: list[str] = []
+        for item in items:
+            kind = item.data(0, ROLE_KIND)
+            item_id = item.data(0, ROLE_ID)
+            if kind == KIND_MEASUREMENT and item_id not in measurement_ids:
+                measurement_ids.append(item_id)
+            elif kind == KIND_GROUP and item_id not in group_ids:
+                group_ids.append(item_id)
+        count = len(measurement_ids) + len(group_ids)
+        if not count:
             return
-        kind = item.data(0, ROLE_KIND)
-        item_id = item.data(0, ROLE_ID)
-        if kind == KIND_MEASUREMENT:
-            self.session.measurements = [item for item in self.session.measurements if item.id != item_id]
-            self.session.ungrouped_order = [item for item in self.session.ungrouped_order if item != item_id]
-            for group in self.session.groups:
-                group.measurement_ids = [item for item in group.measurement_ids if item != item_id]
-        elif kind == KIND_GROUP:
-            group = self.session.group_by_id(item_id)
+        if not self._confirm_removal(measurement_ids, group_ids):
+            return
+        doomed = set(measurement_ids)
+        for group_id in group_ids:
+            group = self.session.group_by_id(group_id)
             if group is not None:
-                self.session.ungrouped_order.extend(group.measurement_ids)
-            self.session.groups = [item for item in self.session.groups if item.id != item_id]
+                # A removed group releases its measurements unless they were
+                # selected for removal too.
+                self.session.ungrouped_order.extend(
+                    item_id for item_id in group.measurement_ids if item_id not in doomed
+                )
+        if group_ids:
+            removed_groups = set(group_ids)
+            self.session.groups = [
+                group for group in self.session.groups if group.id not in removed_groups
+            ]
+        if doomed:
+            self.session.measurements = [
+                item for item in self.session.measurements if item.id not in doomed
+            ]
+            self.session.ungrouped_order = [
+                item_id for item_id in self.session.ungrouped_order if item_id not in doomed
+            ]
+            for group in self.session.groups:
+                group.measurement_ids = [
+                    item_id for item_id in group.measurement_ids if item_id not in doomed
+                ]
         self.session.selected_id = None
         self.session.repair_ordering()
         self._sync_tree()
         self._redraw()
         self.state_changed.emit()
+
+    def _confirm_removal(self, measurement_ids: list[str], group_ids: list[str]) -> bool:
+        """Ask once, naming exactly what is about to be removed."""
+        parts = []
+        if measurement_ids:
+            count = len(measurement_ids)
+            parts.append(f"{count} measurement{'s' if count != 1 else ''}")
+        if group_ids:
+            count = len(group_ids)
+            parts.append(f"{count} group{'s' if count != 1 else ''}")
+        choice = QMessageBox.question(
+            self,
+            "Remove From R&D Session",
+            f"Remove {' and '.join(parts)} from this R&D session?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
 
     def _move_selected(self, delta: int) -> None:
         item = self._tree.currentItem()
@@ -1762,14 +1848,35 @@ class RnDWidget(QWidget):
                 if group is None:
                     continue
                 group.expanded = item.isExpanded()
-                for child_index in range(item.childCount()):
-                    child = item.child(child_index)
-                    if child.data(0, ROLE_KIND) == KIND_MEASUREMENT:
-                        group.measurement_ids.append(child.data(0, ROLE_ID))
+                group.measurement_ids.extend(self._collect_child_measurement_ids(item))
         self.session.repair_ordering()
         self._sync_tree()
         self._redraw()
         self.state_changed.emit()
+
+    def _collect_child_measurement_ids(self, item: QTreeWidgetItem) -> list[str]:
+        """Every measurement under ``item``, flattened.
+
+        The model has no nested groups. If a drop ever produced one anyway, its
+        measurements are pulled up to the parent group instead of being dropped
+        on the floor, and the event is logged.
+        """
+        collected: list[str] = []
+        for index in range(item.childCount()):
+            child = item.child(index)
+            kind = child.data(0, ROLE_KIND)
+            if kind == KIND_MEASUREMENT:
+                collected.append(child.data(0, ROLE_ID))
+            elif kind == KIND_GROUP:
+                rescued = self._collect_child_measurement_ids(child)
+                _LOG.warning(
+                    "R&D tree contained a nested group (%s); moved %d measurement(s) "
+                    "back to the parent level.",
+                    child.data(0, ROLE_ID),
+                    len(rescued),
+                )
+                collected.extend(rescued)
+        return collected
 
     def _selected_measurement_ids(self) -> list[str]:
         selected = {
@@ -1825,7 +1932,10 @@ class RnDWidget(QWidget):
             _freqs, displayed = self.displayed_measurement_curve(measurement, group=group)
             if top and measurement.top_visible:
                 measurements.append((measurement, displayed))
-            if not top and (measurement.pinned or group_id is not None):
+            # View 2 honours the row's own checkbox for grouped measurements as
+            # well: the group's View 2 decides whether the group is shown at
+            # all, the row decides whether that measurement is part of it.
+            if not top and measurement.pinned:
                 measurements.append((measurement, displayed))
         return measurements
 
@@ -1840,6 +1950,8 @@ class RnDWidget(QWidget):
             if measurement is None:
                 continue
             if top and not measurement.top_visible:
+                continue
+            if not top and not measurement.pinned:
                 continue
             result.append(measurement)
         return result
@@ -2001,7 +2113,7 @@ class RnDWidget(QWidget):
         hrtf_path = self.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
         if hrtf_path:
             try:
-                mag = HRTFCurve(hrtf_path).apply(measurement.freqs, mag)
+                mag = cached_hrtf_curve(hrtf_path).apply(measurement.freqs, mag)
             except Exception:
                 self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
         elif measurement.hrtf_path or measurement.hrtf_name:

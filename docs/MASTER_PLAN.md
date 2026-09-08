@@ -9,9 +9,9 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 
 | # | Phase | Status |
 |---|---|---|
-| 0 | Records and hygiene (branch, records, .gitignore, PR #8, README fixes) | in progress |
-| 1 | Test infrastructure and the widget leak (conftest, ThemeController singleton) | pending |
-| 2 | Measurement integrity gate for standard mode | pending |
+| 0 | Records and hygiene (branch, records, .gitignore, PR #8, README fixes) | done 2026-09-08 |
+| 1 | Test infrastructure and the widget leak (conftest, ThemeController lifetime) | core done; fixture migration in progress |
+| 2 | Measurement integrity gate for standard mode | done 2026-09-08 |
 | 3 | Bluetooth reliability | pending |
 | 4 | Measurement queue extraction and audio-thread hygiene | pending |
 | 5 | Persistence and transport hardening (PR #9 themes, credited) | pending |
@@ -37,3 +37,5 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 |---|---|---|
 | 2026-09-08 | Audit of 0.4.2 completed; `FASTGRAPH_REVIEW_2026-09-08.md` written | 401 tests passed, ~50 findings |
 | 2026-09-08 | PR #8 merged to `main`; branch `hardening/2026-09` created | done |
+| 2026-09-08 | Phase 1 core: `tests/conftest.py` flushes Qt deferred deletes, isolates app data, warns on widget leaks; `ThemeController` no longer app-parented and skips unchanged re-apply | `test_rnd_integration.py` 258 s → 16 s |
+| 2026-09-08 | Phase 2: integrity gate. Start confidence is now peak-to-background (default 6.0, all modes); hard floor on the correlation coefficient (0.10); mid-band noise-margin check (3 dB); rejection needs confidence AND margin to fail; low-SNR warning (10 dB); non-finite guard; diagnostics carry coverage-by-tenth; settings migrate a stored 9.0 to 6.0 once (schema v2); dead `f_low`/`f_high` removed | 8 valid + 6 garbage synthetic cases in `tests/test_measurement_integrity.py`; alignment suite green |

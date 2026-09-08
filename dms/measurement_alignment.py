@@ -18,9 +18,24 @@ from dms.measurement_layout import MeasurementSignalLayout
 class AlignmentSettings:
     latency: str = "low"
     bluetooth_headphone_mode: bool = False
-    start_alignment_confidence_min: float = 9.0
+    # Minimum peak-to-background confidence of the sweep correlation. Applies
+    # in every mode. 0 turns the check off. Rolloff at the band edges raises
+    # this value, so it is safe for headphones with little output at 20 Hz or
+    # 20 kHz.
+    start_alignment_confidence_min: float = 6.0
     end_marker_confidence_min: float = 7.0
     timing_drift_max_ms: float = 35.0
+    # Minimum level margin of the middle 60 % of the aligned sweep above the
+    # measured noise floor, in dB. 0 turns the check off. A recording is only
+    # rejected when BOTH this margin and the alignment confidence fall below
+    # their minimums; each metric alone has valid-measurement counterexamples.
+    sweep_noise_margin_min_db: float = 3.0
+    # SNR below this value produces a warning, never a rejection. 0 disables.
+    snr_warn_db: float = 10.0
+    # Hard floor on the normalized correlation coefficient at the chosen sweep
+    # start. Valid sweeps sit at 0.39 or above, silence and unrelated signals
+    # at 0.04 or below. Not user-configurable.
+    peak_correlation_min: float = 0.10
 
 
 class MeasurementFailureReason:
@@ -30,11 +45,15 @@ class MeasurementFailureReason:
     SHORT_RECORDING = "short_recording"
     SHORT_ALIGNED_RECORDING = "short_aligned_recording"
     END_MARKER_UNVERIFIED = "end_marker_unverified"
+    LOW_SNR = "low_snr"
+    INCOMPLETE_SWEEP = "incomplete_sweep"
+    INVALID_RECORDING = "invalid_recording"
 
 
 class MeasurementWarningReason:
     BLUETOOTH_MARGINAL_DRIFT = "bluetooth_marginal_drift"
     BLUETOOTH_SWEEP_FALLBACK = "bluetooth_sweep_fallback"
+    LOW_SNR = "low_snr"
 
 
 @dataclass(frozen=True)
@@ -44,6 +63,25 @@ class StartAlignmentResult:
     marker_locked_candidate: Optional[int]
     start_confidence: float
     start_marker_confidence: float
+    # Peak-to-background confidence of the sweep correlation. This is the
+    # value that start_confidence now reports; it is repeated here so the
+    # two other components stay visible in diagnostics.
+    background_confidence: float = 0.0
+    # Peak-to-next-best confidence. Reported only; a valid sweep with a strong
+    # secondary arrival scores close to 1.0 here, so it must not gate.
+    nextbest_confidence: float = 0.0
+    # Normalized correlation coefficient at the sweep-correlation candidate.
+    peak_correlation: float = 0.0
+
+
+@dataclass(frozen=True)
+class SweepIntegrity:
+    """Level evidence that the aligned window contains the played sweep."""
+
+    noise_rms: float
+    signal_rms: float
+    midband_margin_db: float
+    coverage_db: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -92,6 +130,12 @@ class MeasurementDiagnostics:
     buffer_size: Optional[int] = None
     alignment_mode: Optional[str] = None
     marker_failure_reason: Optional[str] = None
+    peak_correlation: Optional[float] = None
+    start_background_confidence: Optional[float] = None
+    start_nextbest_confidence: Optional[float] = None
+    midband_margin_db: Optional[float] = None
+    coverage_db: Optional[tuple[float, ...]] = None
+    sweep_noise_margin_min_db: Optional[float] = None
 
 
 class MeasurementAlignmentError(ValueError):
@@ -136,6 +180,7 @@ def _diagnostics_from_results(
     warning_message: Optional[str] = None,
     alignment_mode: Optional[str] = None,
     marker_failure_reason: Optional[str] = None,
+    integrity: Optional[SweepIntegrity] = None,
 ) -> MeasurementDiagnostics:
     selected_sweep_start = None
     if end is not None:
@@ -193,6 +238,24 @@ def _diagnostics_from_results(
         warning_message=warning_message,
         alignment_mode=alignment_mode,
         marker_failure_reason=marker_failure_reason,
+        peak_correlation=(
+            float(start.peak_correlation) if start is not None else None
+        ),
+        start_background_confidence=(
+            float(start.background_confidence) if start is not None else None
+        ),
+        start_nextbest_confidence=(
+            float(start.nextbest_confidence) if start is not None else None
+        ),
+        midband_margin_db=(
+            float(integrity.midband_margin_db) if integrity is not None else None
+        ),
+        coverage_db=(
+            tuple(float(v) for v in integrity.coverage_db)
+            if integrity is not None
+            else None
+        ),
+        sweep_noise_margin_min_db=float(settings.sweep_noise_margin_min_db),
     )
 
 
@@ -204,6 +267,7 @@ def _raise_alignment_error(
     start: Optional[StartAlignmentResult] = None,
     end: Optional[EndMarkerResult] = None,
     snr_db: Optional[float] = None,
+    integrity: Optional[SweepIntegrity] = None,
 ) -> None:
     raise MeasurementAlignmentError(
         message,
@@ -216,6 +280,7 @@ def _raise_alignment_error(
             snr_db=snr_db,
             failure_reason=reason,
             failure_message=message,
+            integrity=integrity,
         ),
     )
 
@@ -246,9 +311,28 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
         [
             f"- Selected sweep start: {fmt_int(diagnostics.selected_sweep_start)}",
             f"- Sweep-correlation candidate: {fmt_int(diagnostics.sweep_correlation_candidate)}",
-            f"- Start confidence: {fmt_float(diagnostics.start_confidence)}",
+            f"- Start confidence: {fmt_float(diagnostics.start_confidence)} "
+            f"(min {diagnostics.start_alignment_confidence_min:.1f})",
         ]
     )
+    if diagnostics.peak_correlation is not None:
+        lines.append(
+            f"- Sweep correlation peak: {diagnostics.peak_correlation:.3f}"
+        )
+    if diagnostics.start_nextbest_confidence is not None:
+        lines.append(
+            f"- Next-best alignment ratio: {diagnostics.start_nextbest_confidence:.1f} "
+            "(reported only)"
+        )
+    if diagnostics.midband_margin_db is not None:
+        margin_min = diagnostics.sweep_noise_margin_min_db
+        min_text = f" (min {margin_min:.1f} dB)" if margin_min is not None else ""
+        lines.append(
+            f"- Mid-band level above noise: {diagnostics.midband_margin_db:.1f} dB{min_text}"
+        )
+    if diagnostics.coverage_db:
+        coverage = " ".join(f"{value:.0f}" for value in diagnostics.coverage_db)
+        lines.append(f"- Sweep coverage by tenth (dB above noise): {coverage}")
     if diagnostics.bluetooth_headphone_mode:
         lines.extend(
             [
@@ -297,6 +381,9 @@ def is_retryable_timing_failure(
             MeasurementFailureReason.LOW_END_MARKER_CONFIDENCE,
             MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
             MeasurementFailureReason.END_MARKER_UNVERIFIED,
+            MeasurementFailureReason.LOW_SNR,
+            MeasurementFailureReason.INCOMPLETE_SWEEP,
+            MeasurementFailureReason.INVALID_RECORDING,
         }
 
     msg = message.lower()
@@ -623,10 +710,15 @@ def find_start_alignment(
     exclusion = max(int(round(0.025 * layout.fs)), int(round(0.01 * sweep_n)))
     conf_bg = peak_to_background_confidence(corr_valid, start_idx, exclusion)
     conf_next = peak_to_nextbest_confidence(corr_valid, start_idx, exclusion)
-    start_conf = min(conf_bg, conf_next)
+    peak_corr = float(abs(corr_valid[start_idx]))
+    # Peak-to-background is the gating confidence. Peak-to-next-best is
+    # reported only: a valid sweep with a strong secondary arrival (an echo,
+    # a reflection, a codec re-sync) scores about 1.0 there, identical to
+    # silence, which made the old min(bg, next) value reject good sweeps.
+    start_conf = float(conf_bg)
     bluetooth_mode = bool(settings.bluetooth_headphone_mode)
     min_start_conf = float(settings.start_alignment_confidence_min)
-    if bluetooth_mode:
+    if bluetooth_mode and min_start_conf > 0.0:
         min_start_conf = min(min_start_conf, 3.0)
 
     start_marker_conf = 0.0
@@ -669,15 +761,57 @@ def find_start_alignment(
                 if marker_locked_start <= max_start_idx:
                     start_idx = marker_locked_start
                     marker_locked_candidate = int(marker_locked_start)
-                start_conf = max(start_conf, min_start_conf)
 
-    if bluetooth_mode and start_conf < min_start_conf:
+    # Hard floor on the correlation coefficient: silence, hum, tones and
+    # unrelated signals sit at 0.04 or below, valid sweeps at 0.39 or above.
+    # In Bluetooth mode a successful start-marker lock is accepted instead,
+    # because codec clock stretch can decorrelate the sweep while the coded
+    # marker still locks.
+    peak_corr_min = float(settings.peak_correlation_min)
+    if (
+        peak_corr_min > 0.0
+        and peak_corr < peak_corr_min
+        and (not bluetooth_mode or marker_locked_candidate is None)
+    ):
+        _raise_alignment_error(
+            f"Low start-alignment confidence (sweep correlation {peak_corr:.3f}; "
+            f"minimum {peak_corr_min:.2f}). No sweep signal was detected in the "
+            "recording. Check the output device, the input device, the seal, "
+            "and the playback level.",
+            MeasurementFailureReason.LOW_START_CONFIDENCE,
+            layout,
+            settings,
+            start=StartAlignmentResult(
+                selected_sweep_start=int(start_idx),
+                sweep_correlation_candidate=int(sweep_start_candidate),
+                marker_locked_candidate=marker_locked_candidate,
+                start_confidence=float(start_conf),
+                start_marker_confidence=float(start_marker_conf),
+                background_confidence=float(conf_bg),
+                nextbest_confidence=float(conf_next),
+                peak_correlation=peak_corr,
+            ),
+        )
+
+    # In Bluetooth mode a strong start marker is independent evidence that
+    # the sweep start is right, so a weak sweep correlation alone does not
+    # fail the measurement when the marker lock succeeded. The reported
+    # confidence is never inflated to hide that decision.
+    if (
+        bluetooth_mode
+        and min_start_conf > 0.0
+        and start_conf < min_start_conf
+        and marker_locked_candidate is None
+    ):
         start_result = StartAlignmentResult(
             selected_sweep_start=int(start_idx),
             sweep_correlation_candidate=int(sweep_start_candidate),
             marker_locked_candidate=marker_locked_candidate,
             start_confidence=float(start_conf),
             start_marker_confidence=float(start_marker_conf),
+            background_confidence=float(conf_bg),
+            nextbest_confidence=float(conf_next),
+            peak_correlation=peak_corr,
         )
         _raise_alignment_error(
             f"Low start-alignment confidence ({start_conf:.1f}; marker {start_marker_conf:.1f}). "
@@ -694,6 +828,9 @@ def find_start_alignment(
         marker_locked_candidate=marker_locked_candidate,
         start_confidence=float(start_conf),
         start_marker_confidence=float(start_marker_conf),
+        background_confidence=float(conf_bg),
+        nextbest_confidence=float(conf_next),
+        peak_correlation=peak_corr,
     )
 
 
@@ -750,6 +887,9 @@ def _bluetooth_sweep_fallback_result(
         marker_locked_candidate=start_result.marker_locked_candidate,
         start_confidence=float(start_result.start_confidence),
         start_marker_confidence=float(start_result.start_marker_confidence),
+        background_confidence=float(start_result.background_confidence),
+        nextbest_confidence=float(start_result.nextbest_confidence),
+        peak_correlation=float(start_result.peak_correlation),
     )
     fallback_end_result = end_result
     if fallback_end_result is None:
@@ -846,6 +986,12 @@ def _bluetooth_sweep_fallback_result(
     ):
         return None
 
+    # The fallback SNR uses marker-aware noise windows; derive the noise floor
+    # from it so the integrity metrics stay comparable with the other paths.
+    fallback_noise_rms = (
+        sweep_rms / (10.0 ** (snr_db / 20.0)) if 0.0 < snr_db < 120.0 else 0.0
+    )
+    integrity = compute_sweep_integrity(sweep_rec, fallback_noise_rms)
     warning_message = (
         "Bluetooth markers were unreliable; sweep correlation was used. "
         "Review repeatability before keeping."
@@ -865,6 +1011,7 @@ def _bluetooth_sweep_fallback_result(
             warning_message=warning_message,
             alignment_mode="sweep_fallback",
             marker_failure_reason=marker_failure_reason,
+            integrity=integrity,
         ),
     )
 
@@ -1082,13 +1229,27 @@ def find_end_markers(
     )
 
 
-def estimate_snr_db(
+def _rms(values: np.ndarray) -> float:
+    if len(values) == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(np.asarray(values, dtype=np.float64)))))
+
+
+def _ratio_db(signal_rms: float, noise_rms: float) -> float:
+    if noise_rms > 1e-12 and signal_rms > 0.0:
+        return float(20.0 * np.log10(signal_rms / noise_rms))
+    if signal_rms > 0.0:
+        return 120.0
+    return 0.0
+
+
+def noise_floor_rms(
     rec_mono: np.ndarray,
-    aligned_recording: np.ndarray,
     post_noise_start: int,
     start_idx: int,
     fs: int,
 ) -> float:
+    """RMS of the silence just before the sweep and just after it."""
     noise_win_n = int(round(0.12 * fs))
     rec = np.asarray(rec_mono)
     pre_noise = rec[max(0, start_idx - noise_win_n):start_idx]
@@ -1096,17 +1257,119 @@ def estimate_snr_db(
         post_noise_start:min(len(rec), post_noise_start + noise_win_n)
     ]
     noise_parts = [seg for seg in (pre_noise, post_noise) if len(seg) > 8]
-    if noise_parts:
-        noise_concat = np.concatenate(noise_parts)
-        noise_rms = float(np.sqrt(np.mean(np.square(noise_concat))))
-    else:
-        noise_rms = 0.0
-    signal_rms = float(np.sqrt(np.mean(np.square(aligned_recording))))
-    if noise_rms > 1e-12 and signal_rms > 0.0:
-        return float(20.0 * np.log10(signal_rms / noise_rms))
-    if signal_rms > 0.0:
-        return 120.0
-    return 0.0
+    if not noise_parts:
+        return 0.0
+    return _rms(np.concatenate(noise_parts))
+
+
+def estimate_snr_db(
+    rec_mono: np.ndarray,
+    aligned_recording: np.ndarray,
+    post_noise_start: int,
+    start_idx: int,
+    fs: int,
+) -> float:
+    noise_rms = noise_floor_rms(rec_mono, post_noise_start, start_idx, fs)
+    return _ratio_db(_rms(aligned_recording), noise_rms)
+
+
+def compute_sweep_integrity(
+    aligned_recording: np.ndarray,
+    noise_rms: float,
+    *,
+    segments: int = 10,
+) -> SweepIntegrity:
+    """
+    Level evidence that the aligned window holds the played sweep.
+
+    ``midband_margin_db`` is the RMS of the middle 60 % of the aligned sweep
+    relative to the noise floor. For a 20 Hz to 20 kHz log sweep that span
+    covers roughly 63 Hz to 6.3 kHz, so headphones with little output at the
+    band edges still score well. ``coverage_db`` reports the same ratio for
+    each tenth of the sweep so a rolled-off but valid sweep reads as such in
+    diagnostics.
+    """
+    aligned = np.asarray(aligned_recording, dtype=np.float64)
+    n = len(aligned)
+    if n == 0:
+        return SweepIntegrity(
+            noise_rms=float(noise_rms),
+            signal_rms=0.0,
+            midband_margin_db=0.0,
+            coverage_db=tuple(0.0 for _ in range(segments)),
+        )
+    lo = int(round(0.2 * n))
+    hi = max(lo + 1, int(round(0.8 * n)))
+    midband_rms = _rms(aligned[lo:hi])
+    edges = np.linspace(0, n, segments + 1, dtype=int)
+    coverage = tuple(
+        _ratio_db(_rms(aligned[edges[i]:edges[i + 1]]), noise_rms)
+        if edges[i + 1] > edges[i]
+        else 0.0
+        for i in range(segments)
+    )
+    return SweepIntegrity(
+        noise_rms=float(noise_rms),
+        signal_rms=_rms(aligned),
+        midband_margin_db=_ratio_db(midband_rms, noise_rms),
+        coverage_db=coverage,
+    )
+
+
+def _enforce_sweep_integrity(
+    layout: MeasurementSignalLayout,
+    settings: AlignmentSettings,
+    start_result: StartAlignmentResult,
+    integrity: SweepIntegrity,
+    snr_db: float,
+    end_result: Optional[EndMarkerResult] = None,
+) -> None:
+    """
+    Reject a recording only when both the alignment confidence and the
+    mid-band level margin are below their minimums.
+
+    Either metric alone has valid-measurement counterexamples: a sweep with a
+    strong echo can score low on confidence while sitting 40 dB above the
+    noise, and a very quiet but correct sweep can align with high confidence
+    while sitting only 4 dB above the noise. Silence, hum, tones and unrelated
+    signals fail both. A threshold of 0 turns that half of the check off, and
+    the check needs both halves.
+    """
+    conf_min = float(settings.start_alignment_confidence_min)
+    margin_min = float(settings.sweep_noise_margin_min_db)
+    if conf_min <= 0.0 or margin_min <= 0.0:
+        return
+    conf = float(start_result.background_confidence)
+    margin = float(integrity.midband_margin_db)
+    if conf < conf_min and margin < margin_min:
+        _raise_alignment_error(
+            f"No usable sweep signal (alignment confidence {conf:.1f}, minimum "
+            f"{conf_min:.1f}; mid-band level {margin:.1f} dB above noise, minimum "
+            f"{margin_min:.1f} dB). Check the seal, the playback level, and the "
+            "input device, then retry.",
+            MeasurementFailureReason.LOW_SNR,
+            layout,
+            settings,
+            start=start_result,
+            end=end_result,
+            snr_db=snr_db,
+            integrity=integrity,
+        )
+
+
+def _low_snr_warning(
+    settings: AlignmentSettings,
+    snr_db: float,
+) -> tuple[Optional[str], Optional[str]]:
+    warn_db = float(settings.snr_warn_db)
+    if warn_db > 0.0 and snr_db < warn_db:
+        return (
+            MeasurementWarningReason.LOW_SNR,
+            f"Low signal-to-noise ratio ({snr_db:.1f} dB; warning below "
+            f"{warn_db:.1f} dB). Check the seal, the playback level, and ambient "
+            "noise before keeping this measurement.",
+        )
+    return None, None
 
 
 def _estimate_bluetooth_fallback_snr_db(
@@ -1163,6 +1426,13 @@ def align_recording_to_layout(
             layout,
             settings,
         )
+    if not np.all(np.isfinite(rec)):
+        _raise_alignment_error(
+            "Recording contains invalid samples. Check the input device and retry.",
+            MeasurementFailureReason.INVALID_RECORDING,
+            layout,
+            settings,
+        )
 
     start_result = find_start_alignment(rec, sweep, layout, settings)
     bluetooth_mode = bool(settings.bluetooth_headphone_mode)
@@ -1172,13 +1442,13 @@ def align_recording_to_layout(
             rec, layout, settings, start_result, end_result
         )
         sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
-        snr_db = estimate_snr_db(
-            rec,
-            sweep_rec,
-            end_idx,
-            start_idx,
-            layout.fs,
+        noise_rms = noise_floor_rms(rec, end_idx, start_idx, layout.fs)
+        snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
+        integrity = compute_sweep_integrity(sweep_rec, noise_rms)
+        _enforce_sweep_integrity(
+            layout, settings, start_result, integrity, snr_db
         )
+        warning_reason, warning_message = _low_snr_warning(settings, snr_db)
         return MeasurementAlignmentResult(
             aligned_recording=sweep_rec,
             start=start_result,
@@ -1190,6 +1460,9 @@ def align_recording_to_layout(
                 start=start_result,
                 end=None,
                 snr_db=float(snr_db),
+                warning_reason=warning_reason,
+                warning_message=warning_message,
+                integrity=integrity,
             ),
         )
 
@@ -1350,13 +1623,19 @@ def align_recording_to_layout(
             marker_template_stretch=end_result.marker_template_stretch,
         )
 
-    snr_db = estimate_snr_db(
+    noise_rms = noise_floor_rms(
         rec,
-        sweep_rec,
         end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
         end_result.selected_sweep_start,
         layout.fs,
     )
+    snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
+    integrity = compute_sweep_integrity(sweep_rec, noise_rms)
+    _enforce_sweep_integrity(
+        layout, settings, start_result, integrity, snr_db, end_result=end_result
+    )
+    if warning_reason is None:
+        warning_reason, warning_message = _low_snr_warning(settings, snr_db)
     return MeasurementAlignmentResult(
         aligned_recording=sweep_rec,
         start=start_result,
@@ -1370,5 +1649,6 @@ def align_recording_to_layout(
             snr_db=float(snr_db),
             warning_reason=warning_reason,
             warning_message=warning_message,
+            integrity=integrity,
         ),
     )

@@ -97,6 +97,7 @@ from dms.export import (
 )
 from dms.hrtf import HRTFCurve
 from dms.measurement_alignment import (
+    MeasurementWarningReason,
     format_diagnostics_summary,
     is_retryable_timing_failure,
 )
@@ -239,7 +240,9 @@ _CONSOLE_SETTING_SPECS = {
     "pre_sweep_silence": ("float", 0.05, 2.0),
     "post_sweep_silence": ("float", 0.1, 3.0),
     "latency": ("choice", {"low", "high"}),
-    "start_alignment_confidence_min": ("float", 2.0, 30.0),
+    "start_alignment_confidence_min": ("float", 0.0, 30.0),
+    "sweep_noise_margin_min_db": ("float", 0.0, 60.0),
+    "snr_warn_db": ("float", 0.0, 60.0),
     "end_marker_confidence_min": ("float", 2.0, 30.0),
     "timing_drift_max_ms": ("float", 5.0, 250.0),
     "bluetooth_mode": ("bool",),
@@ -443,7 +446,13 @@ class PassFailDialog(QDialog):
             timing.setProperty("tone", "muted")
             timing_box_layout.addWidget(timing)
             if warning_message:
-                warning = QLabel(f"Bluetooth timing marginal - {warning_message}")
+                warning_reason = getattr(diagnostics, "warning_reason", None)
+                warning_title = (
+                    "Signal warning"
+                    if warning_reason == MeasurementWarningReason.LOW_SNR
+                    else "Bluetooth timing marginal"
+                )
+                warning = QLabel(f"{warning_title} - {warning_message}")
                 warning.setWordWrap(True)
                 warning.setProperty("tone", "warning")
                 timing_box_layout.addWidget(warning)
@@ -3679,6 +3688,10 @@ class MainWindow(QMainWindow):
                 self._settings.get("end_marker_confidence_min")
             ),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            sweep_noise_margin_min_db=float(
+                self._settings.get("sweep_noise_margin_min_db")
+            ),
+            snr_warn_db=float(self._settings.get("snr_warn_db")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -3823,7 +3836,16 @@ class MainWindow(QMainWindow):
                         None,
                     )
                 if warning_message:
-                    warning_prefix = " Bluetooth timing marginal."
+                    warning_reason = getattr(
+                        self._last_measurement_diagnostics,
+                        "warning_reason",
+                        None,
+                    )
+                    warning_prefix = (
+                        " Low SNR."
+                        if warning_reason == MeasurementWarningReason.LOW_SNR
+                        else " Bluetooth timing marginal."
+                    )
                 if bluetooth_mode:
                     timing_msg = (
                         f" Timing Quality: start {start_conf:.1f}, "
@@ -4216,6 +4238,10 @@ class MainWindow(QMainWindow):
             start_alignment_confidence_min=float(self._settings.get("start_alignment_confidence_min")),
             end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
+            sweep_noise_margin_min_db=float(
+                self._settings.get("sweep_noise_margin_min_db")
+            ),
+            snr_warn_db=float(self._settings.get("snr_warn_db")),
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()

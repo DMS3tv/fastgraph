@@ -137,11 +137,39 @@ class SettingsWidget(QWidget):
         self._latency.addItems(["low", "high"])
 
         self._start_conf_min = QDoubleSpinBox()
-        self._start_conf_min.setRange(2.0, 30.0)
+        self._start_conf_min.setRange(0.0, 30.0)
         self._start_conf_min.setSingleStep(0.5)
         self._start_conf_min.setDecimals(1)
+        self._start_conf_min.setSpecialValueText("Off")
         self._start_conf_min.setToolTip(
-            "Minimum sweep-start alignment confidence. Higher values are stricter."
+            "Minimum sweep alignment confidence (peak-to-background of the sweep "
+            "correlation) in every mode. A recording is rejected only when this "
+            "AND the noise margin both fall below their minimums, so rolled-off "
+            "band edges and echoes do not cause false rejections. 0 turns the "
+            "check off."
+        )
+
+        self._noise_margin_min = QDoubleSpinBox()
+        self._noise_margin_min.setRange(0.0, 60.0)
+        self._noise_margin_min.setSingleStep(0.5)
+        self._noise_margin_min.setDecimals(1)
+        self._noise_margin_min.setSuffix(" dB")
+        self._noise_margin_min.setSpecialValueText("Off")
+        self._noise_margin_min.setToolTip(
+            "Minimum level of the middle of the sweep above the measured noise "
+            "floor. Used together with alignment confidence: both must fail for "
+            "a rejection. 0 turns the check off."
+        )
+
+        self._snr_warn = QDoubleSpinBox()
+        self._snr_warn.setRange(0.0, 60.0)
+        self._snr_warn.setSingleStep(1.0)
+        self._snr_warn.setDecimals(1)
+        self._snr_warn.setSuffix(" dB")
+        self._snr_warn.setSpecialValueText("Off")
+        self._snr_warn.setToolTip(
+            "Show a warning in the review dialog when the sweep SNR is below "
+            "this value. Never rejects a measurement. 0 turns the warning off."
         )
 
         self._end_conf_min = QDoubleSpinBox()
@@ -167,7 +195,9 @@ class SettingsWidget(QWidget):
         sweep_form.addRow("Pre-sweep Silence", self._pre_silence)
         sweep_form.addRow("Post-sweep Silence", self._post_silence)
         sweep_form.addRow("Latency Mode", self._latency)
-        sweep_form.addRow("Start Align Confidence Min", self._start_conf_min)
+        sweep_form.addRow("Alignment Confidence Min", self._start_conf_min)
+        sweep_form.addRow("Sweep Noise Margin Min", self._noise_margin_min)
+        sweep_form.addRow("SNR Warning Below", self._snr_warn)
         sweep_form.addRow("End Marker Confidence Min", self._end_conf_min)
         sweep_form.addRow("Max Timing Drift", self._timing_drift_max_ms)
         layout.addWidget(self._sweep_group)
@@ -277,6 +307,14 @@ class SettingsWidget(QWidget):
             lambda: self._save(
                 "start_alignment_confidence_min", self._start_conf_min.value()
             )
+        )
+        self._noise_margin_min.editingFinished.connect(
+            lambda: self._save(
+                "sweep_noise_margin_min_db", self._noise_margin_min.value()
+            )
+        )
+        self._snr_warn.editingFinished.connect(
+            lambda: self._save("snr_warn_db", self._snr_warn.value())
         )
         self._end_conf_min.editingFinished.connect(
             lambda: self._save(
@@ -425,6 +463,10 @@ class SettingsWidget(QWidget):
             self._start_conf_min.setValue(
                 float(self._settings.get("start_alignment_confidence_min"))
             )
+            self._noise_margin_min.setValue(
+                float(self._settings.get("sweep_noise_margin_min_db"))
+            )
+            self._snr_warn.setValue(float(self._settings.get("snr_warn_db")))
             self._end_conf_min.setValue(
                 float(self._settings.get("end_marker_confidence_min"))
             )

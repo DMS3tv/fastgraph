@@ -7,14 +7,13 @@ from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
 
 
 _DEFAULTS: dict[str, Any] = {
+    "settings_schema_version": 2,
     "theme": "dark",
     "brand_mode": False,
     "brand_mode_unlocked": False,
     "sweep_duration": 2.0,
     "sample_rate": 48000,
     "buffer_size": 1024,
-    "f_low": 20.0,
-    "f_high": 20000.0,
     "output_device": None,
     "input_device": None,
     "input_channel": 0,
@@ -39,7 +38,13 @@ _DEFAULTS: dict[str, Any] = {
     "latency_user_override": False,
     "bluetooth_headphone_mode": False,
     "standard_measurement_profile_snapshot": None,
-    "start_alignment_confidence_min": 9.0,
+    # Peak-to-background confidence of the sweep correlation, all modes.
+    # Real measurement logs show valid sweeps at 61 and above and silence or
+    # unrelated signals at 4.4 and below; 6.0 sits in that gap. 0 turns the
+    # check off. Rejection also needs the noise margin below to fail.
+    "start_alignment_confidence_min": 6.0,
+    "sweep_noise_margin_min_db": 3.0,
+    "snr_warn_db": 10.0,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,
     "update_check_enabled": True,
@@ -102,15 +107,51 @@ class SettingsManager:
             self._session_overrides.pop(key, None)
 
     def _load(self) -> None:
+        saved: dict[str, Any] = {}
         if self._path.exists():
             try:
                 with open(self._path, "r") as f:
-                    saved = json.load(f)
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    saved = loaded
                 self._data.update(saved)
             except Exception:
                 pass
         if not bool(self._data.get("brand_mode_unlocked")):
             self._data["brand_mode"] = False
+        self._migrate_alignment_confidence(saved)
+
+    _LEGACY_START_CONFIDENCE_DEFAULT = 9.0
+
+    def _migrate_alignment_confidence(self, saved: dict[str, Any]) -> None:
+        """
+        Move a never-customized start-confidence value onto the new default.
+
+        Before 2026-09 the confidence was min(peak-to-background,
+        peak-to-next-best) with a default of 9.0 that only Bluetooth mode
+        enforced. It is now peak-to-background alone, enforced in every mode,
+        with a default of 6.0. A stored 9.0 from a schema-1 file is the old
+        default and is moved; any other stored value was chosen by the user
+        and is kept. The schema version is bumped so a deliberate 9.0 chosen
+        later is never migrated again.
+        """
+        if not saved:
+            return
+        try:
+            schema = int(saved.get("settings_schema_version") or 1)
+        except (TypeError, ValueError):
+            schema = 1
+        if schema >= 2:
+            return
+        try:
+            stored = float(saved.get("start_alignment_confidence_min"))
+        except (TypeError, ValueError):
+            stored = self._LEGACY_START_CONFIDENCE_DEFAULT
+        if stored == self._LEGACY_START_CONFIDENCE_DEFAULT:
+            self._data["start_alignment_confidence_min"] = _DEFAULTS[
+                "start_alignment_confidence_min"
+            ]
+        self._data["settings_schema_version"] = 2
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

@@ -761,7 +761,8 @@ def test_truncated_sweep_window_still_fails() -> None:
         ValueError,
         match=(
             "Low end-marker confidence|Unable to verify end marker timing|"
-            "Aligned recording shorter than expected|Timing drift too large"
+            "Aligned recording shorter than expected|Timing drift too large|"
+            "Low start-alignment confidence"
         ),
     ):
         align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())

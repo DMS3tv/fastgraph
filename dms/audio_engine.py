@@ -463,6 +463,8 @@ class SweepWorker(QObject):
         end_marker_confidence_min: float = 7.0,
         timing_drift_max_ms: float = 35.0,
         output_channel: int | None = None,
+        sweep_noise_margin_min_db: float = 3.0,
+        snr_warn_db: float = 10.0,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -474,6 +476,7 @@ class SweepWorker(QObject):
                 bluetooth_headphone_mode,
                 start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
                 output_channel,
+                sweep_noise_margin_min_db, snr_warn_db,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -486,6 +489,8 @@ class SweepWorker(QObject):
         output_device_label, input_device_label, bluetooth_headphone_mode,
         start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
         output_channel=None,
+        sweep_noise_margin_min_db=3.0,
+        snr_warn_db=10.0,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)
@@ -584,6 +589,8 @@ class SweepWorker(QObject):
                     start_alignment_confidence_min=start_alignment_confidence_min,
                     end_marker_confidence_min=end_marker_confidence_min,
                     timing_drift_max_ms=timing_drift_max_ms,
+                    sweep_noise_margin_min_db=sweep_noise_margin_min_db,
+                    snr_warn_db=snr_warn_db,
                 ),
             )
         except MeasurementAlignmentError as exc:

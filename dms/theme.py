@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
@@ -955,8 +957,17 @@ class ThemeController(QObject):
     theme_changed = pyqtSignal(str)
     brand_mode_changed = pyqtSignal(bool)
 
-    def __init__(self, app: QApplication, settings: SettingsManager) -> None:
-        super().__init__(app)
+    def __init__(
+        self,
+        app: QApplication,
+        settings: SettingsManager,
+        parent: Optional[QObject] = None,
+    ) -> None:
+        # The controller is deliberately not parented to the application. The
+        # owner (main.py or a MainWindow) keeps it alive; parenting it to the
+        # QApplication made every controller permanent for the process
+        # lifetime, which mattered for tests that build many windows.
+        super().__init__(parent)
         self._app = app
         self._settings = settings
         self._theme = normalize_theme(settings.get("theme"))
@@ -993,15 +1004,26 @@ class ThemeController(QObject):
 
     def _apply(self) -> None:
         if self._brand_mode:
-            self._app.setProperty("fastgraphVisualMode", "brand")
-            self._app.setPalette(_brand_palette())
-            self._app.setStyleSheet(brand_application_stylesheet())
-            configure_dither_typography(self._app, False)
+            mode = "brand"
+            palette = _brand_palette()
+            stylesheet = brand_application_stylesheet()
+            flat_controls = False
         else:
-            self._app.setProperty("fastgraphVisualMode", self._theme)
-            self._app.setPalette(_palette(self._theme))
-            self._app.setStyleSheet(application_stylesheet(self._theme))
-            configure_dither_typography(
-                self._app,
-                tokens_for(self._theme).flat_controls,
-            )
+            mode = self._theme
+            palette = _palette(self._theme)
+            stylesheet = application_stylesheet(self._theme)
+            flat_controls = tokens_for(self._theme).flat_controls
+
+        # Qt re-polishes every live widget on setStyleSheet even when the
+        # sheet is unchanged, so skip the whole application when nothing
+        # differs from what is already applied.
+        if (
+            self._app.property("fastgraphVisualMode") == mode
+            and self._app.styleSheet() == stylesheet
+        ):
+            return
+
+        self._app.setProperty("fastgraphVisualMode", mode)
+        self._app.setPalette(palette)
+        self._app.setStyleSheet(stylesheet)
+        configure_dither_typography(self._app, flat_controls)

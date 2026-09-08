@@ -6,9 +6,9 @@ import pytest
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import (
-    QApplication,
     QColorDialog,
     QGroupBox,
+    QLabel,
     QMessageBox,
     QPushButton,
     QWidget,
@@ -16,6 +16,14 @@ from PyQt6.QtWidgets import (
 
 from dms.curator.export_image import (
     ACCENT_COLOR,
+    PLOT_INSET_BOTTOM,
+    PLOT_INSET_LEFT,
+    PLOT_INSET_RIGHT,
+    PLOT_INSET_TOP,
+    _curve_path,
+    _y_for_db,
+    aligned_bounds,
+    aspect_locked_rect,
     DITHER_FOOTER_HEIGHT,
     FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
     _draw_legend,
@@ -23,7 +31,8 @@ from dms.curator.export_image import (
     fit_title,
 )
 import dms.curator.export_image as export_image_module
-from dms.curator.models import CurveData, GraphState, PreferenceBounds
+from dms.curator.export_brand import brand_display_color
+from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.theme import (
     DARK,
     DITHER,
@@ -32,7 +41,8 @@ from dms.theme import (
     HACKERMAN_95,
     theme_trace_palette,
 )
-from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions
+from dms.theme import ensure_graph_color
+from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions, tokens_for
 from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 import dms.ui.curator_widget as main_window_module
 from dms.ui.curator_widget import CuratorWidget
@@ -40,12 +50,24 @@ from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.console import ConsoleEventStore
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
+@pytest.fixture
+def make_curator(qapp):
+    """Build ``CuratorWidget``s and delete every one of them after the test."""
+    created = []
+
+    def _make(*args, **kwargs):
+        widget = CuratorWidget(*args, **kwargs)
+        created.append(widget)
+        return widget
+
+    yield _make
+
+    for widget in created:
+        widget.close()
+        widget.deleteLater()
 
 
-def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, tmp_path: Path) -> None:
+def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(make_curator, qapp, tmp_path: Path) -> None:
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("100 1\n1000 5\n", encoding="utf-8")
@@ -56,7 +78,7 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, 
         encoding="utf-8",
     )
 
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([first, second])
 
     assert len(window.graph_state.layers) == 2
@@ -69,8 +91,8 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(qapp, 
     assert window._graph_stage._rounded_graph.radius == 10
 
 
-def test_curator_preview_curves_have_no_glow_items(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore())
+def test_curator_preview_curves_have_no_glow_items(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
     fr = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -92,8 +114,8 @@ def test_curator_preview_curves_have_no_glow_items(qapp) -> None:
     assert window.graph_state.y_max == 10.0
 
 
-def test_fastgraph95_curves_use_the_fine_step_display_renderer(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore(), theme=FASTGRAPH_95)
+def test_fastgraph95_curves_use_the_fine_step_display_renderer(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore(), theme=FASTGRAPH_95)
     fr = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -114,8 +136,8 @@ def test_fastgraph95_curves_use_the_fine_step_display_renderer(qapp) -> None:
     window.close()
 
 
-def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore(), theme=HACKERMAN_95)
+def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore(), theme=HACKERMAN_95)
     curve = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -132,6 +154,7 @@ def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(qapp) 
 
 
 def test_color_dialog_standard_swatches_follow_active_theme_and_background(
+    make_curator,
     qapp, monkeypatch
 ) -> None:
     standard_colors: dict[int, str] = {}
@@ -156,7 +179,7 @@ def test_color_dialog_standard_swatches_follow_active_theme_and_background(
         freqs=np.array([100.0, 1000.0]),
         mag_db=np.array([1.0, 0.0]),
     )
-    window = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    window = make_curator(ConsoleEventStore(), theme=DITHER)
     layer = window.add_curve(curve, "Layer", animate=False)
     window._choose_layer_color(layer.id, QPushButton())
 
@@ -232,7 +255,7 @@ def test_standard_export_curve_uses_only_solid_stroke(monkeypatch) -> None:
     assert painter.pens[0].dashPattern() == []
 
 
-def test_dither_curator_variation_median_matches_solid_measure_median(qapp) -> None:
+def test_dither_curator_variation_median_matches_solid_measure_median(make_curator, qapp) -> None:
     variation = CurveData(
         kind="variation",
         freqs=np.array([100.0, 1000.0]),
@@ -242,7 +265,7 @@ def test_dither_curator_variation_median_matches_solid_measure_median(qapp) -> N
         p75_db=np.array([1.0, 2.0]),
         p90_db=np.array([2.0, 3.0]),
     )
-    curator = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    curator = make_curator(ConsoleEventStore(), theme=DITHER)
     curator.add_curve(variation, "Variation", animate=False)
     curator._redraw()
     curator_median = next(
@@ -272,10 +295,10 @@ def test_dither_curator_variation_median_matches_solid_measure_median(qapp) -> N
     measure.close()
 
 
-def test_layer_row_checkbox_toggles_visibility(qapp, tmp_path: Path) -> None:
+def test_layer_row_checkbox_toggles_visibility(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([source])
 
     item = window._layer_list.item(0)
@@ -285,10 +308,10 @@ def test_layer_row_checkbox_toggles_visibility(qapp, tmp_path: Path) -> None:
     assert window.graph_state.layers[0].visible is False
 
 
-def test_data_rows_expose_inline_layer_controls(qapp, tmp_path: Path) -> None:
+def test_data_rows_expose_inline_layer_controls(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([source])
 
     group_titles = {box.title() for box in window.findChildren(QGroupBox)}
@@ -317,7 +340,7 @@ def test_data_rows_expose_inline_layer_controls(qapp, tmp_path: Path) -> None:
     assert row.name_edit.text() == "Renamed Layer"
 
 
-def test_create_combined_variation_hides_sources_and_disables_hrtf(qapp, tmp_path: Path) -> None:
+def test_create_combined_variation_hides_sources_and_disables_hrtf(make_curator, qapp, tmp_path: Path) -> None:
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text(
@@ -330,7 +353,7 @@ def test_create_combined_variation_hides_sources_and_disables_hrtf(qapp, tmp_pat
         "1000 15 16 17 18 19\n",
         encoding="utf-8",
     )
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([first, second])
 
     for index in range(window._layer_list.count()):
@@ -353,7 +376,7 @@ def test_create_combined_variation_hides_sources_and_disables_hrtf(qapp, tmp_pat
     assert row.offset_spin.isEnabled()
 
 
-def test_combine_button_ignores_fr_layers(qapp, tmp_path: Path) -> None:
+def test_combine_button_ignores_fr_layers(make_curator, qapp, tmp_path: Path) -> None:
     variation = tmp_path / "variation.txt"
     fr = tmp_path / "fr.txt"
     variation.write_text(
@@ -362,7 +385,7 @@ def test_combine_button_ignores_fr_layers(qapp, tmp_path: Path) -> None:
         encoding="utf-8",
     )
     fr.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([variation, fr])
 
     for index in range(window._layer_list.count()):
@@ -371,7 +394,7 @@ def test_combine_button_ignores_fr_layers(qapp, tmp_path: Path) -> None:
     assert not window._combine_btn.isEnabled()
 
 
-def test_hrtf_dropdown_reads_hrtf_folder(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_hrtf_dropdown_reads_hrtf_folder(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     bounds_dir = tmp_path / "Bounds"
     hrtf_dir.mkdir()
@@ -385,7 +408,7 @@ def test_hrtf_dropdown_reads_hrtf_folder(qapp, tmp_path: Path, monkeypatch) -> N
 
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([source])
 
     row = window._layer_list.itemWidget(window._layer_list.item(0))
@@ -395,7 +418,7 @@ def test_hrtf_dropdown_reads_hrtf_folder(qapp, tmp_path: Path, monkeypatch) -> N
     assert window.graph_state.layers[0].hrtf.name == "Fixture A"
 
 
-def test_bounds_switch_uses_bounds_folder(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_bounds_switch_uses_bounds_folder(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     bounds_dir = tmp_path / "Bounds"
     hrtf_dir.mkdir()
@@ -408,7 +431,7 @@ def test_bounds_switch_uses_bounds_folder(qapp, tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", upper)
     monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", lower)
 
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
 
     assert window.graph_state.bounds.upper_path == upper
     assert window.graph_state.bounds.enabled is False
@@ -416,16 +439,16 @@ def test_bounds_switch_uses_bounds_folder(qapp, tmp_path: Path, monkeypatch) -> 
     assert window.graph_state.bounds.enabled is True
 
 
-def test_export_button_lives_inside_view_box(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore())
+def test_export_button_lives_inside_view_box(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
 
     assert window._export_btn.parent() == window._view_box
     assert window._export_btn.objectName() == "exportButton"
     assert window._export_btn in window._view_box.findChildren(QPushButton)
 
 
-def test_view_aspect_toggle_and_reset(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore())
+def test_view_aspect_toggle_and_reset(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
 
     assert window._bounds_enabled.minimumSizeHint().width() >= 54
     assert window._aspect_lock_enabled.minimumSizeHint().width() >= 54
@@ -446,14 +469,14 @@ def test_view_aspect_toggle_and_reset(qapp) -> None:
     assert window.graph_state.show_layer_names is True
 
 
-def test_curator_uses_right_sidebar_and_drop_import(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_curator_uses_right_sidebar_and_drop_import(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "drop.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
     unsupported = tmp_path / "ignore.csv"
     unsupported.write_text("100,1\n", encoding="utf-8")
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
 
     class _Mime:
         def urls(self):
@@ -532,8 +555,8 @@ def test_export_legend_expands_and_never_elides_layer_names(qapp) -> None:
     assert painter.boxes[0].width() > 290
 
 
-def test_viewport_text_inputs_update_export_text(qapp) -> None:
-    window = CuratorWidget(ConsoleEventStore())
+def test_viewport_text_inputs_update_export_text(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
 
     assert window._graph_stage.fixture_input.text() == ""
     assert window._graph_stage.hrtf_note_input.text() == "Test Fixture"
@@ -549,7 +572,7 @@ def test_viewport_text_inputs_update_export_text(qapp) -> None:
     assert window.graph_state.export_text.notes == ""
 
 
-def test_wipe_runs_for_bounds_and_measurement_changes(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_wipe_runs_for_bounds_and_measurement_changes(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     bounds_dir = tmp_path / "Bounds"
     hrtf_dir.mkdir()
@@ -562,7 +585,7 @@ def test_wipe_runs_for_bounds_and_measurement_changes(qapp, tmp_path: Path, monk
     monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", upper)
     monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", lower)
 
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     wipes: list[dict] = []
     assert not hasattr(window._graph_stage, "_wipe_overlay")
     window._graph.start_data_wipe = lambda **kwargs: wipes.append(kwargs)
@@ -588,10 +611,10 @@ def test_wipe_runs_for_bounds_and_measurement_changes(qapp, tmp_path: Path, monk
     assert len(wipes) == 4
 
 
-def test_export_graph_image_writes_16_by_9_png(qapp, tmp_path: Path) -> None:
+def test_export_graph_image_writes_16_by_9_png(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore())
+    window = make_curator(ConsoleEventStore())
     window.import_files([source])
     output = tmp_path / "poster.png"
 
@@ -604,11 +627,12 @@ def test_export_graph_image_writes_16_by_9_png(qapp, tmp_path: Path) -> None:
 
 
 def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
+    make_curator,
     qapp, tmp_path: Path
 ) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore(), theme=FASTGRAPH_95_DARK)
+    window = make_curator(ConsoleEventStore(), theme=FASTGRAPH_95_DARK)
     window.import_files([source])
     output = tmp_path / "poster-dark.png"
 
@@ -634,10 +658,10 @@ def test_existing_export_themes_keep_matching_classic_and_retro_flags() -> None:
     assert BRAND_TOKENS.classic_controls is BRAND_TOKENS.retro_graph
 
 
-def test_dither_export_uses_tokens_and_excludes_gold_accent(qapp, tmp_path: Path) -> None:
+def test_dither_export_uses_tokens_and_excludes_gold_accent(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "dither-curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = CuratorWidget(ConsoleEventStore(), theme=DITHER)
+    window = make_curator(ConsoleEventStore(), theme=DITHER)
     window.import_files([source])
     window.graph_state.export_text.title = "Dither Export"
     window.graph_state.export_text.fixture = "Fixture"
@@ -741,6 +765,10 @@ def test_dither_export_bounds_density_varies_from_edge_to_center(
 
     image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
     ink = QColor(DITHER_TOKENS.plot_grid).rgba()
+    plot_rect = _poster_plot_rect(state, (800, 600))
+    upper_y = round(_y_for_db(plot_rect, 5.0, state.y_min, state.y_max))
+    lower_y = round(_y_for_db(plot_rect, -5.0, state.y_min, state.y_max))
+    center_y = round(_y_for_db(plot_rect, 0.0, state.y_min, state.y_max))
 
     def coverage(y_start: int, y_stop: int) -> int:
         return sum(
@@ -749,8 +777,8 @@ def test_dither_export_bounds_density_varies_from_edge_to_center(
             for x in range(140, 640)
         )
 
-    near_edges = coverage(229, 237) + coverage(344, 352)
-    center = 2 * coverage(286, 294)
+    near_edges = coverage(upper_y + 2, upper_y + 10) + coverage(lower_y - 10, lower_y - 2)
+    center = 2 * coverage(center_y - 4, center_y + 4)
     assert near_edges > center * 2
 
 
@@ -772,3 +800,428 @@ def test_frequency_markers_include_1k_3k_8k_and_10k_weights() -> None:
     assert 8000 not in FREQUENCY_MARKERS
     assert FREQUENCY_MARKERS[1000][4] > FREQUENCY_MARKERS[3000][4]
     assert FREQUENCY_MARKERS[10000][4] > FREQUENCY_MARKERS[3000][4]
+
+
+def _poster_plot_rect(state: GraphState, size: tuple[int, int]) -> QRectF:
+    """The data rectangle ``_draw_poster`` uses for the given state and size."""
+    width, height = size
+    frame = QRectF(72, 150, width - 144, height - 280).adjusted(
+        PLOT_INSET_LEFT,
+        PLOT_INSET_TOP,
+        -PLOT_INSET_RIGHT,
+        -PLOT_INSET_BOTTOM,
+    )
+    if not state.aspect_locked_25db:
+        return frame
+    return aspect_locked_rect(frame, state.y_min, state.y_max)
+
+
+def _variation_state(**kwargs) -> GraphState:
+    freqs = np.array([20.0, 1000.0, 20000.0])
+    state = GraphState(**kwargs)
+    state.layers.append(
+        LayerState(
+            curve=CurveData(
+                kind="variation",
+                freqs=freqs,
+                p10_db=np.array([-4.0, -4.0, -4.0]),
+                p25_db=np.array([-2.0, -2.0, -2.0]),
+                median_db=np.array([0.0, 0.0, 0.0]),
+                p75_db=np.array([2.0, 2.0, 2.0]),
+                p90_db=np.array([4.0, 4.0, 4.0]),
+            ),
+            source_path=Path("variation.txt"),
+            name="Variation",
+            color="#15f4ee",
+        )
+    )
+    return state
+
+
+def test_out_of_band_points_are_dropped_instead_of_clamped() -> None:
+    rect = QRectF(0.0, 0.0, 300.0, 100.0)
+    freqs = np.array([5.0, 20.0, 1000.0, 20000.0, 48000.0])
+    mags = np.array([-40.0, 0.0, 1.0, 0.0, 40.0])
+
+    path = _curve_path(rect, freqs, mags, -10.0, 10.0)
+
+    assert path.elementCount() == 3
+    xs = [path.elementAt(index).x for index in range(path.elementCount())]
+    assert xs[0] == pytest.approx(rect.left())
+    assert xs[-1] == pytest.approx(rect.right())
+    # The clamped version drew a vertical spike from the 5 Hz point at x = left.
+    ys = [path.elementAt(index).y for index in range(path.elementCount())]
+    assert all(rect.top() <= y <= rect.bottom() for y in ys)
+
+
+def test_out_of_band_points_do_not_spike_the_exported_png(qapp, tmp_path: Path) -> None:
+    freqs = np.array([5.0, 20.0, 1000.0, 20000.0, 40000.0])
+    state = GraphState(y_min=-10.0, y_max=10.0)
+    state.layers.append(
+        LayerState(
+            curve=CurveData(
+                kind="fr",
+                freqs=freqs,
+                mag_db=np.array([-9.0, 0.0, 0.0, 0.0, 9.0]),
+            ),
+            source_path=Path("spike.txt"),
+            name="Spike",
+            color="#ff0000",
+        )
+    )
+    state.show_layer_names = False
+    output = tmp_path / "spike.png"
+
+    export_graph_image(state, output, size=(800, 600), theme=DARK)
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    plot_rect = _poster_plot_rect(state, (800, 600))
+    top = int(plot_rect.top()) + 1
+    bottom = int(plot_rect.bottom()) - 1
+
+    def trace_pixels(x: int) -> int:
+        return sum(
+            1
+            for y in range(top, bottom)
+            if image.pixelColor(x, y).red() > 150 and image.pixelColor(x, y).green() < 80
+        )
+
+    left = int(round(plot_rect.left()))
+    right = int(round(plot_rect.right())) - 1
+    assert trace_pixels(left) > 0
+    assert trace_pixels(right) > 0
+    # Clamping the 5 Hz and 40 kHz points onto the edges drew a tall vertical
+    # spike there; only the pen width should be lit now.
+    assert trace_pixels(left) <= 6
+    assert trace_pixels(right) <= 6
+
+
+def test_poster_honours_the_25db_per_decade_lock(qapp, tmp_path: Path) -> None:
+    locked = _variation_state(y_min=-10.0, y_max=10.0, aspect_locked_25db=True)
+    free = _variation_state(y_min=-10.0, y_max=10.0, aspect_locked_25db=False)
+    locked.show_layer_names = False
+    free.show_layer_names = False
+    locked_path = tmp_path / "locked.png"
+    free_path = tmp_path / "free.png"
+
+    export_graph_image(locked, locked_path, size=(800, 600), theme=DARK)
+    export_graph_image(free, free_path, size=(800, 600), theme=DARK)
+
+    assert locked_path.read_bytes() != free_path.read_bytes()
+    locked_rect = _poster_plot_rect(locked, (800, 600))
+    free_rect = _poster_plot_rect(free, (800, 600))
+    assert locked_rect.height() < free_rect.height()
+    # 25 dB must span exactly one decade of width.
+    db_per_pixel = (locked.y_max - locked.y_min) / locked_rect.height()
+    decades_per_pixel = 3.0 / locked_rect.width()
+    assert db_per_pixel / decades_per_pixel == pytest.approx(25.0, rel=1e-6)
+
+
+def test_aspect_lock_widens_instead_of_cropping_a_tall_db_range() -> None:
+    rect = QRectF(0.0, 0.0, 900.0, 300.0)
+
+    locked = aspect_locked_rect(rect, -60.0, 60.0)
+
+    assert locked.height() == pytest.approx(rect.height())
+    assert locked.width() < rect.width()
+    assert locked.center().x() == pytest.approx(rect.center().x())
+
+
+def test_bounds_renderers_interpolate_the_lower_bound_onto_the_upper_grid() -> None:
+    upper = CurveData(
+        kind="fr",
+        freqs=np.array([20.0, 200.0, 2000.0, 20000.0]),
+        mag_db=np.array([5.0, 5.0, 5.0, 5.0]),
+    )
+    lower = CurveData(
+        kind="fr",
+        freqs=np.array([20.0, 20000.0]),
+        mag_db=np.array([-5.0, -1.0]),
+    )
+
+    freqs, upper_values, lower_values = aligned_bounds(upper, lower)
+
+    assert np.array_equal(freqs, upper.freqs)
+    assert np.array_equal(upper_values, upper.mag_db)
+    assert lower_values.shape == freqs.shape
+    assert np.allclose(lower_values, np.interp(upper.freqs, lower.freqs, lower.mag_db))
+    assert lower_values[0] == pytest.approx(-5.0)
+    assert lower_values[-1] == pytest.approx(-1.0)
+
+
+def test_mismatched_bounds_grids_no_longer_zip_by_index(qapp, tmp_path: Path) -> None:
+    state = GraphState(y_min=-10.0, y_max=10.0)
+    state.show_layer_names = False
+    state.bounds = PreferenceBounds(
+        enabled=True,
+        upper=CurveData(
+            kind="fr",
+            freqs=np.array([20.0, 200.0, 2000.0, 20000.0]),
+            mag_db=np.array([5.0, 5.0, 5.0, 5.0]),
+        ),
+        lower=CurveData(
+            kind="fr",
+            freqs=np.array([20.0, 20000.0]),
+            mag_db=np.array([-5.0, -5.0]),
+        ),
+    )
+    output = tmp_path / "bounds.png"
+
+    export_graph_image(state, output, size=(800, 600), theme=DARK)
+
+    image = QImage(str(output)).convertToFormat(QImage.Format.Format_RGBA8888)
+    plot_rect = _poster_plot_rect(state, (800, 600))
+    right = int(round(plot_rect.right())) - 3
+    inside = int(round(_y_for_db(plot_rect, -4.0, state.y_min, state.y_max)))
+    outside = int(round(_y_for_db(plot_rect, -8.0, state.y_min, state.y_max)))
+    background = image.pixelColor(right, outside)
+    band = image.pixelColor(right, inside)
+    assert band != background
+
+
+def test_brand_layer_colors_go_through_the_contrast_guard() -> None:
+    dark = "#101010"
+
+    assert brand_display_color(dark) != QColor(dark)
+    assert brand_display_color("#15f4ee") == QColor("#15f4ee")
+
+
+def test_brand_show_names_works_outside_clean_slate(qapp, tmp_path: Path) -> None:
+    def render(show_names: bool, clean_slate: bool) -> bytes:
+        state = _variation_state()
+        state.layers[0].name = "Layer Name Here"
+        state.show_layer_names = show_names
+        state.brand_clean_slate = clean_slate
+        output = tmp_path / f"brand-{show_names}-{clean_slate}.png"
+        export_graph_image(state, output, size=(960, 540), brand_mode=True)
+        return output.read_bytes()
+
+    assert render(True, False) != render(False, False)
+    assert render(True, True) != render(False, True)
+
+
+def _curator_events(window) -> list:
+    return [event for event in window._events.events() if event.source == "curator"]
+
+
+def test_remove_acts_on_every_selected_layer(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+    curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
+    first = window.add_curve(curve, "First", animate=False)
+    second = window.add_curve(curve, "Second", animate=False)
+    window.add_curve(curve, "Third", animate=False)
+    window._sync_ui()
+    for index in range(window._layer_list.count()):
+        item = window._layer_list.item(index)
+        item.setSelected(item.data(256) in {first.id, second.id})
+
+    window._remove_selected_layer()
+
+    assert [layer.name for layer in window.graph_state.layers] == ["Third"]
+
+
+def test_remove_falls_back_to_the_focused_row_when_nothing_is_selected(
+    make_curator, qapp
+) -> None:
+    window = make_curator(ConsoleEventStore())
+    curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
+    window.add_curve(curve, "First", animate=False)
+    second = window.add_curve(curve, "Second", animate=False)
+    window._sync_ui()
+    for index in range(window._layer_list.count()):
+        window._layer_list.item(index).setSelected(False)
+    window._selected_layer_id = second.id
+
+    window._remove_selected_layer()
+
+    assert [layer.name for layer in window.graph_state.layers] == ["First"]
+
+
+def test_move_up_and_down_reorder_layers(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+    curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
+    window.add_curve(curve, "First", animate=False)
+    window.add_curve(curve, "Second", animate=False)
+    window.add_curve(curve, "Third", animate=False)
+    window._selected_layer_id = window.graph_state.layers[2].id
+
+    window._move_up_btn.click()
+    assert [layer.name for layer in window.graph_state.layers] == [
+        "First",
+        "Third",
+        "Second",
+    ]
+
+    window._move_down_btn.click()
+    assert [layer.name for layer in window.graph_state.layers] == [
+        "First",
+        "Second",
+        "Third",
+    ]
+
+    # Moving past either end is a no-op rather than an error.
+    window._selected_layer_id = window.graph_state.layers[0].id
+    window._move_up_btn.click()
+    assert [layer.name for layer in window.graph_state.layers][0] == "First"
+    window._selected_layer_id = window.graph_state.layers[2].id
+    window._move_down_btn.click()
+    assert [layer.name for layer in window.graph_state.layers][2] == "Third"
+
+
+def _variation_curve(offset: float = 0.0) -> CurveData:
+    freqs = np.array([20.0, 1000.0, 20000.0])
+    ones = np.ones(3)
+    return CurveData(
+        kind="variation",
+        freqs=freqs,
+        p10_db=ones * (offset - 4.0),
+        p25_db=ones * (offset - 2.0),
+        median_db=ones * offset,
+        p75_db=ones * (offset + 2.0),
+        p90_db=ones * (offset + 4.0),
+    )
+
+
+def test_combined_layer_is_marked_stale_when_a_source_changes(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+    first = window.add_curve(_variation_curve(), "First", animate=False, normalize=False)
+    second = window.add_curve(_variation_curve(2.0), "Second", animate=False, normalize=False)
+
+    combined = window._combine_layers([first, second])
+    assert combined.is_combined
+    assert combined.stale is False
+
+    window._set_layer_offset(first.id, 5.0)
+
+    assert combined.stale is True
+    row = window._layer_list.itemWidget(
+        window._layer_list.item(len(window.graph_state.layers) - 1)
+    )
+    assert row.findChild(QLabel, "layerStaleBadge") is not None
+
+
+def test_combined_layer_is_marked_stale_when_a_source_is_removed(
+    make_curator, qapp
+) -> None:
+    window = make_curator(ConsoleEventStore())
+    first = window.add_curve(_variation_curve(), "First", animate=False, normalize=False)
+    second = window.add_curve(_variation_curve(2.0), "Second", animate=False, normalize=False)
+    combined = window._combine_layers([first, second])
+
+    window._selected_layer_id = first.id
+    for index in range(window._layer_list.count()):
+        item = window._layer_list.item(index)
+        item.setSelected(item.data(256) == first.id)
+    window._remove_selected_layer()
+
+    assert combined.stale is True
+
+
+def test_bounds_toggle_refuses_to_latch_without_bounds_files(
+    make_curator, qapp, monkeypatch
+) -> None:
+    window = make_curator(ConsoleEventStore())
+    window.graph_state.bounds = PreferenceBounds(enabled=False)
+    monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", Path("/nonexistent/upper.txt"))
+    monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", Path("/nonexistent/lower.txt"))
+    warned: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, text, *args, **kwargs: warned.append((title, text)),
+    )
+
+    window._bounds_enabled.setChecked(True)
+
+    assert window.graph_state.bounds.enabled is False
+    assert window._bounds_enabled.isChecked() is False
+    assert warned and "bounds" in warned[0][0].lower()
+    assert any(
+        event.severity == "WARNING" and "Preference bounds are unavailable" in event.message
+        for event in _curator_events(window)
+    )
+
+
+def test_bounds_toggle_still_latches_when_the_files_exist(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+
+    window._bounds_enabled.setChecked(True)
+
+    assert window.graph_state.bounds.enabled is True
+    assert window.graph_state.bounds.upper is not None
+
+
+def test_layer_row_swatch_uses_the_contrast_corrected_colour(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+    curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
+    layer = window.add_curve(curve, "Dark", animate=False)
+    layer.color = "#101010"
+    window._sync_ui()
+
+    row = window._layer_list.itemWidget(window._layer_list.item(0))
+    assert row.swatch_color.lower() != "#101010"
+    assert row.swatch_color.lower() == ensure_graph_color(
+        "#101010", window.graph_state.background
+    ).name().lower()
+    assert "#242a35" not in row.color_btn.styleSheet()
+
+
+def test_graph_legend_uses_display_colours_and_a_theme_chip(make_curator, qapp) -> None:
+    window = make_curator(ConsoleEventStore())
+    curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
+    layer = window.add_curve(curve, "Dark Layer", animate=False)
+    layer.color = "#101010"
+    window.graph_state.show_layer_names = True
+    window._redraw()
+
+    labels = [item for item in window._graph._items if isinstance(item, pg.TextItem)]
+    assert labels
+    expected = ensure_graph_color("#101010", window.graph_state.background)
+    assert labels[0].color.name().lower() == expected.name().lower()
+    fill, border = window._graph._legend_chip_colors()
+    tokens = tokens_for(window._theme, brand_mode=False)
+    assert fill.name().lower() == QColor(tokens.panel).name().lower()
+    assert border.name().lower() == QColor(tokens.border).name().lower()
+
+
+def test_import_status_is_error_toned_when_every_file_fails(
+    make_curator, qapp, tmp_path: Path, monkeypatch
+) -> None:
+    window = make_curator(ConsoleEventStore())
+    bad = tmp_path / "bad.txt"
+    bad.write_text("not data at all\n", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+
+    loaded, failures = window.import_files([bad])
+
+    assert loaded == 0
+    assert failures
+    statuses = [
+        event
+        for event in _curator_events(window)
+        if event.message.startswith("Import failed")
+    ]
+    assert statuses and statuses[-1].severity == "ERROR"
+
+
+def test_import_surfaces_parser_and_normalization_warnings(
+    make_curator, qapp, tmp_path: Path, monkeypatch
+) -> None:
+    partial = tmp_path / "partial.txt"
+    partial.write_text("20 1\n100 2\n100 4\n500 3\n", encoding="utf-8")
+    window = make_curator(ConsoleEventStore())
+    shown: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, _title, text, *args, **kwargs: shown.append(text),
+    )
+
+    loaded, failures = window.import_files([partial])
+
+    assert loaded == 1
+    assert not failures
+    assert shown
+    assert "repeated frequency" in shown[0]
+    assert "1 kHz" in shown[0]
+    assert window.graph_state.layers[0].vertical_offset_db == 0.0

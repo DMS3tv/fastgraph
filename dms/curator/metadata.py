@@ -33,6 +33,8 @@ FIELD_ALIASES = {
     "hrtfname": "hrtf_name",
     "compensated": "compensated",
     "curvetype": "curve_type",
+    "variationsweeps": "variation_sweeps",
+    "sweeps": "variation_sweeps",
     "source": "source",
 }
 

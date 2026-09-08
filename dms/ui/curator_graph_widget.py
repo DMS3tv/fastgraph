@@ -8,6 +8,7 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, pyqtProperty
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QWidget
 
+from dms.curator.export_image import aligned_bounds
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
 from dms.graph_display import (
@@ -155,6 +156,15 @@ class GraphWidget(LockedPlotWidget):
         background = self._state.background if self._state is not None else "#1a1a1a"
         return ensure_graph_color(color, background)
 
+    def _legend_chip_colors(self) -> tuple[QColor, QColor]:
+        """Legend chip fill and border taken from the active theme, not hard-coded."""
+        tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
+        fill = QColor(tokens.panel)
+        fill.setAlpha(224)
+        border = QColor(tokens.border)
+        border.setAlpha(190)
+        return fill, border
+
     @pyqtProperty(float)
     def wipeProgress(self) -> float:
         return self._wipe_progress
@@ -248,14 +258,15 @@ class GraphWidget(LockedPlotWidget):
         if state is None:
             return
         y_step = max(1.0, (state.y_max - state.y_min) * 0.055)
+        chip_fill, chip_border = self._legend_chip_colors()
         for index, (layer, _curve) in enumerate(shown):
             column = index // 8
             row = index % 8
             item = pg.TextItem(
                 text=f"━ {layer.name}",
-                color=layer.color,
-                fill=pg.mkBrush(20, 23, 29, 220),
-                border=pg.mkPen(95, 105, 120, 150),
+                color=self._display_color(layer.color),
+                fill=pg.mkBrush(chip_fill),
+                border=pg.mkPen(chip_border),
                 anchor=(1, 0),
             )
             item.setPos(
@@ -265,11 +276,12 @@ class GraphWidget(LockedPlotWidget):
             self.addItem(item)
             self._items.append(item)
         if len(layers) > len(shown):
+            tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
             overflow = pg.TextItem(
                 text=f"+{len(layers) - len(shown)} more",
-                color="#8f98a8",
-                fill=pg.mkBrush(20, 23, 29, 220),
-                border=pg.mkPen(95, 105, 120, 150),
+                color=self._display_color(tokens.muted),
+                fill=pg.mkBrush(chip_fill),
+                border=pg.mkPen(chip_border),
                 anchor=(1, 0),
             )
             overflow.setPos(np.log10(3500.0), state.y_max - 8 * y_step)
@@ -305,9 +317,10 @@ class GraphWidget(LockedPlotWidget):
         lower = bounds.lower
         if upper.mag_db is None or lower.mag_db is None:
             return
+        bounds_freqs, upper_values, lower_values = aligned_bounds(upper, lower)
         freqs, upper_mag, lower_mag = _trim_series_group(
-            upper.freqs,
-            (upper.mag_db, lower.mag_db),
+            bounds_freqs,
+            (upper_values, lower_values),
             progress,
         )
         if len(freqs) < 2:

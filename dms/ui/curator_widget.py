@@ -40,7 +40,7 @@ from dms.curator.transforms import (
     apply_layer_transform,
     can_combine_layers,
     combine_variation_layers,
-    normalization_offset_at_1khz,
+    normalization_offset_at_1khz_with_warning,
 )
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
@@ -51,7 +51,13 @@ from dms.brand_fonts import brand_font_status
 from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.console import ConsoleEventStore
-from dms.theme import DARK, theme_colors, theme_trace_palette
+from dms.theme import (
+    DARK,
+    ensure_graph_color,
+    brand_theme_colors,
+    theme_colors,
+    theme_trace_palette,
+)
 
 
 ACCENT_COLOR = "#FCBE11"
@@ -83,6 +89,8 @@ class LayerListRow(QWidget):
         on_name_changed,
         on_offset_changed,
         on_hrtf_changed,
+        swatch_color: str | None = None,
+        swatch_border: str = "#242a35",
     ) -> None:
         super().__init__()
         self.layer_id = layer.id
@@ -102,8 +110,10 @@ class LayerListRow(QWidget):
         self.color_btn.setObjectName("colorSwatch")
         self.color_btn.setToolTip("Choose layer color")
         self.color_btn.setFixedSize(22, 22)
+        self.swatch_color = swatch_color or layer.color
         self.color_btn.setStyleSheet(
-            f"background-color: {layer.color}; border: 1px solid #242a35; border-radius: 4px;"
+            f"background-color: {self.swatch_color}; "
+            f"border: 1px solid {swatch_border}; border-radius: 4px;"
         )
         self.color_btn.clicked.connect(
             lambda _checked=False, layer_id=layer.id: on_color_clicked(layer_id, self.color_btn)
@@ -129,6 +139,15 @@ class LayerListRow(QWidget):
             derived = QLabel("COMBO")
             derived.setStyleSheet("color: #aeb7c7; font-weight: 700;")
             top.addWidget(derived)
+        if layer.stale:
+            stale = QLabel("STALE")
+            stale.setObjectName("layerStaleBadge")
+            stale.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: 700;")
+            stale.setToolTip(
+                "A source layer changed since this combination was created. "
+                "Combine the sources again to refresh it."
+            )
+            top.addWidget(stale)
         layout.addLayout(top)
 
         controls = QHBoxLayout()
@@ -318,6 +337,7 @@ class CuratorWidget(QWidget):
         self._state.background = brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
+        self._last_import_warnings: list[str] = []
         self.setAcceptDrops(True)
         self._build_ui()
         self._configure_export_fields()
@@ -334,8 +354,8 @@ class CuratorWidget(QWidget):
     def _log(self, severity: str, message: str, **details) -> None:
         self._events.publish(severity, "curator", message, details)
 
-    def _show_status(self, message: str) -> None:
-        self._log("INFO", message)
+    def _show_status(self, message: str, severity: str = "INFO") -> None:
+        self._log(severity, message)
         window = self.window()
         if hasattr(window, "statusBar"):
             window.statusBar().showMessage(message)
@@ -372,6 +392,7 @@ class CuratorWidget(QWidget):
         hrtf=None,
         normalize: bool = True,
         animate: bool = True,
+        warnings: list[str] | None = None,
     ) -> LayerState:
         copied = CurveData(
             kind=curve.kind,
@@ -386,12 +407,20 @@ class CuratorWidget(QWidget):
         )
         colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
         color = colors[len(self._state.layers) % len(colors)]
+        offset = 0.0
+        if normalize:
+            offset, normalization_warning = normalization_offset_at_1khz_with_warning(copied)
+            if normalization_warning is not None:
+                message = f"{name}: {normalization_warning}"
+                if warnings is not None:
+                    warnings.append(message)
+                self._log("WARNING", "Layer was not normalized at 1 kHz", name=str(name))
         layer = LayerState(
             curve=copied,
             source_path=Path(source_path),
             name=str(name),
             color=color,
-            vertical_offset_db=normalization_offset_at_1khz(copied) if normalize else 0.0,
+            vertical_offset_db=offset,
             hrtf=hrtf,
         )
         self._state.layers.append(layer)
@@ -417,7 +446,10 @@ class CuratorWidget(QWidget):
     def offset_layer_to_zero_at_1khz(self, layer: LayerState) -> None:
         """Normalize the displayed layer with an offset, preserving source arrays."""
         transformed = apply_layer_transform(layer)
-        layer.vertical_offset_db += normalization_offset_at_1khz(transformed)
+        offset, warning = normalization_offset_at_1khz_with_warning(transformed)
+        if warning is not None:
+            self._show_status(f"{layer.name}: {warning}", severity="WARNING")
+        layer.vertical_offset_db += offset
         self._sync_ui()
         self._redraw()
         self._log(
@@ -433,18 +465,21 @@ class CuratorWidget(QWidget):
         loaded = 0
         loaded_layer_ids: set[str] = set()
         failures: list[str] = []
+        warnings: list[str] = []
         for path in paths:
             try:
                 curve = parse_measurement_txt(path)
             except Exception as exc:
                 failures.append(f"{Path(path).name}: {exc}")
                 continue
+            warnings.extend(curve.warnings)
             layer = self.add_curve(
                 curve,
                 Path(path).stem,
                 source_path=path,
                 normalize=True,
                 animate=False,
+                warnings=warnings,
             )
             loaded_layer_ids.add(layer.id)
             loaded += 1
@@ -453,11 +488,21 @@ class CuratorWidget(QWidget):
             self._selected_layer_id = self._state.layers[-1].id
             self._sync_ui()
             self._redraw_with_wipe(entering_layer_ids=loaded_layer_ids)
-        if failures and show_errors:
-            QMessageBox.warning(self, "Import Warnings", "\n".join(failures[:8]))
-        self._show_status(f"Imported {loaded} file(s).")
+        self._last_import_warnings = list(warnings)
+        messages = failures + warnings
+        if messages and show_errors:
+            QMessageBox.warning(self, "Import Warnings", "\n".join(messages[:8]))
+        if paths and loaded == 0:
+            self._show_status(
+                f"Import failed: none of the {len(paths)} selected file(s) could be read.",
+                severity="ERROR",
+            )
+        else:
+            self._show_status(f"Imported {loaded} file(s).")
         if failures:
             self._log("WARNING", "Some Curator imports failed", failures=failures)
+        if warnings:
+            self._log("WARNING", "Curator import warnings", warnings=warnings)
         return loaded, failures
 
     def layer_at(self, number: int) -> LayerState:
@@ -473,6 +518,8 @@ class CuratorWidget(QWidget):
             flags = ["visible" if layer.visible else "hidden", layer.curve.kind]
             if layer.is_combined:
                 flags.append("combined")
+            if layer.stale:
+                flags.append("stale")
             hrtf = layer.hrtf.name if layer.hrtf else "none"
             lines.append(
                 f"{number}: {layer.name} [{', '.join(flags)}] "
@@ -664,6 +711,16 @@ class CuratorWidget(QWidget):
         self._layer_list.currentItemChanged.connect(self._on_layer_selected)
         self._layer_list.itemSelectionChanged.connect(self._sync_combine_button)
         import_layout.addWidget(self._layer_list, 1)
+        order_row = QHBoxLayout()
+        self._move_up_btn = QPushButton("Move Up")
+        self._move_up_btn.setToolTip("Move the selected layer earlier in the draw order")
+        self._move_up_btn.clicked.connect(lambda: self._move_selected_layer(-1))
+        self._move_down_btn = QPushButton("Move Down")
+        self._move_down_btn.setToolTip("Move the selected layer later in the draw order")
+        self._move_down_btn.clicked.connect(lambda: self._move_selected_layer(1))
+        order_row.addWidget(self._move_up_btn)
+        order_row.addWidget(self._move_down_btn)
+        import_layout.addLayout(order_row)
         row = QHBoxLayout()
         self._combine_btn = QPushButton("Create Combined Variation")
         self._combine_btn.clicked.connect(self._create_combined_variation)
@@ -1001,6 +1058,10 @@ class CuratorWidget(QWidget):
             for item in self._layer_list.selectedItems()
             if item.data(256)
         }
+        self._refresh_stale_flags()
+        swatch_border = (
+            brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        )["border"]
         self._layer_list.blockSignals(True)
         self._layer_list.clear()
         selected_row = -1
@@ -1015,6 +1076,10 @@ class CuratorWidget(QWidget):
                 self._set_layer_name,
                 self._set_layer_offset,
                 self._set_layer_hrtf,
+                swatch_color=ensure_graph_color(
+                    layer.color, self._state.background
+                ).name(),
+                swatch_border=swatch_border,
             )
             item.setSizeHint(row.sizeHint())
             self._layer_list.addItem(item)
@@ -1100,6 +1165,9 @@ class CuratorWidget(QWidget):
             self._show_status(f"Preference bounds could not load: {exc}")
 
     def _redraw(self) -> None:
+        if self._refresh_stale_flags():
+            # A source layer changed: rebuild the rows so the badge appears.
+            self._sync_ui()
         self._graph.redraw(self._state)
         self._graph_stage.refresh_preview()
 
@@ -1140,19 +1208,75 @@ class CuratorWidget(QWidget):
         self._sync_combine_button()
 
     def _remove_selected_layer(self) -> None:
-        layer = self._selected_layer()
-        if layer is None:
-            return
-        number = self._layer_number(layer)
-        exiting = self._graph.snapshot_visible_layer(layer.id)
-        self._state.layers = [item for item in self._state.layers if item.id != layer.id]
-        if self._primary_metadata_layer_id == layer.id:
+        """Remove every selected row, not only the one with keyboard focus."""
+        targets = self._selected_layers()
+        if not targets:
+            layer = self._selected_layer()
+            if layer is None:
+                return
+            targets = [layer]
+        numbers = [self._layer_number(layer) for layer in targets]
+        names = [layer.name for layer in targets]
+        removed_ids = {layer.id for layer in targets}
+        exiting = [
+            snapshot
+            for layer in targets
+            if (snapshot := self._graph.snapshot_visible_layer(layer.id)) is not None
+        ]
+        self._state.layers = [
+            item for item in self._state.layers if item.id not in removed_ids
+        ]
+        if self._primary_metadata_layer_id in removed_ids:
             self._primary_metadata_layer_id = None
         self._selected_layer_id = self._state.layers[-1].id if self._state.layers else None
         self._sync_ui()
         self._apply_auto_export_text()
-        self._redraw_with_wipe(exiting_layers=[exiting] if exiting is not None else None)
-        self._log("INFO", "Layer removed", layer=number, name=layer.name)
+        self._redraw_with_wipe(exiting_layers=exiting or None)
+        self._log("INFO", "Layers removed", layers=numbers, names=names)
+
+    def _refresh_stale_flags(self) -> bool:
+        """Flag combined layers whose sources changed; True when a flag moved."""
+        signatures = {layer.id: _layer_signature(layer) for layer in self._state.layers}
+        changed = False
+        for layer in self._state.layers:
+            if not layer.is_combined or not layer.source_layer_ids:
+                stale = False
+            else:
+                recorded = layer.source_signature
+                stale = any(
+                    source_id not in signatures
+                    or (
+                        source_id in recorded
+                        and signatures[source_id] != recorded[source_id]
+                    )
+                    for source_id in layer.source_layer_ids
+                )
+            if stale != layer.stale:
+                layer.stale = stale
+                changed = True
+        return changed
+
+    def move_layer_number(self, number: int, delta: int) -> None:
+        """Move one layer up (-1) or down (+1) in the draw and list order."""
+        layer = self.layer_at(number)
+        index = number - 1
+        target = index + int(delta)
+        if not 0 <= target < len(self._state.layers):
+            return
+        layers = self._state.layers
+        layers[index], layers[target] = layers[target], layers[index]
+        self._selected_layer_id = layer.id
+        self._sync_ui()
+        self._apply_auto_export_text()
+        self._redraw()
+        self._log("INFO", "Layer order changed", name=layer.name, position=target + 1)
+
+    def _move_selected_layer(self, delta: int) -> None:
+        layer = self._selected_layer()
+        if layer is None:
+            self._show_status("Select a layer to move.")
+            return
+        self.move_layer_number(self._layer_number(layer), delta)
 
     def _clear_layers(self) -> None:
         count = len(self._state.layers)
@@ -1243,6 +1367,9 @@ class CuratorWidget(QWidget):
             hrtf=None,
             is_combined=True,
             source_layer_ids=[layer.id for layer in selected],
+            source_signature={
+                layer.id: _layer_signature(layer) for layer in selected
+            },
         )
         self._state.layers.append(combined)
         self._selected_layer_id = combined.id
@@ -1400,10 +1527,25 @@ class CuratorWidget(QWidget):
     def _on_bounds_enabled_changed(self, _state: int) -> None:
         enabling = self._bounds_enabled.isChecked()
         exiting_bounds = self._graph.snapshot_bounds() if not enabling else None
-        if self._bounds_enabled.isChecked() and (
+        if enabling and (
             self._state.bounds.upper is None or self._state.bounds.lower is None
         ):
             self._load_default_bounds()
+        if enabling and (
+            self._state.bounds.upper is None or self._state.bounds.lower is None
+        ):
+            # Nothing to draw: refuse to latch instead of showing an ON toggle
+            # over an empty graph.
+            self._state.bounds.enabled = False
+            self._sync_bounds_controls()
+            message = (
+                "Preference bounds are unavailable: "
+                f"expected {UPPER_BOUNDS_PATH.name} and {LOWER_BOUNDS_PATH.name} "
+                f"in {BOUNDS_DIR}."
+            )
+            self._show_status(message, severity="WARNING")
+            QMessageBox.warning(self, "Preference Bounds Unavailable", message)
+            return
         self._state.bounds.enabled = enabling
         self._sync_bounds_controls()
         self._apply_auto_export_text()
@@ -1459,8 +1601,13 @@ class CuratorWidget(QWidget):
         local_paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
         txt_paths = [path for path in local_paths if path.suffix.lower() == ".txt"]
         unsupported = [path.name for path in local_paths if path.suffix.lower() != ".txt"]
+        self._last_import_warnings = []
         loaded, failures = self.import_files(txt_paths, show_errors=False) if txt_paths else (0, [])
-        messages = [f"{name}: unsupported file type" for name in unsupported] + failures
+        messages = (
+            [f"{name}: unsupported file type" for name in unsupported]
+            + failures
+            + list(self._last_import_warnings)
+        )
         if messages:
             QMessageBox.warning(self, "Import Warnings", "\n".join(messages[:8]))
         if loaded or local_paths:
@@ -1524,6 +1671,15 @@ class CuratorWidget(QWidget):
             QMessageBox.warning(self, "Export Error", str(exc))
             return
         self._show_status(f"Exported Curator PNG: {path}")
+
+
+def _layer_signature(layer: LayerState) -> tuple:
+    """Inputs that change what a combined layer would look like if rebuilt."""
+    return (
+        round(float(layer.vertical_offset_db), 6),
+        str(layer.hrtf.path) if layer.hrtf is not None else "",
+        bool(layer.visible),
+    )
 
 
 def _copy_optional(values: np.ndarray | None) -> np.ndarray | None:

@@ -178,6 +178,53 @@ def compute_rms_average(
     return common_freqs, avg_db
 
 
+LOG_SPACING_TOLERANCE = 0.01
+LOG_SPACING_MIN_UNIFORM_FRACTION = 0.99
+MAX_RESAMPLED_SMOOTHING_POINTS = 4096
+
+
+def _is_log_spaced(log_freqs: np.ndarray) -> bool:
+    """True when the log2 frequency steps are uniform to within ~1 %.
+
+    A handful of stray steps are tolerated because Fastgraph's own export grids
+    move their nearest point onto exactly 1 kHz, which perturbs two steps of an
+    otherwise perfectly log-spaced grid.
+    """
+    steps = np.diff(log_freqs)
+    if steps.size == 0:
+        return True
+    median_step = float(np.median(steps))
+    if not np.isfinite(median_step) or median_step <= 0.0:
+        return False
+    uniform = np.abs(steps - median_step) / median_step <= LOG_SPACING_TOLERANCE
+    return float(np.mean(uniform)) >= LOG_SPACING_MIN_UNIFORM_FRACTION
+
+
+def _smooth_on_log_grid(
+    log_freqs: np.ndarray,
+    values: np.ndarray,
+    fraction: int,
+) -> np.ndarray | None:
+    """Gaussian-smooth values sampled on a uniform log2 frequency grid."""
+    step = float(np.median(np.diff(log_freqs)))
+    if not np.isfinite(step) or step <= 0.0:
+        return None
+
+    fwhm_oct = 1.0 / float(fraction)
+    sigma_oct = fwhm_oct / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    sigma_idx = sigma_oct / step
+    if not np.isfinite(sigma_idx) or sigma_idx <= 0.0:
+        return None
+
+    radius = max(2, int(np.ceil(sigma_idx * 4.0)))
+    offsets = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (offsets / sigma_idx) ** 2)
+    kernel /= np.sum(kernel)
+
+    padded = np.pad(values.astype(np.float64), (radius, radius), mode="edge")
+    return np.convolve(padded, kernel, mode="valid")
+
+
 def smooth_fractional_octave(
     freqs: np.ndarray,
     mag_db: np.ndarray,
@@ -188,26 +235,40 @@ def smooth_fractional_octave(
 
     The smoothing bandwidth is specified in fractional octaves using the
     full-width at half maximum of the Gaussian window.
+
+    The kernel radius is an index count, so it is only a fractional-octave
+    bandwidth when the input is log-spaced. Inputs that are not log-spaced
+    (linear FFT-bin grids from REW or ARTA, for example) are resampled onto a
+    uniform log grid, smoothed there, and interpolated back onto the caller's
+    frequencies. Log-spaced inputs take the original path unchanged.
     """
     if len(freqs) < 3 or len(freqs) != len(mag_db) or fraction <= 0:
         return freqs, mag_db
 
     log_freqs = np.log2(freqs)
-    step = float(np.median(np.diff(log_freqs)))
-    if not np.isfinite(step) or step <= 0.0:
+    if not np.all(np.isfinite(log_freqs)):
         return freqs, mag_db
 
-    fwhm_oct = 1.0 / float(fraction)
-    sigma_oct = fwhm_oct / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-    sigma_idx = sigma_oct / step
-    if not np.isfinite(sigma_idx) or sigma_idx <= 0.0:
+    if _is_log_spaced(log_freqs):
+        smoothed = _smooth_on_log_grid(log_freqs, mag_db, fraction)
+        if smoothed is None:
+            return freqs, mag_db
+        return freqs, smoothed.astype(np.float64)
+
+    order = np.argsort(log_freqs, kind="stable")
+    sorted_log = log_freqs[order]
+    sorted_values = np.asarray(mag_db, dtype=np.float64)[order]
+    log_min = float(sorted_log[0])
+    log_max = float(sorted_log[-1])
+    if not np.isfinite(log_min) or not np.isfinite(log_max) or log_max <= log_min:
         return freqs, mag_db
 
-    radius = max(2, int(np.ceil(sigma_idx * 4.0)))
-    offsets = np.arange(-radius, radius + 1, dtype=np.float64)
-    kernel = np.exp(-0.5 * (offsets / sigma_idx) ** 2)
-    kernel /= np.sum(kernel)
+    n_points = int(min(MAX_RESAMPLED_SMOOTHING_POINTS, max(len(freqs), 3)))
+    grid_log = np.linspace(log_min, log_max, n_points)
+    grid_values = np.interp(grid_log, sorted_log, sorted_values)
+    smoothed_grid = _smooth_on_log_grid(grid_log, grid_values, fraction)
+    if smoothed_grid is None:
+        return freqs, mag_db
 
-    padded = np.pad(mag_db.astype(np.float64), (radius, radius), mode="edge")
-    smoothed = np.convolve(padded, kernel, mode="valid")
+    smoothed = np.interp(log_freqs, grid_log, smoothed_grid)
     return freqs, smoothed.astype(np.float64)

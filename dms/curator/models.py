@@ -25,6 +25,7 @@ class CurveData:
     p75_db: np.ndarray | None = None
     p90_db: np.ndarray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
 
     def shifted(self, amount_db: float) -> "CurveData":
         return replace(
@@ -50,6 +51,10 @@ class LayerState:
     hrtf: HRTFCurve | None = None
     is_combined: bool = False
     source_layer_ids: list[str] = field(default_factory=list)
+    # Snapshot of each source layer's inputs when the combination was built,
+    # so the row can show when a combined layer no longer matches its sources.
+    source_signature: dict[str, tuple] = field(default_factory=dict)
+    stale: bool = False
 
 
 @dataclass

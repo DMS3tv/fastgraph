@@ -1,13 +1,18 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dms.curator.models import CurveData, LayerState
 from dms.curator.transforms import (
+    Z_P75,
+    Z_P90,
     apply_layer_transform,
     can_combine_layers,
     combine_variation_layers,
+    layer_sweep_count,
     normalization_offset_at_1khz,
+    normalization_offset_at_1khz_with_warning,
     visible_display_layers,
 )
 from dms.hrtf import HRTFCurve
@@ -229,63 +234,167 @@ def test_can_combine_layers_requires_two_complete_variations() -> None:
     assert not can_combine_layers([_variation_layer(name="a"), fr])
 
 
-def test_combine_variation_layers_repercentiles_sample_curves() -> None:
-    first = _variation_layer(name="first")
-    second = _variation_layer(name="second", median_shift=10.0)
+
+
+def _normal_band_layer(
+    *,
+    name: str,
+    half_width_db: float,
+    median_db: float = 0.0,
+    freqs: np.ndarray | None = None,
+    sweeps: int | None = None,
+) -> LayerState:
+    """A variation layer whose percentiles come from an exact normal band."""
+    if freqs is None:
+        freqs = np.array([20.0, 1000.0, 20000.0])
+    sigma = half_width_db / Z_P90
+    ones = np.ones(len(freqs))
+    metadata: dict[str, object] = {}
+    if sweeps is not None:
+        metadata = {"Variation Sweeps": str(sweeps), "variation_sweeps": str(sweeps)}
+    return LayerState(
+        curve=CurveData(
+            kind="variation",
+            freqs=freqs,
+            p10_db=ones * (median_db - Z_P90 * sigma),
+            p25_db=ones * (median_db - Z_P75 * sigma),
+            median_db=ones * median_db,
+            p75_db=ones * (median_db + Z_P75 * sigma),
+            p90_db=ones * (median_db + Z_P90 * sigma),
+            metadata=metadata,
+        ),
+        source_path=Path(f"{name}.txt"),
+        name=name,
+    )
+
+
+def _at_1khz(curve: CurveData) -> tuple[float, float, float, float, float]:
+    index = int(np.argmin(np.abs(curve.freqs - 1000.0)))
+    return (
+        float(curve.p10_db[index]),
+        float(curve.p25_db[index]),
+        float(curve.median_db[index]),
+        float(curve.p75_db[index]),
+        float(curve.p90_db[index]),
+    )
+
+
+def test_combine_uses_the_shared_1200_point_log_grid_with_an_exact_1khz_point() -> None:
+    combined = combine_variation_layers(
+        [
+            _normal_band_layer(name="a", half_width_db=1.0),
+            _normal_band_layer(name="b", half_width_db=2.0),
+        ]
+    )
+
+    assert combined.kind == "variation"
+    assert combined.freqs.size == 1200
+    assert combined.freqs[0] == pytest.approx(20.0)
+    assert combined.freqs[-1] == pytest.approx(20000.0)
+    assert 1000.0 in combined.freqs
+
+
+def test_combining_a_narrow_and_a_wide_band_keeps_the_wide_tails() -> None:
+    """A +/-1 dB band pooled with a +/-10 dB band must not average to +/-5.5 dB.
+
+    The equal-weight mixture of N(0, 1/1.2816) and N(0, 10/1.2816) has its 10th
+    and 90th percentiles at +/-6.567 dB, and its quartiles at +/-1.205 dB.
+    """
+    combined = combine_variation_layers(
+        [
+            _normal_band_layer(name="narrow", half_width_db=1.0),
+            _normal_band_layer(name="wide", half_width_db=10.0),
+        ]
+    )
+
+    p10, p25, median, p75, p90 = _at_1khz(combined)
+    assert median == pytest.approx(0.0, abs=1e-6)
+    assert p90 == pytest.approx(6.567, abs=0.02)
+    assert p10 == pytest.approx(-6.567, abs=0.02)
+    assert p75 == pytest.approx(1.205, abs=0.02)
+    assert p25 == pytest.approx(-1.205, abs=0.02)
+    # The old percentile-of-percentiles answer was +/-5.5 dB.
+    assert abs(p90) > 6.0
+
+
+def test_combine_weights_layers_by_their_variation_sweep_count() -> None:
+    weighted = combine_variation_layers(
+        [
+            _normal_band_layer(name="narrow", half_width_db=1.0, sweeps=90),
+            _normal_band_layer(name="wide", half_width_db=10.0, sweeps=10),
+        ]
+    )
+    equal = combine_variation_layers(
+        [
+            _normal_band_layer(name="narrow", half_width_db=1.0),
+            _normal_band_layer(name="wide", half_width_db=10.0),
+        ]
+    )
+
+    assert layer_sweep_count(_normal_band_layer(name="x", half_width_db=1.0, sweeps=7)) == 7
+    assert layer_sweep_count(_normal_band_layer(name="x", half_width_db=1.0)) is None
+    weighted_p90 = _at_1khz(weighted)[4]
+    equal_p90 = _at_1khz(equal)[4]
+    assert weighted_p90 < equal_p90
+    assert weighted_p90 == pytest.approx(1.199, abs=0.02)
+
+
+def test_combine_applies_offsets_and_hrtf_before_pooling() -> None:
+    first = _normal_band_layer(name="first", half_width_db=2.0)
+    first.vertical_offset_db = 3.0
+    second = _normal_band_layer(name="second", half_width_db=2.0)
+    second.vertical_offset_db = -3.0
+    original = first.curve.median_db.copy()
 
     combined = combine_variation_layers([first, second])
 
-    samples = np.vstack([
-        first.curve.p10_db,
-        first.curve.p25_db,
-        first.curve.median_db,
-        first.curve.p75_db,
-        first.curve.p90_db,
-        second.curve.p10_db,
-        second.curve.p25_db,
-        second.curve.median_db,
-        second.curve.p75_db,
-        second.curve.p90_db,
-    ])
-    assert np.allclose(combined.freqs, first.curve.freqs)
-    assert np.allclose(combined.p10_db, np.percentile(samples, 10, axis=0))
-    assert np.allclose(combined.p25_db, np.percentile(samples, 25, axis=0))
-    assert np.allclose(combined.median_db, np.percentile(samples, 50, axis=0))
-    assert np.allclose(combined.p75_db, np.percentile(samples, 75, axis=0))
-    assert np.allclose(combined.p90_db, np.percentile(samples, 90, axis=0))
+    median = _at_1khz(combined)[2]
+    assert median == pytest.approx(0.0, abs=0.02)
+    # A +/-3 dB separation between two +/-2 dB bands must widen the pooled band.
+    assert _at_1khz(combined)[4] > 3.0
+    assert np.array_equal(first.curve.median_db, original)
 
 
-def test_combine_variation_layers_applies_hrtf_offset_and_interpolates() -> None:
-    hrtf = _FakeHrtf(
-        Path("hrtf.txt"),
-        "hrtf",
-        np.array([100.0, 1000.0]),
-        np.array([1.0, 2.0]),
+def test_combine_ignores_a_layer_outside_its_own_frequency_range() -> None:
+    """A layer that stops at 500 Hz must not be extrapolated flat to 20 kHz."""
+    full = _normal_band_layer(name="full", half_width_db=1.0)
+    partial = _normal_band_layer(
+        name="partial",
+        half_width_db=10.0,
+        freqs=np.array([20.0, 500.0]),
     )
-    first = _variation_layer(name="first", offset=1.0, hrtf=hrtf)
-    second = _variation_layer(
-        name="second",
-        freqs=np.array([100.0, 550.0, 1000.0]),
-        median_shift=4.0,
-        offset=-2.0,
+
+    combined = combine_variation_layers([full, partial])
+
+    high = int(np.argmin(np.abs(combined.freqs - 10000.0)))
+    low = int(np.argmin(np.abs(combined.freqs - 100.0)))
+    assert float(combined.p90_db[high]) == pytest.approx(1.0, abs=0.02)
+    assert float(combined.p90_db[low]) > 5.0
+
+
+def test_normalization_offset_warns_instead_of_clamping_outside_the_range() -> None:
+    partial = CurveData(
+        kind="fr",
+        freqs=np.array([20.0, 500.0]),
+        mag_db=np.array([4.0, 9.0]),
     )
-    original_first_p10 = first.curve.p10_db.copy()
 
-    combined = combine_variation_layers([first, second])
+    offset, warning = normalization_offset_at_1khz_with_warning(partial)
 
-    transformed_first = apply_layer_transform(first)
-    transformed_second = apply_layer_transform(second)
-    assert transformed_first.p10_db is not None
-    assert transformed_second.p10_db is not None
-    expected_samples = []
-    for curve in (transformed_first, transformed_second):
-        assert curve.p10_db is not None
-        assert curve.p25_db is not None
-        assert curve.median_db is not None
-        assert curve.p75_db is not None
-        assert curve.p90_db is not None
-        for values in (curve.p10_db, curve.p25_db, curve.median_db, curve.p75_db, curve.p90_db):
-            expected_samples.append(np.interp(first.curve.freqs, curve.freqs, values))
-    expected = np.vstack(expected_samples)
-    assert np.allclose(combined.p10_db, np.percentile(expected, 10, axis=0))
-    assert np.allclose(first.curve.p10_db, original_first_p10)
+    assert offset == 0.0
+    assert warning is not None
+    assert "1 kHz" in warning
+    assert normalization_offset_at_1khz(partial) == 0.0
+
+
+def test_normalization_offset_still_anchors_a_curve_that_covers_1khz() -> None:
+    curve = CurveData(
+        kind="fr",
+        freqs=np.array([100.0, 1000.0, 5000.0]),
+        mag_db=np.array([-2.0, 5.0, 1.0]),
+    )
+
+    offset, warning = normalization_offset_at_1khz_with_warning(curve)
+
+    assert offset == -5.0
+    assert warning is None

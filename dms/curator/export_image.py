@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen
 
@@ -40,6 +41,7 @@ FREQUENCY_MARKERS = {
     3000: (145, 152, 168, 92, 1.4),
     10000: (145, 152, 168, 128, 2.0),
 }
+ASPECT_LOCK_DB_PER_DECADE = 25.0
 DITHER_FOOTER_HEIGHT = 78.0
 DITHER_FOOTER_HORIZONTAL_MARGIN = 40.0
 
@@ -156,11 +158,16 @@ def _draw_poster(
         painter.setPen(QPen(QColor("#313846"), 2))
         painter.drawRoundedRect(graph_rect, 4, 4)
 
-    plot_rect = graph_rect.adjusted(
+    frame_rect = graph_rect.adjusted(
         PLOT_INSET_LEFT,
         PLOT_INSET_TOP,
         -PLOT_INSET_RIGHT,
         -PLOT_INSET_BOTTOM,
+    )
+    plot_rect = (
+        aspect_locked_rect(frame_rect, state.y_min, state.y_max)
+        if state.aspect_locked_25db
+        else frame_rect
     )
     _draw_grid(
         painter,
@@ -206,7 +213,7 @@ def _draw_poster(
     if state.show_layer_names:
         _draw_legend(
             painter,
-            plot_rect,
+            frame_rect,
             visible_layers,
             light_background,
             classic_tokens=tokens if classic else None,
@@ -571,9 +578,7 @@ def _draw_bounds(
     lower = bounds.lower
     if upper.mag_db is None or lower.mag_db is None:
         return
-    freqs = upper.freqs
-    upper_values = upper.mag_db
-    lower_values = lower.mag_db
+    freqs, upper_values, lower_values = aligned_bounds(upper, lower)
     if retro:
         freqs, upper_values, lower_values = retro_step_group(
             freqs, (upper_values, lower_values)
@@ -583,7 +588,7 @@ def _draw_bounds(
     fill = QPainterPath(upper_path)
     points = [
         QPointF(_x_for_freq(rect, f), _y_for_db(rect, m, state.y_min, state.y_max))
-        for f, m in zip(reversed(freqs), reversed(lower_values))
+        for f, m in reversed(_band_points(freqs, lower_values))
     ]
     for point in points:
         fill.lineTo(point)
@@ -724,9 +729,19 @@ def _fill_between(
     y_min: float,
     y_max: float,
 ) -> None:
-    path = _curve_path(rect, freqs, upper, y_min, y_max)
-    for f, m in zip(reversed(freqs), reversed(lower)):
-        path.lineTo(QPointF(_x_for_freq(rect, float(f)), _y_for_db(rect, float(m), y_min, y_max)))
+    upper_points = _band_points(freqs, upper)
+    lower_points = _band_points(freqs, lower)
+    if len(upper_points) < 2 or len(lower_points) < 2:
+        return
+    path = QPainterPath()
+    path.moveTo(
+        _x_for_freq(rect, upper_points[0][0]),
+        _y_for_db(rect, upper_points[0][1], y_min, y_max),
+    )
+    for freq, value in upper_points[1:]:
+        path.lineTo(_x_for_freq(rect, freq), _y_for_db(rect, value, y_min, y_max))
+    for freq, value in reversed(lower_points):
+        path.lineTo(QPointF(_x_for_freq(rect, freq), _y_for_db(rect, value, y_min, y_max)))
     path.closeSubpath()
     fill = QColor(color)
     fill.setAlpha(alpha)
@@ -735,12 +750,74 @@ def _fill_between(
     painter.drawPath(path)
 
 
+def aspect_locked_rect(
+    rect: QRectF,
+    y_min: float,
+    y_max: float,
+    *,
+    ratio: float = ASPECT_LOCK_DB_PER_DECADE,
+) -> QRectF:
+    """Shrink the data area so one decade spans ``ratio`` dB, as on screen.
+
+    The preview locks its view box to 25 dB per decade. pyqtgraph honours that
+    by widening the visible range on one axis, which in a fixed-size export is
+    the same as centring the data inside a smaller rectangle.
+    """
+    span_x = math.log10(FREQ_MAX) - math.log10(FREQ_MIN)
+    span_y = float(y_max) - float(y_min)
+    if span_x <= 0.0 or span_y <= 0.0 or rect.width() <= 0.0 or rect.height() <= 0.0:
+        return rect
+    view_ratio = (rect.width() / rect.height()) / float(ratio)
+    if view_ratio <= 0.0:
+        return rect
+    target_ratio = span_x / span_y
+    if target_ratio > view_ratio:
+        # Keep the full frequency span; the dB range grows, so the data is
+        # drawn into a shorter band centred vertically.
+        height = rect.height() * (view_ratio / target_ratio)
+        top = rect.top() + (rect.height() - height) / 2.0
+        return QRectF(rect.left(), top, rect.width(), height)
+    # Keep the dB range; the frequency range grows, so the data is drawn into a
+    # narrower band centred horizontally.
+    width = rect.width() * (target_ratio / view_ratio)
+    left = rect.left() + (rect.width() - width) / 2.0
+    return QRectF(left, rect.top(), width, rect.height())
+
+
+def aligned_bounds(upper: CurveData, lower: CurveData):
+    """Return (freqs, upper, lower) with the lower bound on the upper's grid.
+
+    The two preference-bound files are independent exports and need not share a
+    frequency grid, so pairing them by index skewed the band.
+    """
+    freqs = np.asarray(upper.freqs, dtype=float)
+    upper_values = np.asarray(upper.mag_db, dtype=float)
+    lower_freqs = np.asarray(lower.freqs, dtype=float)
+    lower_values = np.asarray(lower.mag_db, dtype=float)
+    if lower_freqs.shape == freqs.shape and np.array_equal(lower_freqs, freqs):
+        return freqs, upper_values, lower_values
+    return freqs, upper_values, np.interp(freqs, lower_freqs, lower_values)
+
+
+def _band_points(freqs, values) -> list[tuple[float, float]]:
+    """Frequency/value pairs inside the drawn band; out-of-band points are dropped.
+
+    Clamping them onto the edge instead drew a vertical spike at 20 Hz or
+    20 kHz in the saved PNG that the clipped preview never showed.
+    """
+    return [
+        (float(freq), float(value))
+        for freq, value in zip(freqs, values)
+        if FREQ_MIN <= float(freq) <= FREQ_MAX
+    ]
+
+
 def _curve_path(rect: QRectF, freqs, mags, y_min: float, y_max: float) -> QPainterPath:
     path = QPainterPath()
     first = True
-    for freq, mag in zip(freqs, mags):
-        x = _x_for_freq(rect, float(freq))
-        y = _y_for_db(rect, float(mag), y_min, y_max)
+    for freq, mag in _band_points(freqs, mags):
+        x = _x_for_freq(rect, freq)
+        y = _y_for_db(rect, mag, y_min, y_max)
         if first:
             path.moveTo(x, y)
             first = False
@@ -752,7 +829,7 @@ def _curve_path(rect: QRectF, freqs, mags, y_min: float, y_max: float) -> QPaint
 def _x_for_freq(rect: QRectF, freq: float) -> float:
     log_min = math.log10(FREQ_MIN)
     log_max = math.log10(FREQ_MAX)
-    frac = (math.log10(max(FREQ_MIN, min(FREQ_MAX, freq))) - log_min) / (log_max - log_min)
+    frac = (math.log10(max(1e-9, freq)) - log_min) / (log_max - log_min)
     return rect.left() + rect.width() * frac
 
 

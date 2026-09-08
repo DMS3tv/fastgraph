@@ -88,3 +88,150 @@ def test_parse_normalizes_fastgraph_rew_metadata(tmp_path: Path) -> None:
     assert metadata["eq_applied"] is False
     assert metadata["anc_mode"] is True
     assert metadata["connection"] == "Bluetooth"
+
+
+def test_parse_reads_a_utf8_bom_file_without_dropping_the_first_row(tmp_path: Path) -> None:
+    path = tmp_path / "bom.txt"
+    path.write_text("20\t-4\n100\t0\n1000\t2\n", encoding="utf-8-sig")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])
+
+
+def test_parse_reads_utf16_files_with_either_byte_order_mark(tmp_path: Path) -> None:
+    text = "* Brand: Example\n20\t-4\n100\t0\n1000\t2\n"
+    for name, encoding in (("le.txt", "utf-16-le"), ("be.txt", "utf-16-be")):
+        path = tmp_path / name
+        path.write_bytes("\ufeff".encode(encoding) + text.encode(encoding))
+
+        curve = parse_measurement_txt(path)
+
+        assert curve.metadata["Brand"] == "Example"
+        assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+        assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])
+
+
+def test_parse_treats_a_comma_as_a_decimal_separator_when_every_token_is_one(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "comma.txt"
+    path.write_text("20,0\t-4,5\n100,0\t0,0\n1000,0\t2,25\n", encoding="utf-8")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert np.allclose(curve.mag_db, [-4.5, 0.0, 2.25])
+
+
+def test_parse_still_treats_a_comma_as_a_delimiter_when_it_is_one(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "delimited.txt"
+    path.write_text("20, -4\n100, 0\n1000, 2\n", encoding="utf-8")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])
+
+
+def test_parse_reads_semicolon_delimited_decimal_comma_files(tmp_path: Path) -> None:
+    path = tmp_path / "semi.txt"
+    path.write_text("20,0;-4,5\n100,0;0,0\n1000,0;2,5\n", encoding="utf-8")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert np.allclose(curve.mag_db, [-4.5, 0.0, 2.5])
+
+
+def test_one_stray_wide_row_no_longer_rejects_a_two_column_file(tmp_path: Path) -> None:
+    path = tmp_path / "stray.txt"
+    path.write_text(
+        "20 -4\n100 0\n200 1 2 3 4 5\n1000 2\n",
+        encoding="utf-8",
+    )
+
+    curve = parse_measurement_txt(path)
+
+    assert curve.kind == "fr"
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert any("unexpected column count" in warning for warning in curve.warnings)
+
+
+def test_one_stray_narrow_row_no_longer_rejects_a_variation_file(tmp_path: Path) -> None:
+    path = tmp_path / "stray_var.txt"
+    path.write_text(
+        "20 -5 -4 -3 -2 -1\n100 -4 -3 -2 -1 0\n150 9\n1000 -1 0 1 2 3\n",
+        encoding="utf-8",
+    )
+
+    curve = parse_measurement_txt(path)
+
+    assert curve.kind == "variation"
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert any("unexpected column count" in warning for warning in curve.warnings)
+
+
+def test_a_tied_row_count_follows_the_first_numeric_row(tmp_path: Path) -> None:
+    path = tmp_path / "tie.txt"
+    path.write_text(
+        "20 -5 -4 -3 -2 -1\n100 -4 -3 -2 -1 0\n150 9\n200 8\n",
+        encoding="utf-8",
+    )
+
+    assert parse_measurement_txt(path).kind == "variation"
+
+
+def test_repeated_frequencies_are_averaged(tmp_path: Path) -> None:
+    path = tmp_path / "dupes.txt"
+    path.write_text("100 2\n100 4\n1000 1\n2000 3\n", encoding="utf-8")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [100.0, 1000.0, 2000.0])
+    assert np.allclose(curve.mag_db, [3.0, 1.0, 3.0])
+    assert any("repeated frequency" in warning for warning in curve.warnings)
+
+
+def test_repeated_frequencies_are_averaged_in_every_variation_column(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dupes_var.txt"
+    path.write_text(
+        "100 0 1 2 3 4\n100 2 3 4 5 6\n1000 1 2 3 4 5\n",
+        encoding="utf-8",
+    )
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [100.0, 1000.0])
+    assert np.allclose(curve.p10_db, [1.0, 1.0])
+    assert np.allclose(curve.p90_db, [5.0, 5.0])
+
+
+def test_parse_reads_the_variation_sweeps_header(tmp_path: Path) -> None:
+    path = tmp_path / "sweeps.txt"
+    path.write_text(
+        "* Variation Sweeps: 12\n100 0 1 2 3 4\n1000 1 2 3 4 5\n",
+        encoding="utf-8",
+    )
+
+    metadata = parse_measurement_txt(path).metadata
+
+    assert metadata["Variation Sweeps"] == "12"
+    assert metadata["variation_sweeps"] == "12"
+
+
+def test_a_two_column_csv_still_parses_when_a_row_looks_like_a_decimal_comma(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "csv.txt"
+    path.write_text("20,-4\n100,0\n1000,2\n", encoding="utf-8")
+
+    curve = parse_measurement_txt(path)
+
+    assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
+    assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])

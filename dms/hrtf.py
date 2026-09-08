@@ -5,6 +5,21 @@ from scipy.interpolate import interp1d
 from dms.measurement_txt import load_two_column_txt_curve
 
 
+def _edge_held_interp(freqs: np.ndarray, values: np.ndarray) -> interp1d:
+    """Linear interpolator that holds the first/last value outside the file range.
+
+    Filling with 0 dB instead put a step at the edge of every HRTF file, which
+    showed up as a kink in the compensated curve.
+    """
+    return interp1d(
+        freqs,
+        values,
+        kind="linear",
+        bounds_error=False,
+        fill_value=(float(values[0]), float(values[-1])),
+    )
+
+
 class HRTFCurve:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -12,20 +27,11 @@ class HRTFCurve:
         self.freqs, columns = _load_hrtf_data(path)
         self.is_variation = len(columns) == 5
         self.mags = columns[2] if self.is_variation else columns[0]
-        self._interp = interp1d(
-            self.freqs, self.mags, kind="linear", bounds_error=False, fill_value=0.0
-        )
+        self._interp = _edge_held_interp(self.freqs, self.mags)
         self._variation_interps: tuple[interp1d, interp1d, interp1d, interp1d, interp1d] | None = None
         if self.is_variation:
             self._variation_interps = tuple(
-                interp1d(
-                    self.freqs,
-                    values,
-                    kind="linear",
-                    bounds_error=False,
-                    fill_value=0.0,
-                )
-                for values in columns
+                _edge_held_interp(self.freqs, values) for values in columns
             )
 
     def evaluate(self, freqs_hz: np.ndarray) -> np.ndarray:

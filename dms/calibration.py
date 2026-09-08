@@ -1,6 +1,7 @@
-import json
 from pathlib import Path
 from typing import Optional
+
+from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.settings_manager import _config_dir
 
 
@@ -10,6 +11,8 @@ class CalibrationStore:
     def __init__(self) -> None:
         self._path = _config_dir() / "calibration.json"
         self._data: dict[str, float] = {}
+        # Set when calibration.json was damaged and moved aside.
+        self.load_error: Optional[str] = None
         self._load()
 
     def get_sensitivity(self, device_name: str) -> Optional[float]:
@@ -37,17 +40,23 @@ class CalibrationStore:
         return 20.0 * __import__("math").log10(pa / 20e-6)
 
     def _load(self) -> None:
-        if self._path.exists():
+        loaded, error = load_json_with_backup(self._path)
+        self.load_error = error
+        if loaded is None:
+            self._data = {}
+            return
+        # A hand-edited file can hold non-numeric sensitivities; drop those
+        # rather than crashing the first dB SPL conversion that uses them.
+        clean: dict[str, float] = {}
+        for name, value in loaded.items():
             try:
-                with open(self._path) as f:
-                    self._data = json.load(f)
-            except Exception:
-                self._data = {}
+                clean[str(name)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        self._data = clean
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self._path, "w") as f:
-                json.dump(self._data, f, indent=2)
+            atomic_write_json(self._path, self._data, mode=0o600)
         except Exception:
             pass

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from dms.file_io import atomic_write_json
+
 
 SCHEMA_VERSION = 1
 AUTOMATION_SUFFIX = ".fastgraph-automation.json"
@@ -199,17 +201,42 @@ def load_automation(path: Path) -> AutomationDefinition:
 
 
 def save_automation(path: Path, automation: AutomationDefinition) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(automation.to_dict(), indent=2), encoding="utf-8")
+    # Automations are user-authored work; a crash mid-save must not truncate
+    # one. Mode is left at the process default because these files live in the
+    # user's Documents folder and carry no secrets.
+    atomic_write_json(path, automation.to_dict(), mode=None)
 
 
-def scan_automation_directory(directory: Path) -> list[tuple[Path, AutomationDefinition]]:
+class AutomationScanResult(list):
+    """The loaded ``(path, automation)`` pairs, with the skipped files attached.
+
+    Subclassing ``list`` keeps every existing caller (which iterates the result
+    or takes its length) working unchanged, while ``warnings`` exposes the
+    files that could not be read instead of dropping them silently.
+    """
+
+    def __init__(
+        self,
+        items: list[tuple[Path, AutomationDefinition]] | None = None,
+        warnings: list[str] | None = None,
+    ) -> None:
+        super().__init__(items or [])
+        self.warnings: list[str] = list(warnings or [])
+
+
+def scan_automation_directory(directory: Path) -> AutomationScanResult:
+    """Load every automation in ``directory``.
+
+    Unreadable or invalid files are skipped, but each one is described in
+    ``result.warnings`` so the UI can say which file was ignored and why.
+    """
     if not directory.exists():
-        return []
+        return AutomationScanResult()
     loaded: list[tuple[Path, AutomationDefinition]] = []
+    warnings: list[str] = []
     for path in sorted(directory.glob(f"*{AUTOMATION_SUFFIX}")):
         try:
             loaded.append((path, load_automation(path)))
-        except Exception:
-            continue
-    return loaded
+        except Exception as exc:
+            warnings.append(f"{path.name}: {exc}")
+    return AutomationScanResult(loaded, warnings)

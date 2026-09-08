@@ -251,7 +251,11 @@ class EventsWidget(DitherSurface):
         )
         for path, automation in self._library_items:
             self._library.addItem(f"{automation.name} ({path.name})")
-        self._set_status(f"Loaded {len(self._library_items)} automation file(s).")
+        skipped = list(getattr(self._library_items, "warnings", []))
+        status = f"Loaded {len(self._library_items)} automation file(s)."
+        if skipped:
+            status += f" Skipped {len(skipped)} unreadable file(s): " + "; ".join(skipped)
+        self._set_status(status)
 
     def new_automation(self) -> None:
         self._load_into_editor(AutomationDefinition(), None)

@@ -150,6 +150,10 @@ class ConsoleEventStore(QObject):
             # Diagnostics must never interrupt measurement or export work.
             return
 
+    def capacity(self) -> int:
+        """Maximum retained events; the console view trims its document to it."""
+        return int(self._events.maxlen or 0)
+
     def events(self) -> list[ConsoleEvent]:
         with self._lock:
             return list(self._events)

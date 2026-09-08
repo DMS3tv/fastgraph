@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontDatabase, QKeyEvent
+from PyQt6.QtGui import QFontDatabase, QKeyEvent, QTextCursor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -55,6 +55,9 @@ class ConsoleWidget(QWidget):
     def __init__(self, store: ConsoleEventStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._store = store
+        # Lines currently in the document, so a new event can be appended
+        # without counting the store's events again.
+        self._shown_lines = 0
         self._build_ui()
         store.event_added.connect(self._on_event_added)
         store.cleared.connect(self._refresh)
@@ -144,17 +147,60 @@ class ConsoleWidget(QWidget):
         self._source.setCurrentIndex(index if index >= 0 else 0)
         self._source.blockSignals(False)
 
+    def _matches_filter(self, event: ConsoleEvent) -> bool:
+        level = self._level.currentText()
+        if level != "All" and event.severity != level:
+            return False
+        source = self._source.currentText()
+        if source != "All" and event.source != source:
+            return False
+        search = self._search.text().strip().lower()
+        if search and search not in event.format().lower():
+            return False
+        return True
+
     def _refresh(self) -> None:
+        """Rebuild the whole view. Only for filter changes, Clear and startup."""
         self._output.setPlainText(self._store.formatted(self.filtered_events()))
+        self._shown_lines = self._output.blockCount() if self._output.toPlainText() else 0
+        self._scroll_to_end_if_following()
+
+    def _scroll_to_end_if_following(self) -> None:
         if self._auto_scroll.isChecked():
             self._output.verticalScrollBar().setValue(
                 self._output.verticalScrollBar().maximum()
             )
 
     def _on_event_added(self, event: ConsoleEvent) -> None:
+        """Append one line instead of re-rendering the whole 5,000-event store.
+
+        Re-rendering on every publish made a busy sweep redraw the entire
+        document dozens of times a second. The only cases that still need a
+        full rebuild are a new source appearing in the filter combo (the combo
+        rebuild changes what is selectable) and the store trimming its oldest
+        event once the cap is reached, since that line has to leave the view.
+        """
         if self._source.findText(event.source) < 0:
             self._refresh_sources()
-        self._refresh()
+            self._refresh()
+            return
+        if not self._matches_filter(event):
+            return
+        self._output.appendPlainText(event.format())
+        self._shown_lines += 1
+        self._trim_to_capacity()
+        self._scroll_to_end_if_following()
+
+    def _trim_to_capacity(self) -> None:
+        """Drop leading lines so the view never outgrows the store's cap."""
+        capacity = self._store.capacity()
+        while self._shown_lines > capacity:
+            cursor = self._output.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()
+            self._shown_lines -= 1
 
     def _submit(self) -> None:
         command = self._command.text().strip()

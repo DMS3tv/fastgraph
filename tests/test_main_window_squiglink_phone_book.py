@@ -1,7 +1,13 @@
+import time
 from types import SimpleNamespace
 
+from PyQt6.QtCore import QThread
+from PyQt6.QtWidgets import QMessageBox
+
+from dms.secure_store import decrypt_credentials
 from dms.session import SessionData
 from dms.ui.main_window import MainWindow
+from dms.ui.squiglink_worker import SquiglinkUploadWorker
 
 
 class _FakeTransport:
@@ -165,3 +171,151 @@ def test_ensure_upload_metadata_prompts_and_saves_fields(monkeypatch) -> None:
     assert fake._session.brand == "Sennheiser"
     assert fake._session.model == "HD 800 S"
     assert fake._session.channel_side == "R"
+
+
+# --- threaded upload wiring in the window ----------------------------------
+
+
+def _pump(qapp, predicate, timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return True
+        QThread.msleep(5)
+    qapp.processEvents()
+    return predicate()
+
+
+def _install_worker(monkeypatch, *, upload, sync=None):
+    """Force every worker the window builds to use the injected fakes."""
+
+    def _factory(**kwargs):
+        kwargs["upload"] = upload
+        kwargs["sync_phone_book"] = sync or (lambda **_kw: "Phone book updated successfully.")
+        return SquiglinkUploadWorker(**kwargs)
+
+    monkeypatch.setattr("dms.ui.main_window.SquiglinkUploadWorker", _factory)
+
+
+def _silence_dialogs(monkeypatch) -> dict:
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(
+        "dms.ui.main_window.QMessageBox.information",
+        lambda *args, **_kw: shown.setdefault("information", args[2]),
+    )
+    monkeypatch.setattr(
+        "dms.ui.main_window.QMessageBox.warning",
+        lambda *args, **_kw: shown.setdefault("warning", args[2]),
+    )
+    return shown
+
+
+def test_successful_upload_saves_credentials_and_pins_the_host_key(
+    qapp, make_main_window, monkeypatch, tmp_path
+) -> None:
+    window = make_main_window()
+    settings = window._settings
+    assert settings.get("squiglink_credentials_encrypted") is None
+
+    def _upload(**kwargs):
+        assert kwargs["confirm_host_key"]("sftp.squig.link", 2022, "sha256:new", "ssh-ed25519")
+
+    _install_worker(monkeypatch, upload=_upload)
+    shown = _silence_dialogs(monkeypatch)
+    monkeypatch.setattr(
+        "dms.ui.main_window.QMessageBox.question",
+        lambda *_args, **_kw: QMessageBox.StandardButton.Yes,
+    )
+
+    local = tmp_path / "Apple AirPods Pro 2 L.txt"
+    local.write_text("curve", encoding="utf-8")
+    window._start_squiglink_upload(
+        local_path=local,
+        host="sftp.squig.link",
+        port=2022,
+        username="user",
+        password="hunter2",
+        filename="Apple AirPods Pro 2 L.txt",
+        phone_book_stem="Apple AirPods Pro 2",
+        remember=True,
+    )
+    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+
+    assert settings.get("squiglink_host_keys") == {"sftp.squig.link:2022": "sha256:new"}
+    assert decrypt_credentials(settings.get("squiglink_credentials_encrypted")) == (
+        "user",
+        "hunter2",
+    )
+    assert "completed successfully" in shown["information"]
+    # The temporary export is removed once the upload is done.
+    assert not local.exists()
+
+
+def test_failed_upload_never_persists_the_credentials(
+    qapp, make_main_window, monkeypatch, tmp_path
+) -> None:
+    window = make_main_window()
+    settings = window._settings
+
+    def _upload(**_kwargs):
+        raise OSError("Authentication failed.")
+
+    _install_worker(monkeypatch, upload=_upload)
+    shown = _silence_dialogs(monkeypatch)
+
+    local = tmp_path / "export.txt"
+    local.write_text("curve", encoding="utf-8")
+    window._start_squiglink_upload(
+        local_path=local,
+        host="sftp.squig.link",
+        port=2022,
+        username="user",
+        password="hunter2",
+        filename="export.txt",
+        phone_book_stem="Apple AirPods Pro 2",
+        remember=True,
+    )
+    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+
+    assert settings.get("squiglink_credentials_encrypted") is None
+    assert settings.get("squiglink_host_keys") == {}
+    assert "Authentication failed." in shown["warning"]
+
+
+def test_declined_host_key_prompt_aborts_the_upload(
+    qapp, make_main_window, monkeypatch, tmp_path
+) -> None:
+    window = make_main_window()
+
+    def _upload(**kwargs):
+        from dms.squiglink import SquiglinkHostKeyUnknown
+
+        if not kwargs["confirm_host_key"]("sftp.squig.link", 2022, "sha256:new", "ssh-ed25519"):
+            raise SquiglinkHostKeyUnknown("sftp.squig.link", 2022, "sha256:new", "ssh-ed25519")
+        raise AssertionError("upload continued after the prompt was declined")
+
+    _install_worker(monkeypatch, upload=_upload)
+    shown = _silence_dialogs(monkeypatch)
+    monkeypatch.setattr(
+        "dms.ui.main_window.QMessageBox.question",
+        lambda *_args, **_kw: QMessageBox.StandardButton.No,
+    )
+
+    local = tmp_path / "export.txt"
+    local.write_text("curve", encoding="utf-8")
+    window._start_squiglink_upload(
+        local_path=local,
+        host="sftp.squig.link",
+        port=2022,
+        username="user",
+        password="hunter2",
+        filename="export.txt",
+        phone_book_stem="Apple AirPods Pro 2",
+        remember=True,
+    )
+    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+
+    assert window._settings.get("squiglink_host_keys") == {}
+    assert window._settings.get("squiglink_credentials_encrypted") is None
+    assert "not trusted yet" in shown["warning"]

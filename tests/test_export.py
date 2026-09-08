@@ -3,7 +3,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from dms.export import build_filename, build_variation_filename, export_variation
+from dms.export import (
+    build_filename,
+    build_variation_filename,
+    export_curve,
+    export_variation,
+)
 from dms.session import SessionData
 
 
@@ -81,3 +86,43 @@ def test_export_variation_writes_metadata_and_six_columns(tmp_path: Path) -> Non
     ]
     parsed = np.loadtxt(data_lines)
     assert parsed.shape == (2, 6)
+
+
+def test_export_curve_writes_smoothing_header(tmp_path: Path) -> None:
+    session = SessionData(rig="GRAS", brand="DMS", model="Example")
+    output = tmp_path / "average.txt"
+
+    export_curve(
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([-1.0, 0.0]),
+        session=session,
+        output_path=output,
+        compensated=False,
+        n_sweeps=5,
+        smoothing_fraction=48,
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert "* Smoothing: 1/48 octave" in text
+    # Without a level mode the historical normalization line is unchanged.
+    assert "* Normalization: 1 kHz reference offset only (shape preserved)" in text
+    assert "* Level: dB SPL (calibrated)" not in text
+
+
+def test_export_curve_writes_spl_level_header(tmp_path: Path) -> None:
+    session = SessionData(rig="GRAS", brand="DMS", model="Example")
+    output = tmp_path / "spl.txt"
+
+    export_curve(
+        freqs=np.array([100.0, 1000.0]),
+        mag_db=np.array([84.0, 86.0]),
+        session=session,
+        output_path=output,
+        compensated=False,
+        level_mode="dbspl",
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert "* Level: dB SPL (calibrated)" in text
+    assert "* Normalization: 1 kHz" not in text
+    assert "* Smoothing:" not in text

@@ -502,6 +502,9 @@ class MeasureWorkspace(QWidget):
     def clear_all(self) -> None:
         self.single.clear_all()
 
+    def set_distortion_overlay(self, freqs, series) -> None:
+        self.single.set_distortion_overlay(freqs, series)
+
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self.single.apply_theme(theme, brand_mode)
         self.two.apply_theme(theme, brand_mode)

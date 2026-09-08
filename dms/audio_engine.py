@@ -884,4 +884,11 @@ class SweepWorker(QObject):
             float(alignment.end.timing_error_ms),
             float(alignment.snr_db),
         )
-        self.finished.emit(alignment.aligned_recording, sweep)
+        # The impulse-response window needs the decay that follows the sweep;
+        # the aligned window itself is exactly sweep-length, so the recorded
+        # tail is appended here rather than widening the alignment result.
+        recording = alignment.aligned_recording
+        tail = getattr(alignment, "aligned_recording_tail", None)
+        if tail is not None and len(tail) > 0:
+            recording = np.concatenate([recording, tail])
+        self.finished.emit(recording, sweep)

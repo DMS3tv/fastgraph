@@ -82,7 +82,9 @@ def automatic_export_values(
 ) -> dict[str, str]:
     """Build editable BRAND poster values from graph and headphone metadata."""
 
-    visible = visible_display_layers(state.layers, state.smoothing_fraction)
+    visible = visible_display_layers(
+        state.layers, state.smoothing_fraction, state.variation_combination
+    )
     kinds = {curve.kind for _layer, curve in visible}
     has_variation = "variation" in kinds
     title = "FREQUENCY RESPONSE & VARIATION" if has_variation else "FREQUENCY RESPONSE"

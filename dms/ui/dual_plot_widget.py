@@ -50,6 +50,19 @@ _BAND_OUTER = (110, 160, 220, 55)
 _BAND_INNER = (130, 185, 255, 90)
 _BAND_MEDIAN = (170, 215, 255, 220)
 
+#: Distortion overlay: fixed secondary-axis range, in dB relative to the
+#: fundamental. -110 dB is below anything a real measurement resolves and
+#: -20 dB is 10 % THD, so the scale never moves under the reader.
+_DISTORTION_Y_MIN = -110.0
+_DISTORTION_Y_MAX = -20.0
+#: Series name -> (base colour, line width). Drawn dashed so the overlay never
+#: reads as another response curve.
+_DISTORTION_STYLE = {
+    "THD": ("#e0533d", 1.6),
+    "H2": ("#e2a03f", 1.2),
+    "H3": ("#7f8fe0", 1.2),
+}
+
 _FREQ_MIN = 20.0
 _FREQ_MAX = 20000.0
 _X_RANGE_MARGIN = 0.025
@@ -180,6 +193,12 @@ class DualPlotWidget(QWidget):
         self._top_items: list[pg.PlotDataItem] = []
         self._bot_item: Optional[pg.PlotDataItem] = None
         self._bot_extra_items: list[object] = []
+        # The distortion overlay lives in its own ViewBox, so its items are
+        # tracked separately from ``_bot_extra_items``: removing them from the
+        # bottom PlotWidget would not detach them from that ViewBox.
+        self._distortion_vb: Optional[pg.ViewBox] = None
+        self._distortion_items: list[object] = []
+        self._last_distortion: Optional[tuple[np.ndarray, dict]] = None
         self._reveal_item: Optional[pg.PlotDataItem] = None
         self._reveal_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
         self._reveal_progress = 0.0
@@ -275,6 +294,12 @@ class DualPlotWidget(QWidget):
                 variation=self._last_variation,
                 mode=self._last_bottom_mode,
             )
+        if self._last_distortion is not None:
+            right = self._bot_plot.getPlotItem().getAxis("right")
+            right.setPen(pg.mkPen(foreground))
+            right.setTextPen(pg.mkPen(foreground))
+            distortion_freqs, distortion_series = self._last_distortion
+            self.set_distortion_overlay(distortion_freqs, distortion_series)
         self.update()
 
     def update_curves(
@@ -315,6 +340,108 @@ class DualPlotWidget(QWidget):
         for item in self._bot_extra_items:
             self._bot_plot.removeItem(item)
         self._bot_extra_items.clear()
+        self.set_distortion_overlay(None, None)
+
+    # ------------------------------------------------------------------
+    # Distortion overlay (secondary right axis on the bottom viewport)
+    # ------------------------------------------------------------------
+
+    def set_distortion_overlay(
+        self,
+        freqs: Optional[np.ndarray],
+        series: Optional[dict[str, np.ndarray]],
+    ) -> None:
+        """Draw THD/H2/H3 in dB relative to the fundamental, or hide them.
+
+        The overlay is drawn into a secondary :class:`pg.ViewBox` that is
+        x-linked to the bottom plot and carries its own right-hand axis on a
+        fixed -110..-20 dB scale, so distortion never rescales the response
+        curve underneath it. ``series=None`` hides the overlay entirely.
+        """
+        for item in self._distortion_items:
+            if self._distortion_vb is not None:
+                self._distortion_vb.removeItem(item)
+        self._distortion_items.clear()
+        # The legend is created once and reused: pyqtgraph re-anchors a
+        # LegendItem inside setParentItem(), so detaching it would raise.
+        legend = getattr(self, "_distortion_legend", None)
+        if legend is not None:
+            legend.clear()
+            legend.hide()
+
+        if freqs is None or series is None or len(np.asarray(freqs)) == 0:
+            self._last_distortion = None
+            if self._distortion_vb is not None:
+                self._distortion_vb.setVisible(False)
+                self._bot_plot.getPlotItem().hideAxis("right")
+            return
+
+        self._last_distortion = (np.asarray(freqs, dtype=float), dict(series))
+        vb = self._ensure_distortion_viewbox()
+        vb.setVisible(True)
+        self._bot_plot.getPlotItem().showAxis("right")
+
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        background = colors["plot_bg"]
+        log_freqs = np.log10(np.clip(np.asarray(freqs, dtype=float), 1e-6, None))
+        for name, values in series.items():
+            base, width = _DISTORTION_STYLE.get(name, ("#9aa0a6", 1.2))
+            color = ensure_graph_color(base, background)
+            pen = pg.mkPen(color=color, width=width, style=Qt.PenStyle.DashLine)
+            item = pg.PlotDataItem(
+                log_freqs,
+                np.asarray(values, dtype=float),
+                pen=pen,
+                antialias=True,
+                connect="finite",
+            )
+            vb.addItem(item)
+            self._distortion_items.append(item)
+
+        # A small legend so the operator can tell THD from H2 and H3; it is
+        # parented to the overlay view so it hides with it.
+        # Anchor to the plot's own ViewBox (the supported anchor parent); the
+        # entries sample the overlay items' pens, so the parent does not matter
+        # for what is shown.
+        legend = getattr(self, "_distortion_legend", None)
+        if legend is None:
+            legend = pg.LegendItem(offset=(-12, 8), verSpacing=-4)
+            legend.setParentItem(self._bot_plot.getPlotItem().vb)
+            self._distortion_legend = legend
+        legend.clear()
+        text_color = ensure_graph_color(colors["text"], background)
+        legend.setLabelTextColor(text_color)
+        for item, name in zip(self._distortion_items, series.keys()):
+            legend.addItem(item, name)
+        legend.show()
+        self._sync_distortion_geometry()
+
+    def _ensure_distortion_viewbox(self) -> pg.ViewBox:
+        if self._distortion_vb is not None:
+            return self._distortion_vb
+        plot_item = self._bot_plot.getPlotItem()
+        vb = pg.ViewBox(enableMenu=False)
+        plot_item.scene().addItem(vb)
+        axis = plot_item.getAxis("right")
+        axis.linkToView(vb)
+        axis.setLabel("Distortion (dB rel.)")
+        vb.setXLink(plot_item.vb)
+        vb.setYRange(_DISTORTION_Y_MIN, _DISTORTION_Y_MAX, padding=0)
+        vb.setMouseEnabled(x=False, y=False)
+        vb.setZValue(10)
+        plot_item.vb.sigResized.connect(self._sync_distortion_geometry)
+        self._distortion_vb = vb
+        return vb
+
+    def _sync_distortion_geometry(self, *_args) -> None:
+        vb = self._distortion_vb
+        if vb is None:
+            return
+        plot_item = self._bot_plot.getPlotItem()
+        vb.setGeometry(plot_item.vb.sceneBoundingRect())
+        vb.linkedViewChanged(plot_item.vb, vb.XAxis)
+        # The Y range is deliberately fixed; the x-link can otherwise drag it.
+        vb.setYRange(_DISTORTION_Y_MIN, _DISTORTION_Y_MAX, padding=0)
 
     def set_between_plots_widget(self, widget: QWidget) -> None:
         """Insert application controls between the top and bottom viewports."""

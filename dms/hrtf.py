@@ -5,6 +5,34 @@ from scipy.interpolate import interp1d
 from dms.measurement_txt import load_two_column_txt_curve
 
 
+#: Standard-normal quantiles for the 90th and 75th percentiles. A population
+#: HRTF's percentile columns are converted to a sigma through these, so the
+#: measurement spread and the population spread can be added in quadrature.
+_Z_P90 = 1.2815515655446004
+_Z_P75 = 0.6744897501960817
+
+
+def sigma_from_percentiles(
+    p10: np.ndarray,
+    p25: np.ndarray,
+    p75: np.ndarray,
+    p90: np.ndarray,
+) -> np.ndarray:
+    """Estimate the standard deviation behind a set of percentile columns.
+
+    Both the 10/90 and the 25/75 pairs give an estimate of sigma for a normal
+    distribution; averaging them uses all four columns and is less sensitive to
+    one noisy tail than either alone.
+    """
+    outer = (np.asarray(p90, dtype=float) - np.asarray(p10, dtype=float)) / (
+        2.0 * _Z_P90
+    )
+    inner = (np.asarray(p75, dtype=float) - np.asarray(p25, dtype=float)) / (
+        2.0 * _Z_P75
+    )
+    return 0.5 * (outer + inner)
+
+
 def _edge_held_interp(freqs: np.ndarray, values: np.ndarray) -> interp1d:
     """Linear interpolator that holds the first/last value outside the file range.
 
@@ -86,10 +114,20 @@ class HRTFCurve:
         median_db: np.ndarray,
         p75_db: np.ndarray,
         p90_db: np.ndarray,
+        combination: str = "independent",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Apply the compensation spread to an existing variation envelope."""
+        """Apply the compensation spread to an existing variation envelope.
+
+        ``combination="independent"`` treats the measurement spread and the
+        population spread as independent and adds their variances in
+        quadrature, which is what two unrelated sources of variation actually
+        do. ``combination="worst_case"`` reproduces Fastgraph's historical
+        pairing of opposing percentiles (p10 against comp_p90), which assumes
+        the two spreads always conspire and therefore reads much wider.
+        """
         variation = self.evaluate_variation(freqs_hz)
         if variation is None:
+            # A mono HRTF has no spread of its own; both modes are identical.
             correction = self.evaluate(freqs_hz)
             return (
                 p10_db - correction,
@@ -99,12 +137,27 @@ class HRTFCurve:
                 p90_db - correction,
             )
         comp_p10, comp_p25, comp_median, comp_p75, comp_p90 = variation
+        if str(combination) == "worst_case":
+            return (
+                p10_db - comp_p90,
+                p25_db - comp_p75,
+                median_db - comp_median,
+                p75_db - comp_p25,
+                p90_db - comp_p10,
+            )
+
+        sigma_meas = sigma_from_percentiles(p10_db, p25_db, p75_db, p90_db)
+        sigma_hrtf = sigma_from_percentiles(comp_p10, comp_p25, comp_p75, comp_p90)
+        sigma = np.sqrt(np.square(sigma_meas) + np.square(sigma_hrtf))
+        median_c = np.asarray(median_db, dtype=float) - np.asarray(
+            comp_median, dtype=float
+        )
         return (
-            p10_db - comp_p90,
-            p25_db - comp_p75,
-            median_db - comp_median,
-            p75_db - comp_p25,
-            p90_db - comp_p10,
+            median_c - _Z_P90 * sigma,
+            median_c - _Z_P75 * sigma,
+            median_c,
+            median_c + _Z_P75 * sigma,
+            median_c + _Z_P90 * sigma,
         )
 
 

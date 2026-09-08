@@ -977,3 +977,72 @@ def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
     assert result.start.selected_sweep_start == layout.sweep_start_sample + delay
     assert result.end.timing_error_ms <= 120.0
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
+
+
+def test_alignment_returns_post_sweep_tail_in_standard_mode() -> None:
+    sweep, layout = _layout()
+    delay = 137
+    rec = _recording_from_layout(layout, delay_samples=delay)
+    decay = 0.01 * np.sin(
+        np.arange(layout.post_silence_samples, dtype=np.float32) * 0.05
+    ).astype(np.float32)
+    end_idx = delay + layout.sweep_end_sample
+    rec[end_idx:end_idx + layout.post_silence_samples] += decay
+
+    result = align_recording_to_layout(
+        rec,
+        sweep,
+        layout,
+        AlignmentSettings(
+            start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0
+        ),
+    )
+
+    assert len(result.aligned_recording_tail) == layout.post_silence_samples
+    np.testing.assert_allclose(result.aligned_recording_tail, decay, atol=1e-6)
+
+
+def test_alignment_tail_stops_before_end_markers_in_bluetooth_mode() -> None:
+    sweep, layout = _layout(bluetooth=True)
+    delay = int(round(0.18 * layout.fs))
+    rec = _recording_from_layout(layout, delay_samples=delay)
+
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    gap = layout.end_marker_gap_samples
+    assert gap < layout.post_silence_samples
+    assert len(result.aligned_recording_tail) == gap
+    # The tail must stop at the marker gap: no end-marker energy may leak into
+    # the analysis window.
+    marker_energy = float(
+        np.max(
+            np.abs(
+                rec[
+                    delay + layout.end_marker_1_start_sample:
+                    delay + layout.end_marker_1_start_sample
+                    + len(layout.end_marker)
+                ]
+            )
+        )
+    )
+    assert marker_energy > 0.0
+    assert float(np.max(np.abs(result.aligned_recording_tail))) == 0.0
+
+
+def test_aligned_recording_length_is_unchanged() -> None:
+    for bluetooth in (False, True):
+        sweep, layout = _layout(bluetooth=bluetooth)
+        delay = int(round(0.18 * layout.fs)) if bluetooth else 137
+        rec = _recording_from_layout(layout, delay_samples=delay)
+        settings = (
+            _bluetooth_settings()
+            if bluetooth
+            else AlignmentSettings(
+                start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0
+            )
+        )
+
+        result = align_recording_to_layout(rec, sweep, layout, settings)
+
+        assert len(result.aligned_recording) == layout.sweep_samples
+        np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)

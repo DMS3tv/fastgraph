@@ -324,6 +324,7 @@ class CuratorWidget(QWidget):
         parent: QWidget | None = None,
         *,
         brand_mode: bool = False,
+        variation_combination: str = "independent",
     ) -> None:
         super().__init__(parent)
         self._events = events
@@ -333,7 +334,7 @@ class CuratorWidget(QWidget):
         self._manual_export_fields: set[str] = set()
         self._primary_metadata_layer_id: str | None = None
         self._applying_auto_text = False
-        self._state = GraphState()
+        self._state = GraphState(variation_combination=str(variation_combination))
         self._state.background = brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
@@ -445,7 +446,9 @@ class CuratorWidget(QWidget):
 
     def offset_layer_to_zero_at_1khz(self, layer: LayerState) -> None:
         """Normalize the displayed layer with an offset, preserving source arrays."""
-        transformed = apply_layer_transform(layer)
+        transformed = apply_layer_transform(
+            layer, self._state.variation_combination
+        )
         offset, warning = normalization_offset_at_1khz_with_warning(transformed)
         if warning is not None:
             self._show_status(f"{layer.name}: {warning}", severity="WARNING")
@@ -1345,7 +1348,9 @@ class CuratorWidget(QWidget):
     def _combine_layers(self, selected: list[LayerState]) -> LayerState:
         if not can_combine_layers(selected):
             raise ValueError("Select at least two complete variation layers to combine.")
-        combined_curve = combine_variation_layers(selected)
+        combined_curve = combine_variation_layers(
+            selected, self._state.variation_combination
+        )
 
         exiting_layers = [
             snapshot

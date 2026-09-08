@@ -115,10 +115,14 @@ from dms.measurement_profiles import (
 )
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import (
+    HarmonicAnalysis,
+    absolute_spl_offset_db,
     compute_frequency_response,
     compute_rms_average,
+    deconvolve_sweep,
     downsample_to_log_points,
     generate_log_sweep,
+    harmonic_responses,
     normalize_at_1khz,
     smooth_fractional_octave,
 )
@@ -192,6 +196,12 @@ _MEASUREMENT_F_MAX = 20000.0
 _DISPLAY_AVG_POINTS = 1200
 _DISPLAY_AVG_SMOOTHING = 48
 _METER_UPDATE_MS = 140
+#: Harmonic analysis needs a clean recording; below this SNR the distortion
+#: packets are indistinguishable from the noise floor, so nothing is computed.
+_DISTORTION_MIN_SNR_DB = 20.0
+#: Band the pass/fail summary reports THD over.
+_DISTORTION_SUMMARY_F_MIN = 100.0
+_DISTORTION_SUMMARY_F_MAX = 10000.0
 
 
 class RnDRecoveryDialog(QDialog):
@@ -402,6 +412,44 @@ class TestLevelDialog(QDialog):
             self._hint_label.setText("Noise ping sent. Confirm input level responds in dBFS.")
 
 
+def variation_combination_setting(settings: Optional[object]) -> str:
+    """Read ``hrtf_variation_combination``, defaulting to "independent".
+
+    Takes the settings object rather than the window so the pure variation
+    helpers keep working when called on a bare stand-in.
+    """
+    getter = getattr(settings, "get", None)
+    mode = getter("hrtf_variation_combination") if getter is not None else None
+    return "worst_case" if str(mode) == "worst_case" else "independent"
+
+
+def thd_band_summary(
+    analysis: Optional[HarmonicAnalysis],
+) -> Optional[tuple[float, float, float]]:
+    """(median THD %, max THD %, frequency of the max) over 100 Hz - 10 kHz.
+
+    Returns None when there is nothing measurable in the band — the summary
+    line is then simply omitted rather than showing NaNs.
+    """
+    if analysis is None:
+        return None
+    freqs = np.asarray(getattr(analysis, "freqs", []), dtype=float)
+    percent = np.asarray(getattr(analysis, "thd_percent", []), dtype=float)
+    if freqs.size == 0 or percent.size != freqs.size:
+        return None
+    band = (
+        (freqs >= _DISTORTION_SUMMARY_F_MIN)
+        & (freqs <= _DISTORTION_SUMMARY_F_MAX)
+        & np.isfinite(percent)
+    )
+    if not np.any(band):
+        return None
+    values = percent[band]
+    band_freqs = freqs[band]
+    peak = int(np.argmax(values))
+    return float(np.median(values)), float(values[peak]), float(band_freqs[peak])
+
+
 class PassFailDialog(QDialog):
     KEEP = "keep"
     FAIL = "fail"
@@ -413,6 +461,7 @@ class PassFailDialog(QDialog):
         total: int,
         timing_quality: Optional[tuple[float, float, float, float]] = None,
         diagnostics: Optional[object] = None,
+        distortion: Optional[HarmonicAnalysis] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -482,6 +531,16 @@ class PassFailDialog(QDialog):
                 warning.setWordWrap(True)
                 warning.setProperty("tone", "warning")
                 timing_box_layout.addWidget(warning)
+            summary = thd_band_summary(distortion)
+            if summary is not None:
+                median_pct, max_pct, max_freq = summary
+                thd_label = QLabel(
+                    f"THD 100 Hz-10 kHz: {median_pct:.2f} % "
+                    f"(max {max_pct:.2f} % @ {max_freq:.0f} Hz)"
+                )
+                thd_label.setWordWrap(True)
+                thd_label.setProperty("tone", "muted")
+                timing_box_layout.addWidget(thd_label)
             if bluetooth_mode:
                 timing_box.setToolTip(
                     "Timing quality guide:\n"
@@ -1126,6 +1185,9 @@ class MainWindow(QMainWindow):
         self._theme_controller.theme_changed.connect(self._on_theme_changed)
         self._theme_controller.brand_mode_changed.connect(self._on_brand_mode_changed)
         self._cal_store = CalibrationStore()
+        # dB SPL without a calibration falls back to reference mode; the note
+        # is shown once rather than after every sweep.
+        self._spl_uncalibrated_warned = False
 
         self._state = AppState.IDLE
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
@@ -1172,6 +1234,10 @@ class MainWindow(QMainWindow):
         self._sweep_runner = SweepRunner(self)
         self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
         self._devices_dirty = False
+        # Harmonic analysis of the most recently kept sweep. The queue's own
+        # last_distortion is cleared by the reset that follows Keep, so the
+        # overlay would otherwise vanish the moment a sweep is accepted.
+        self._kept_distortion: Optional[HarmonicAnalysis] = None
         self._pass_fail_dialog: Optional[PassFailDialog] = None
         self._rnd_review_dialog: Optional[RnDReviewDialog] = None
         self._rnd_sweep_active = False
@@ -1313,6 +1379,9 @@ class MainWindow(QMainWindow):
             self._console_events,
             theme=self._theme_controller.theme,
             brand_mode=self._theme_controller.brand_mode,
+            variation_combination=str(
+                self._settings.get("hrtf_variation_combination") or "independent"
+            ),
             parent=self,
         )
         self._tabs.addTab(self._curator_widget, "Curator")
@@ -1413,9 +1482,12 @@ class MainWindow(QMainWindow):
         self._bottom_layout_label.setVisible(self._two_channel_enabled and not balance)
         self._bottom_layout_combo.setVisible(self._two_channel_enabled and not balance)
         self._variation_toggle.setVisible(not balance)
+        self._distortion_toggle.setVisible(not balance)
         self._hrtf_toggle.setVisible(not balance)
         self._hrtf_combo.setVisible(not balance)
         self._hrtf_label.setVisible(not balance)
+        self._level_mode_label.setVisible(not balance)
+        self._level_mode_combo.setVisible(not balance)
         self._level_meter.setVisible(not balance)
         self._level_meter_2.setVisible(self._two_channel_enabled and not balance)
         self._level_status_label.setVisible(not balance)
@@ -2729,6 +2801,18 @@ class MainWindow(QMainWindow):
         self._variation_toggle.stateChanged.connect(self._on_bottom_view_changed)
         row.addWidget(self._variation_toggle)
 
+        self._distortion_toggle = ToggleSwitch("Distortion")
+        self._distortion_toggle.setToolTip(
+            "Overlay THD and the 2nd/3rd harmonics of the last sweep on a "
+            "secondary axis in the bottom viewport. Needs at least "
+            f"{_DISTORTION_MIN_SNR_DB:.0f} dB SNR."
+        )
+        self._distortion_toggle.setChecked(
+            bool(self._settings.get("measure_distortion_overlay"))
+        )
+        self._distortion_toggle.stateChanged.connect(self._on_distortion_overlay_changed)
+        row.addWidget(self._distortion_toggle)
+
         self._hrtf_toggle = ToggleSwitch("HRTF")
         self._hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
         self._hrtf_toggle.stateChanged.connect(self._update_plots)
@@ -2744,6 +2828,22 @@ class MainWindow(QMainWindow):
         self._hrtf_label.setMaximumWidth(90)
         row.addWidget(self._hrtf_label)
         self._refresh_hrtf_options()
+
+        self._level_mode_label = QLabel("Level")
+        self._level_mode_label.setProperty("tone", "muted")
+        row.addWidget(self._level_mode_label)
+        self._level_mode_combo = QComboBox()
+        self._level_mode_combo.addItem("1 kHz ref", "ref_1khz")
+        self._level_mode_combo.addItem("dB SPL", "dbspl")
+        self._level_mode_combo.setCurrentIndex(
+            1 if self._level_mode() == "dbspl" else 0
+        )
+        self._level_mode_combo.setToolTip(
+            "1 kHz ref normalizes every curve to 0 dB at 1 kHz. dB SPL keeps "
+            "the absolute level and needs a calibrated input device."
+        )
+        self._level_mode_combo.currentIndexChanged.connect(self._on_level_mode_changed)
+        row.addWidget(self._level_mode_combo)
 
         self._undo_btn = QPushButton("Undo")
         self._undo_btn.clicked.connect(self._undo_last_measurement)
@@ -3824,6 +3924,8 @@ class MainWindow(QMainWindow):
             self._queue_level_persist_label,
             self._bluetooth_mode_toggle,
             self._variation_toggle,
+            self._distortion_toggle,
+            self._level_mode_combo,
             self._hrtf_combo,
             self._undo_btn,
             self._clear_btn,
@@ -4098,13 +4200,10 @@ class MainWindow(QMainWindow):
 
     def _on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
-            freqs, mag_db = compute_frequency_response(
-                recording=recording,
-                sweep=sweep,
-                fs=int(self._settings.get("sample_rate")),
-                f_low=_MEASUREMENT_F_MIN,
-                f_high=_MEASUREMENT_F_MAX,
-            )
+            (freqs, mag_db), _distortion = self._analyze_sweep(recording, sweep)
+            spl_offset = self._spl_offset_db()
+            if spl_offset is not None:
+                mag_db = mag_db + spl_offset
             if self._two_channel_enabled:
                 if self._two_channel_stage == 1:
                     self._pending_pair_first_raw = (freqs, mag_db)
@@ -4119,13 +4218,19 @@ class MainWindow(QMainWindow):
                 if self._two_channel_stage != 2 or self._pending_pair_first_raw is None:
                     raise ValueError("The first channel result is unavailable.")
                 first_freqs, first_mag = self._pending_pair_first_raw
-                first_norm, second_norm = shared_normalize_pair_at_1khz(
-                    first_freqs,
-                    first_mag,
-                    freqs,
-                    mag_db,
-                    f_ref=1000.0,
-                )
+                if spl_offset is None:
+                    first_norm, second_norm = shared_normalize_pair_at_1khz(
+                        first_freqs,
+                        first_mag,
+                        freqs,
+                        mag_db,
+                        f_ref=1000.0,
+                    )
+                else:
+                    # Absolute levels: the shared 1 kHz anchor would throw the
+                    # calibrated offset away, and the two channels must keep
+                    # their real level difference.
+                    first_norm, second_norm = first_mag, mag_db
                 first_ds = downsample_to_log_points(
                     first_freqs,
                     first_norm,
@@ -4154,14 +4259,15 @@ class MainWindow(QMainWindow):
                 )
                 QTimer.singleShot(0, self._show_pass_fail_dialog)
                 return
-            mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+            if spl_offset is None:
+                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
 
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
                 n_points=600,
                 f_ref=1000.0,
-                normalize_ref=True,
+                normalize_ref=spl_offset is None,
             )
 
             self._pending_curve = (freqs_ds, mag_ds)
@@ -4341,6 +4447,7 @@ class MainWindow(QMainWindow):
                 return
             self._close_pass_fail_dialog()
             self._two_channel_pairs.append(self._pending_pair)
+            self._kept_distortion = self._queue.last_distortion
             self._pending_pair = None
             self._pending_pair_first_raw = None
             self._pending_pair_first_diagnostics = None
@@ -4364,6 +4471,7 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._kept_curves.append(self._pending_curve)
+        self._kept_distortion = self._queue.last_distortion
         self._log_event(
             "INFO", "review", "Measurement kept",
             index=self._queue_index + 1,
@@ -4463,6 +4571,7 @@ class MainWindow(QMainWindow):
             total=max(self._queue_target, self._queue_index + 1),
             timing_quality=self._last_timing_quality,
             diagnostics=self._last_measurement_diagnostics,
+            distortion=self._queue.last_distortion,
             parent=self,
         )
         dlg.adjustSize()
@@ -4621,20 +4730,18 @@ class MainWindow(QMainWindow):
 
     def _on_rnd_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
-            freqs, mag_db = compute_frequency_response(
-                recording=recording,
-                sweep=sweep,
-                fs=int(self._settings.get("sample_rate")),
-                f_low=_MEASUREMENT_F_MIN,
-                f_high=_MEASUREMENT_F_MAX,
-            )
-            mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+            (freqs, mag_db), _distortion = self._analyze_sweep(recording, sweep)
+            spl_offset = self._spl_offset_db()
+            if spl_offset is None:
+                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+            else:
+                mag_db = mag_db + spl_offset
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
                 n_points=600,
                 f_ref=1000.0,
-                normalize_ref=True,
+                normalize_ref=spl_offset is None,
             )
             self._pending_curve = (freqs_ds, mag_ds)
             self._rnd_widget.set_review_curve(self._pending_curve)
@@ -4796,7 +4903,8 @@ class MainWindow(QMainWindow):
             f_ref=1000.0,
             f_min=_MEASUREMENT_F_MIN,
             f_max=_MEASUREMENT_F_MAX,
-            normalize_ref=True,
+            # In dB SPL the average must keep the absolute level.
+            normalize_ref=self._spl_offset_db() is None,
         )
         self._average = (freqs, mag_db)
 
@@ -4947,6 +5055,9 @@ class MainWindow(QMainWindow):
                 median,
                 p75,
                 p90,
+                combination=variation_combination_setting(
+                    getattr(self, "_settings", None)
+                ),
             )
         return (base_freqs, p10, p25, p75, p90, median)
 
@@ -4985,6 +5096,8 @@ class MainWindow(QMainWindow):
         )
 
     def _update_plots(self, *_args, show_pending: bool = False) -> None:
+        overlay_freqs, overlay_series = self._distortion_overlay_series()
+        self._plots.set_distortion_overlay(overlay_freqs, overlay_series)
         if self._two_channel_enabled:
             active_hrtf = self._hrtf if self._is_hrtf_active() else None
             pairs = list(self._two_channel_pairs)
@@ -5054,6 +5167,191 @@ class MainWindow(QMainWindow):
         return "variation" if self._variation_toggle.isChecked() else "average"
 
     def _on_bottom_view_changed(self, *_args) -> None:
+        self._update_plots()
+
+    # ------------------------------------------------------------------
+    # Distortion overlay
+    # ------------------------------------------------------------------
+
+    def _distortion_overlay_enabled(self) -> bool:
+        toggle = getattr(self, "_distortion_toggle", None)
+        return toggle is not None and bool(toggle.isChecked())
+
+    def _distortion_analysis_allowed(self) -> bool:
+        """Whether the last sweep is clean enough to measure harmonics on.
+
+        Below ``_DISTORTION_MIN_SNR_DB`` the Farina packets sit inside the
+        noise floor and the numbers would be meaningless.
+        """
+        if not self._distortion_overlay_enabled():
+            return False
+        timing = self._last_timing_quality
+        if timing is None:
+            return False
+        try:
+            return float(timing[3]) >= _DISTORTION_MIN_SNR_DB
+        except (TypeError, ValueError, IndexError):
+            return False
+
+    def _distortion_overlay_series(self):
+        # During review show the pending sweep's analysis; afterwards keep
+        # showing the most recently kept sweep's.
+        analysis = self._queue.last_distortion or self._kept_distortion
+        if analysis is None or not self._distortion_overlay_enabled():
+            return None, None
+        series: dict[str, np.ndarray] = {"THD": np.asarray(analysis.thd_db)}
+        for order, name in ((2, "H2"), (3, "H3")):
+            values = analysis.orders.get(order)
+            if values is not None:
+                series[name] = np.asarray(values)
+        return np.asarray(analysis.freqs), series
+
+    def _on_distortion_overlay_changed(self, *_args) -> None:
+        self._settings.set(
+            "measure_distortion_overlay", self._distortion_overlay_enabled()
+        )
+        self._update_plots()
+
+    def _analyze_sweep(
+        self,
+        recording: np.ndarray,
+        sweep: np.ndarray,
+    ) -> tuple[tuple[np.ndarray, np.ndarray], Optional[HarmonicAnalysis]]:
+        """Frequency response plus, when asked for, harmonic distortion.
+
+        The distortion pass is strictly optional: any failure inside it is
+        logged and dropped, because a distortion overlay must never cost the
+        operator a measurement.
+        """
+        fs = int(self._settings.get("sample_rate"))
+        freqs, mag_db = compute_frequency_response(
+            recording=recording,
+            sweep=sweep,
+            fs=fs,
+            f_low=_MEASUREMENT_F_MIN,
+            f_high=_MEASUREMENT_F_MAX,
+        )
+        distortion: Optional[HarmonicAnalysis] = None
+        if self._distortion_analysis_allowed():
+            try:
+                distortion = harmonic_responses(
+                    deconvolve_sweep(recording, sweep, fs),
+                    f_low=_MEASUREMENT_F_MIN,
+                    f_high=_MEASUREMENT_F_MAX,
+                )
+            except Exception as exc:  # never fail a sweep over the overlay
+                self._log_event(
+                    "WARNING",
+                    "processing",
+                    f"Distortion analysis skipped: {exc}",
+                )
+                distortion = None
+        self._queue.last_distortion = distortion
+        return (freqs, mag_db), distortion
+
+    # ------------------------------------------------------------------
+    # Level mode (1 kHz reference vs absolute dB SPL)
+    # ------------------------------------------------------------------
+
+    def _level_mode(self) -> str:
+        mode = str(self._settings.get("measure_level_mode") or "ref_1khz")
+        return "dbspl" if mode == "dbspl" else "ref_1khz"
+
+    def _calibrated_sensitivity(self) -> Optional[float]:
+        """Pa/FS for the selected input device, or None when uncalibrated.
+
+        ``CalibrationStore`` is keyed by the device's raw name — the same key
+        ``CalibrationDialog`` writes — not by the disambiguated UI label.
+        """
+        info = self._current_input_device_info()
+        if info is None:
+            return None
+        name = str(info.get("name") or "")
+        if not name or not self._cal_store.is_calibrated(name):
+            return None
+        return self._cal_store.get_sensitivity(name)
+
+    def _spl_offset_db(self) -> Optional[float]:
+        """dB offset to absolute SPL, or None to stay in 1 kHz reference mode.
+
+        Falls back to reference mode — with a single status-bar note — when
+        dB SPL is selected but the input device has no calibration.
+        """
+        if self._level_mode() != "dbspl":
+            return None
+        sensitivity = self._calibrated_sensitivity()
+        if sensitivity is None:
+            if not getattr(self, "_spl_uncalibrated_warned", False):
+                self._spl_uncalibrated_warned = True
+                self._statusbar.showMessage(
+                    "dB SPL needs a calibrated input device; showing 1 kHz "
+                    "reference levels instead."
+                )
+            return None
+        try:
+            return absolute_spl_offset_db(
+                sensitivity_pa_per_fs=float(sensitivity),
+                output_level_db=float(self._queue_level_spin.value()),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _has_kept_measurements(self) -> bool:
+        if self._two_channel_enabled:
+            return bool(self._two_channel_pairs) or self._pending_pair is not None
+        return bool(self._kept_curves) or self._pending_curve is not None
+
+    def _sync_level_mode_combo(self) -> None:
+        combo = getattr(self, "_level_mode_combo", None)
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.setCurrentIndex(1 if self._level_mode() == "dbspl" else 0)
+        combo.blockSignals(False)
+
+    def _on_level_mode_changed(self, *_args) -> None:
+        """Switch level modes, refusing to mix modes inside one kept set."""
+        combo = self._level_mode_combo
+        chosen = str(combo.currentData() or "ref_1khz")
+        chosen = "dbspl" if chosen == "dbspl" else "ref_1khz"
+        if chosen == self._level_mode():
+            return
+        if self._state != AppState.IDLE:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "Cannot change the level mode while a measurement is running.",
+            )
+            self._sync_level_mode_combo()
+            return
+        if self._has_kept_measurements():
+            label = "dB SPL" if chosen == "dbspl" else "1 kHz reference"
+            choice = QMessageBox.question(
+                self,
+                "Clear Measurements?",
+                "Kept measurements use the current level mode and cannot be "
+                f"mixed with {label}.\n\nClear all measurements and switch?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                self._sync_level_mode_combo()
+                self._statusbar.showMessage("Level mode unchanged.")
+                return
+            self._discard_all_measurements()
+        self._settings.set("measure_level_mode", chosen)
+        self._spl_uncalibrated_warned = False
+        self._sync_level_mode_combo()
+        if chosen == "dbspl" and self._calibrated_sensitivity() is None:
+            self._statusbar.showMessage(
+                "dB SPL selected, but the input device is not calibrated; "
+                "curves stay at 1 kHz reference until it is."
+            )
+        else:
+            self._statusbar.showMessage(
+                "Level mode: dB SPL." if chosen == "dbspl"
+                else "Level mode: 1 kHz reference."
+            )
         self._update_plots()
 
     def _on_hrtf_selected(self) -> None:
@@ -5166,6 +5464,15 @@ class MainWindow(QMainWindow):
                 self._settings.set("confirm_clear_measurements", False)
                 self._settings_widget.refresh_from_settings()
 
+        self._discard_all_measurements()
+        self._statusbar.showMessage("All measurements cleared.")
+
+    def _discard_all_measurements(self) -> None:
+        """Drop every kept curve and reset the queue. No prompts, no guards.
+
+        Split out of :meth:`_clear_all` so the level-mode switch can clear
+        without asking the user a second time.
+        """
         if self._two_channel_enabled:
             self._two_channel_pairs.clear()
             self._two_channel_averages.clear()
@@ -5181,11 +5488,11 @@ class MainWindow(QMainWindow):
             self._pending_curve = None
             self._plots.clear_all()
         self._queue.reset()
+        self._kept_distortion = None
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
         self._sync_export_button()
         self._apply_state_ui()
-        self._statusbar.showMessage("All measurements cleared.")
 
     def _confirm_clear_all(self) -> tuple[bool, bool]:
         dialog = QMessageBox(self)
@@ -5213,6 +5520,9 @@ class MainWindow(QMainWindow):
                 "Undo is only available while idle.",
             )
             return
+
+        # The overlay described the sweep being undone.
+        self._kept_distortion = None
 
         if self._two_channel_enabled:
             if not self._two_channel_pairs:
@@ -6187,7 +6497,9 @@ class MainWindow(QMainWindow):
         return Path(path_str) if path_str else None
 
     def _export_average(self, requested_path: Optional[str] = None) -> None:
-        curve = self._bottom_curve_for_display_and_export()
+        # Export what is displayed: the same smoothed curve the bottom
+        # viewport draws, with the smoothing recorded in the header.
+        curve = self._bottom_curve_for_display()
         if curve is None:
             QMessageBox.information(self, "Nothing to Export", "No averaged curve available yet.")
             return
@@ -6221,6 +6533,9 @@ class MainWindow(QMainWindow):
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=active_count,
+                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                level_mode=self._level_mode() if self._spl_offset_db() is not None
+                else "ref_1khz",
             )
             self._statusbar.showMessage(f"Exported average: {path}")
             if hasattr(self, "_log_event"):
@@ -6591,7 +6906,8 @@ class MainWindow(QMainWindow):
         return str(config_dir() / "failed_recordings")
 
     def _upload_to_squiglink(self) -> None:
-        curve = self._bottom_curve_for_display_and_export()
+        # Upload what is displayed, exactly as Export Average writes it.
+        curve = self._bottom_curve_for_display()
         if curve is None:
             QMessageBox.information(
                 self,
@@ -6675,6 +6991,9 @@ class MainWindow(QMainWindow):
                 compensated=compensated,
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=self._active_measure_count(),
+                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                level_mode=self._level_mode() if self._spl_offset_db() is not None
+                else "ref_1khz",
             )
         except Exception as exc:
             self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")

@@ -6,7 +6,7 @@ MeasurementSignalLayout. They intentionally avoid Qt and sounddevice so timing
 behavior can be characterized with synthetic Bluetooth-like recordings.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -158,6 +158,12 @@ class MeasurementAlignmentResult:
     end: EndMarkerResult
     snr_db: float
     diagnostics: MeasurementDiagnostics
+    #: Recording captured after the sweep ended, for impulse-response tails.
+    #: ``aligned_recording`` itself stays exactly sweep-length; analysis code
+    #: that wants the decay concatenates this onto it. May be empty.
+    aligned_recording_tail: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.float32)
+    )
 
 
 _BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE = 3.0
@@ -913,6 +919,34 @@ def _validate_aligned_sweep_window(
     return start_idx, end_idx
 
 
+def _tail_after_sweep(
+    rec: np.ndarray,
+    end_idx: int,
+    layout: MeasurementSignalLayout,
+    settings: AlignmentSettings,
+) -> np.ndarray:
+    """Return the recorded decay that follows the aligned sweep.
+
+    In standard mode the whole post-sweep silence is available. In Bluetooth
+    mode the end markers are played after a shorter gap, so the tail stops at
+    the gap: an end-marker packet inside the analysis window would show up as
+    a spurious reflection in the impulse response.
+
+    An empty tail is legal — a recording that stops at the sweep simply has no
+    decay to offer.
+    """
+    end_idx = int(end_idx)
+    if end_idx < 0 or end_idx >= len(rec):
+        return np.zeros(0, dtype=np.float32)
+    available = int(layout.post_silence_samples)
+    if bool(settings.bluetooth_headphone_mode):
+        available = min(int(layout.end_marker_gap_samples), available)
+    if available <= 0:
+        return np.zeros(0, dtype=np.float32)
+    stop = min(end_idx + available, len(rec))
+    return np.asarray(rec[end_idx:stop]).astype(np.float32, copy=False)
+
+
 def _bluetooth_sweep_fallback_result(
     rec: np.ndarray,
     sweep: np.ndarray,
@@ -1041,6 +1075,7 @@ def _bluetooth_sweep_fallback_result(
     )
     return MeasurementAlignmentResult(
         aligned_recording=sweep_rec,
+        aligned_recording_tail=_tail_after_sweep(rec, end_idx, layout, settings),
         start=fallback_start_result,
         end=fallback_end_result,
         snr_db=float(snr_db),
@@ -1497,6 +1532,9 @@ def align_recording_to_layout(
         warning_reason, warning_message = _low_snr_warning(settings, snr_db)
         return MeasurementAlignmentResult(
             aligned_recording=sweep_rec,
+            aligned_recording_tail=_tail_after_sweep(
+                rec, end_idx, layout, settings
+            ),
             start=start_result,
             end=end_result,
             snr_db=float(snr_db),
@@ -1694,6 +1732,7 @@ def align_recording_to_layout(
         warning_reason, warning_message = _low_snr_warning(settings, snr_db)
     return MeasurementAlignmentResult(
         aligned_recording=sweep_rec,
+        aligned_recording_tail=_tail_after_sweep(rec, end_idx, layout, settings),
         start=start_result,
         end=end_result,
         snr_db=float(snr_db),

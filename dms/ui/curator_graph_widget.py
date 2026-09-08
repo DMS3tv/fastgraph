@@ -197,7 +197,9 @@ class GraphWidget(LockedPlotWidget):
         if self._state is None:
             return None
         for layer, curve in visible_display_layers(
-            self._state.layers, self._state.smoothing_fraction
+            self._state.layers,
+            self._state.smoothing_fraction,
+            self._state.variation_combination,
         ):
             if layer.id == layer_id:
                 return LayerSnapshot(layer=layer, curve=curve)
@@ -238,7 +240,9 @@ class GraphWidget(LockedPlotWidget):
                 1.0 - self._wipe_progress,
                 trace_indexes.get(snapshot.layer.id, fallback_index),
             )
-        visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
+        visible_layers = visible_display_layers(
+            state.layers, state.smoothing_fraction, state.variation_combination
+        )
         for fallback_index, (layer, curve) in enumerate(visible_layers):
             progress = self._wipe_progress if layer.id in self._entering_layer_ids else 1.0
             self._draw_curve(

@@ -15,7 +15,7 @@ from dms.curator.transforms import (
     normalization_offset_at_1khz_with_warning,
     visible_display_layers,
 )
-from dms.hrtf import HRTFCurve
+from dms.hrtf import _Z_P75, _Z_P90, HRTFCurve, sigma_from_percentiles
 
 
 class _FakeHrtf:
@@ -151,7 +151,53 @@ def test_variation_hrtf_expands_an_existing_variation_band(
 
     transformed = apply_layer_transform(layer)
 
+    # Default "independent" combination: the two spreads add in quadrature
+    # around the compensated median.
+    comp = np.array([[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]])
+    sigma_hrtf = sigma_from_percentiles(comp[:, 0], comp[:, 1], comp[:, 3], comp[:, 4])
+    sigma_meas = sigma_from_percentiles(
+        np.array([0.0, 0.0]),
+        np.array([2.0, 20.0]),
+        np.array([6.0, 60.0]),
+        np.array([8.0, 80.0]),
+    )
+    sigma = np.sqrt(sigma_meas**2 + sigma_hrtf**2)
+    expected_median = np.array([4.0, 40.0]) - comp[:, 2]
+
     assert transformed.kind == "variation"
+    assert np.allclose(transformed.median_db, expected_median)
+    assert np.allclose(transformed.p10_db, expected_median - _Z_P90 * sigma)
+    assert np.allclose(transformed.p25_db, expected_median - _Z_P75 * sigma)
+    assert np.allclose(transformed.p75_db, expected_median + _Z_P75 * sigma)
+    assert np.allclose(transformed.p90_db, expected_median + _Z_P90 * sigma)
+
+
+def test_worst_case_combination_keeps_the_legacy_variation_band(
+    tmp_path: Path,
+) -> None:
+    hrtf_path = tmp_path / "population.txt"
+    hrtf_path.write_text(
+        "100 1 2 3 4 5\n"
+        "1000 10 20 30 40 50\n",
+        encoding="utf-8",
+    )
+    layer = LayerState(
+        curve=CurveData(
+            kind="variation",
+            freqs=np.array([100.0, 1000.0]),
+            p10_db=np.array([0.0, 0.0]),
+            p25_db=np.array([2.0, 20.0]),
+            median_db=np.array([4.0, 40.0]),
+            p75_db=np.array([6.0, 60.0]),
+            p90_db=np.array([8.0, 80.0]),
+        ),
+        source_path=Path("variation.txt"),
+        name="variation",
+        hrtf=HRTFCurve(str(hrtf_path)),
+    )
+
+    transformed = apply_layer_transform(layer, "worst_case")
+
     assert np.allclose(transformed.p10_db, [-5.0, -50.0])
     assert np.allclose(transformed.p25_db, [-2.0, -20.0])
     assert np.allclose(transformed.median_db, [1.0, 10.0])

@@ -255,3 +255,27 @@ def test_brand_export_all_button_reports_missing_requirements() -> None:
     MainWindow._sync_export_button(fake)
     assert fake._upload_btn.enabled is True
     assert fake._upload_btn.role == "primary"
+
+
+def test_export_average_equals_displayed_curve(make_main_window, tmp_path: Path) -> None:
+    """Export Average writes the smoothed curve the bottom viewport draws."""
+    window = make_main_window()
+    freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 400)
+    rng = np.random.default_rng(7)
+    window._kept_curves = [
+        (freqs, rng.normal(0.0, 3.0, freqs.size)),
+        (freqs, rng.normal(0.0, 3.0, freqs.size)),
+    ]
+    window._recompute_average()
+    displayed = window._bottom_curve_for_display()
+    assert displayed is not None
+
+    output = tmp_path / "average.txt"
+    window._export_average(str(output))
+
+    text = output.read_text(encoding="utf-8")
+    assert "* Smoothing: 1/48 octave" in text
+    rows = _data_rows(output)
+    # The file rounds frequencies to 4 and magnitudes to 6 decimal places.
+    np.testing.assert_allclose(rows[:, 0], displayed[0], atol=1e-3)
+    np.testing.assert_allclose(rows[:, 1], displayed[1], atol=1e-5)

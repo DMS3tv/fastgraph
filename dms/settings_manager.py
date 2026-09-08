@@ -19,6 +19,15 @@ _DEFAULTS: dict[str, Any] = {
     "input_channel": 0,
     "measure_two_channel_enabled": False,
     "measure_two_channel_bottom_mode": "combined",
+    # Draw THD/H2/H3 against a secondary axis in the bottom viewport.
+    "measure_distortion_overlay": False,
+    # "ref_1khz" normalizes every curve to 0 dB at 1 kHz; "dbspl" keeps the
+    # absolute level, and needs a calibrated input device.
+    "measure_level_mode": "ref_1khz",
+    # How measurement spread and population-HRTF spread are combined:
+    # "independent" adds the two variances in quadrature; "worst_case" pairs
+    # the opposing percentiles the way Fastgraph did before.
+    "hrtf_variation_combination": "independent",
     "windows_advanced_audio_drivers": False,
     "queue_count": 5,
     "queue_output_level_db": -6.0,

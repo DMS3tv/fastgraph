@@ -55,11 +55,16 @@ def normalization_offset_at_1khz_with_warning(
     return -float(np.interp(NORMALIZATION_FREQ_HZ, freqs, values)), None
 
 
-def apply_layer_transform(layer: LayerState) -> CurveData:
+def apply_layer_transform(
+    layer: LayerState, combination: str = "independent"
+) -> CurveData:
+    """Compensate one layer. ``combination`` selects how a population HRTF's
+    spread is merged with the layer's own - see ``HRTFCurve.apply_to_variation``.
+    """
     curve = layer.curve
     if layer.hrtf is not None:
         if getattr(layer.hrtf, "is_variation", False):
-            curve = _apply_variation_hrtf(curve, layer.hrtf)
+            curve = _apply_variation_hrtf(curve, layer.hrtf, combination)
         else:
             correction = layer.hrtf.evaluate(curve.freqs)
             curve = replace(
@@ -93,10 +98,17 @@ def smooth_curve(curve: CurveData, fraction: int) -> CurveData:
 
 
 def visible_display_layers(
-    layers: list[LayerState], smoothing_fraction: int = 48
+    layers: list[LayerState],
+    smoothing_fraction: int = 48,
+    combination: str = "independent",
 ) -> list[tuple[LayerState, CurveData]]:
     return [
-        (layer, smooth_curve(apply_layer_transform(layer), smoothing_fraction))
+        (
+            layer,
+            smooth_curve(
+                apply_layer_transform(layer, combination), smoothing_fraction
+            ),
+        )
         for layer in layers
         if layer.visible
     ]
@@ -177,7 +189,9 @@ def _mixture_percentiles(
     return result
 
 
-def combine_variation_layers(layers: list[LayerState]) -> CurveData:
+def combine_variation_layers(
+    layers: list[LayerState], combination: str = "independent"
+) -> CurveData:
     """Pool variation layers as a sweep-count-weighted mixture of normals.
 
     Each layer's band is modelled at every frequency as a normal with the
@@ -194,7 +208,7 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
     sigmas: list[np.ndarray] = []
     coverage: list[np.ndarray] = []
     for layer in layers:
-        curve = apply_layer_transform(layer)
+        curve = apply_layer_transform(layer, combination)
         if not _is_complete_variation(curve):
             raise ValueError("Only complete variation layers can be combined.")
         assert curve.p10_db is not None
@@ -250,7 +264,9 @@ def _correct_optional(values: np.ndarray | None, correction: np.ndarray) -> np.n
     return values - correction
 
 
-def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
+def _apply_variation_hrtf(
+    curve: CurveData, hrtf, combination: str = "independent"
+) -> CurveData:
     if curve.kind == "fr" and curve.mag_db is not None:
         p10, p25, median, p75, p90 = hrtf.apply_to_magnitude_as_variation(
             curve.freqs,
@@ -269,6 +285,7 @@ def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
             curve.median_db,
             curve.p75_db,
             curve.p90_db,
+            combination=combination,
         )
     else:
         return curve

@@ -424,6 +424,12 @@ class HarmonicAnalysis:
     thd_percent: np.ndarray
 
 
+#: Fraction of the harmonic band limit (sweep top frequency or Nyquist) above
+#: which an order is reported as NaN, so the window taper at the band edge
+#: never shows as a rise in the distortion curves.
+_HARMONIC_LIMIT_GUARD = 0.9
+
+
 def harmonic_responses(
     deconv: SweepDeconvolution,
     *,
@@ -494,9 +500,11 @@ def harmonic_responses(
         )
         rel = mag_k - linear_db
         harmonic_freqs = grid_freqs * k
-        rel = np.where(
-            (harmonic_freqs > nyquist) | (harmonic_freqs > f_high), np.nan, rel
-        )
+        # Mask a little below the hard limit: the last few percent before
+        # the harmonic reaches the sweep's top frequency (or Nyquist) carry
+        # the window taper and the band edge, which read as a spurious rise.
+        limit = _HARMONIC_LIMIT_GUARD * min(nyquist, f_high)
+        rel = np.where(harmonic_freqs > limit, np.nan, rel)
         order_db[k] = rel
 
     if order_db:

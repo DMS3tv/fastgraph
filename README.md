@@ -471,8 +471,11 @@ git status --short
 
 ## Packaging For Linux
 
-Linux packaging is experimental and currently documented for Ubuntu 26.04.
-Install the required system packages, then run the build with its test gate:
+Linux packaging is experimental. `.linux/ubuntu_deps.sh` reads `/etc/os-release`
+and picks package names that exist on the detected release: the non-`t64`
+library names and `libpython3.10` on Ubuntu 22.04 (which is also what CI uses),
+and the `t64` variants plus the system `python3` minor version on 24.04 and
+newer. Install the system packages, then run the build with its test gate:
 
 ```bash
 cd /path/to/fastgraph
@@ -480,8 +483,9 @@ sudo ./.linux/ubuntu_deps.sh
 ./build_linux.sh --test
 ```
 
-To build without running pytest, use `./build_linux.sh`. The finished app folder
-will be created at:
+To build without running pytest, use `./build_linux.sh`. CI always builds
+without `--test`, because the workflow runs the suite in a separate job first.
+The finished app folder will be created at:
 
 ```bash
 dist/FastGraph Beta
@@ -497,7 +501,7 @@ Build the Windows app on a Windows machine:
 ```powershell
 cd C:\path\to\fastgraph
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\build_windows.ps1
 ```
 
@@ -508,8 +512,11 @@ The finished app folder and shareable zip will be created at:
 
 ```powershell
 dist\FastGraph Beta
-dist\FastGraph Beta-windows-x64.zip
+dist\FastGraph-Beta-windows-x64.zip
 ```
+
+The app folder keeps its display name, but the zip is hyphenated so release
+upload and checksum tooling never has to quote a filename with a space in it.
 
 ## Packaging For macOS
 
@@ -521,6 +528,29 @@ python3 -m venv .venv
 source .venv/bin/activate
 ./build_macos.sh
 ```
+
+## Pinned Build Dependencies
+
+All three build scripts install `requirements.lock`, a fully pinned environment
+covering the app dependencies, the test dependencies, and PyInstaller. It is
+what makes two builds of the same commit produce the same binary contents;
+`requirements.txt` and `requirements-dev.txt` keep their looser ranges for
+day-to-day development, and `requirements-dev.txt` pins PyInstaller exactly
+because packaged output is only validated against that release.
+
+Every package in the lock is verified to publish a CPython 3.14 wheel for
+Windows x64, macOS arm64, and manylinux x86_64, so CI runs the same interpreter
+as local development and nothing builds from source on a runner.
+
+Regenerate the lock after an intentional dependency upgrade:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m pip freeze > requirements.lock
+```
+
+`pip freeze` drops the comment header, so restore it afterwards.
 
 The finished app bundle will be created at:
 
@@ -540,11 +570,45 @@ Notes:
 - Packaged apps include the shared HRTF library and Curator preference bounds.
 - If Gatekeeper warns about the app because it is unsigned, right-click the app and choose `Open`.
 
+### Signing and notarization (not yet enabled)
+
+macOS builds currently ship with an ad-hoc signature. An ad-hoc signature is
+regenerated on every build, so macOS sees each release as a different
+application: **the user's microphone permission is revoked and has to be granted
+again after every update**, and Gatekeeper shows an unidentified-developer
+warning on first launch.
+
+The release workflow contains a commented-out `Sign and notarize macOS app`
+step with the exact `codesign`, `ditto`, `xcrun notarytool submit`, and
+`xcrun stapler staple` commands. Enabling it requires an Apple Developer ID
+Application certificate installed in the runner keychain plus these four
+repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_DEVELOPER_ID` | Developer ID Application certificate name, for example `Developer ID Application: Example Inc (ABCDE12345)` |
+| `APPLE_ID` | Apple ID email used to submit for notarization |
+| `APPLE_APP_PASSWORD` | App-specific password for that Apple ID |
+| `APPLE_TEAM_ID` | Apple Developer team identifier |
+
+Once signed and notarized with a stable identity, the microphone grant survives
+updates and the Gatekeeper warning disappears.
+
 ## Publishing a GitHub Release
 
 GitHub Actions builds release packages for Apple Silicon macOS, Windows x64, and
-Linux x64. Update `dms/version.py` and `CHANGELOG.md`, push the release commit
-to `main`, then choose one of these release paths:
+Linux x64. The workflow runs as three jobs in sequence:
+
+1. **`test`** runs the suite on macOS, Windows, and Linux (`pytest -q -n auto`
+   with `QT_QPA_PLATFORM=offscreen`). No binary is built until it passes on all
+   three, so macOS and Windows packages are no longer shipped untested.
+2. **`build`** needs `test`, and packages the app on each platform from
+   `requirements.lock`.
+3. **`publish`** needs `build`, creates or updates the release, generates
+   `SHA256SUMS.txt` over every asset, and uploads the assets one at a time.
+
+Update `dms/version.py` and `CHANGELOG.md`, push the release commit to `main`,
+then choose one of these release paths:
 
 - Push a tag such as `v0.4.2`; the workflow builds all three packages and
   publishes a GitHub release automatically.
@@ -552,10 +616,17 @@ to `main`, then choose one of these release paths:
   **Create or update a GitHub release**, and enter a release tag such as
   `v0.4.2`. This creates the tag at the selected ref and publishes the release.
 
-Leaving **Create or update a GitHub release** disabled runs a build-only job.
-Its downloadable artifacts are useful for testing before publishing. Release
-notes are taken from the matching version section in `CHANGELOG.md`; if no
-section exists, GitHub generates notes automatically.
+Leaving **Create or update a GitHub release** disabled runs the test and build
+jobs only. Their downloadable artifacts are useful for testing before
+publishing. Release notes are taken from the matching version section in
+`CHANGELOG.md`; if no section exists, GitHub generates notes automatically.
+
+Published releases carry a `SHA256SUMS.txt` asset covering every package in that
+release. Verify a download against it before installing:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
 
 ## Project Records
 

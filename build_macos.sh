@@ -13,12 +13,16 @@ if [[ ! -x ".venv/bin/python" ]]; then
   echo "Missing .venv. Create it first with:"
   echo "  python3 -m venv .venv"
   echo "  source .venv/bin/activate"
-  echo "  pip install -r requirements.txt pyinstaller"
+  echo "  pip install -r requirements.lock"
   exit 1
 fi
 
+# requirements.lock is the fully pinned build environment (app deps, test deps
+# and PyInstaller) so release builds are reproducible. Regenerate it after an
+# intentional upgrade with:
+#   .venv/bin/python -m pip freeze > requirements.lock
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt pyinstaller
+.venv/bin/python -m pip install -r requirements.lock
 
 rm -rf build dist
 

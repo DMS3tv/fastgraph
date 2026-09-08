@@ -26,7 +26,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # UPX corrupts Qt DLLs on Windows; the app fails to start.
     console=False,
     disable_windowed_traceback=False,
     exclude_binaries=True,
@@ -41,7 +41,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,  # UPX corrupts Qt DLLs on Windows; the app fails to start.
     name="FastGraph Beta",
 )
 

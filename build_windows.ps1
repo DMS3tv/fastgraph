@@ -7,12 +7,16 @@ $Python = Join-Path $RootDir ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     Write-Host "Missing .venv. Create it first with:"
     Write-Host "  python -m venv .venv"
-    Write-Host "  .\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller"
+    Write-Host "  .\.venv\Scripts\python.exe -m pip install -r requirements.lock"
     exit 1
 }
 
+# requirements.lock is the fully pinned build environment (app deps, test deps
+# and PyInstaller) so release builds are reproducible. Regenerate it after an
+# intentional upgrade with:
+#   .venv\Scripts\python.exe -m pip freeze > requirements.lock
 & $Python -m pip install --upgrade pip
-& $Python -m pip install -r requirements.txt pyinstaller
+& $Python -m pip install -r requirements.lock
 
 $PngIcon = Join-Path $RootDir "fastgraph icon.png"
 $IcoIcon = Join-Path $RootDir "fastgraph.ico"
@@ -53,13 +57,25 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $AppDir = Join-Path $DistDir "FastGraph Beta"
-$ZipPath = Join-Path $DistDir "FastGraph Beta-windows-x64.zip"
+# The app folder keeps its display name; the zip does not, so release upload
+# and checksum tooling never has to quote a filename with a space in it.
+$ZipPath = Join-Path $DistDir "FastGraph-Beta-windows-x64.zip"
 if (Test-Path $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
-Compress-Archive -Path $AppDir -DestinationPath $ZipPath
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+
+# Compress-Archive is a cmdlet, so it never sets $LASTEXITCODE. Catch its
+# terminating error instead, then confirm the zip is actually on disk.
+try {
+    Compress-Archive -Path $AppDir -DestinationPath $ZipPath -ErrorAction Stop
+} catch {
+    Write-Host "Failed to package the app folder into a zip:"
+    Write-Host "  $($_.Exception.Message)"
+    exit 1
+}
+if (-not (Test-Path $ZipPath)) {
+    Write-Host "Compress-Archive reported success but $ZipPath does not exist."
+    exit 1
 }
 
 Write-Host ""

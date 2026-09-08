@@ -1,0 +1,51 @@
+# Fully pinned build environment for FastGraph release builds.
+#
+# This is the exact dependency set the three build scripts install, so a build
+# made today and a build made in six months produce the same binary contents.
+# It covers requirements.txt, requirements-dev.txt, and PyInstaller.
+#
+# Regenerate after intentionally upgrading a dependency:
+#
+#   python -m venv .venv
+#   .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt pyinstaller
+#   .venv/bin/python -m pip freeze > requirements.lock
+#
+# (Re-add this comment header afterwards; pip freeze does not preserve it.)
+#
+# Verified to have wheels for CPython 3.14 on win_amd64, macosx_11_0_arm64, and
+# manylinux_2_28_x86_64. A few PyInstaller platform helpers (pefile,
+# pywin32-ctypes on Windows) are resolved by pip and deliberately not pinned
+# here, because they cannot be installed on the macOS/Linux runners.
+
+# --- Application runtime (requirements.txt) ---
+PyQt6==6.9.1
+PyQt6-Qt6==6.9.2
+PyQt6_sip==13.11.1
+pyqtgraph==0.14.0
+colorama==0.4.6
+numpy==2.5.1
+scipy==1.18.0
+sounddevice==0.4.6
+cffi==2.1.0
+pycparser==3.0
+paramiko==5.0.0
+invoke==3.0.3
+cryptography==49.0.0
+bcrypt==5.0.0
+PyNaCl==1.6.2
+
+# --- Test tooling (requirements-dev.txt) ---
+pytest==9.1.1
+pytest-xdist==3.8.0
+execnet==2.1.2
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.20.0
+packaging==26.2
+
+# --- Packaging ---
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+altgraph==0.17.5
+macholib==1.16.4
+setuptools==83.0.0

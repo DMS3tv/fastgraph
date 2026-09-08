@@ -1,3 +1,7 @@
 -r requirements.txt
 pytest>=8.0.0
 pytest-xdist>=3.5
+# Pinned exactly: PyInstaller minor releases change bundling behaviour, and the
+# packaged app is only validated against this one. requirements.lock pins the
+# whole build environment.
+pyinstaller==6.21.0

@@ -13,9 +13,13 @@ fi
 
 RUN_TESTS=false
 
-if [ ! -z $1 ] && [ "$1" == "--test" ]; then
-    RUN_TESTS="true"
-elif [ "$#" != "0" ]; then
+# "$1" must be guarded: set -u makes a bare $1 fatal when the script is called
+# with no arguments, which is how CI invokes it.
+if [ "$#" -eq 0 ]; then
+    :
+elif [ "$#" -eq 1 ] && [ "${1}" == "--test" ]; then
+    RUN_TESTS=true
+else
     echo "Usage: $0 [--test]"
     exit 2
 fi
@@ -24,12 +28,17 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 
+# requirements.lock is the fully pinned build environment (app deps, test deps
+# and PyInstaller) so release builds are reproducible. Regenerate it after an
+# intentional upgrade with:
+#   .venv/bin/python -m pip freeze > requirements.lock
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt pyinstaller
+.venv/bin/python -m pip install -r requirements.lock
 
+# CI runs the test suite in its own job before any build starts; --test stays
+# here for local builds.
 if [ "$RUN_TESTS" == true ]; then
-    .venv/bin/python -m pip install -r requirements-dev.txt
-    PYTHONPATH=. .venv/bin/python -m pytest -q
+    PYTHONPATH=. .venv/bin/python -m pytest -q -n auto
 fi
 
 PYTHONPATH=. .venv/bin/python -m py_compile main.py dms/*.py dms/curator/*.py dms/ui/*.py

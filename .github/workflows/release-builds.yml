@@ -24,9 +24,76 @@ on:
 permissions:
   contents: write
 
+env:
+  # CI runs the same interpreter as local development (.venv is CPython 3.14),
+  # so CI and dev resolve identical wheels. Checked 2026-09-08: every package in
+  # requirements.lock publishes a CPython 3.14 wheel for win_amd64, macOS arm64,
+  # and manylinux x86_64, so nothing has to build from source on any runner.
+  PYTHON_VERSION: "3.14"
+
 jobs:
+  test:
+    name: Test ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-14
+          - name: Windows x64
+            os: windows-latest
+          - name: Linux x64
+            os: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements.lock
+
+      # Qt needs the same X/EGL/ALSA libraries to run offscreen that the
+      # packaged app needs to run for real, so this list matches the build job.
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2 \
+            libegl1 \
+            libgl1 \
+            libportaudio2 \
+            libpulse0 \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0
+
+      # Tests deliberately install the declared ranges rather than
+      # requirements.lock: the lock is what we ship, this is what warns us early
+      # that a floating upstream release is about to break the app.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: python -m pytest -q -n auto
+
   build:
     name: Build ${{ matrix.name }}
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,7 +106,7 @@ jobs:
           - name: Windows x64
             os: windows-latest
             artifact_name: FastGraph-Beta-windows-x64
-            artifact_path: dist/FastGraph Beta-windows-x64.zip
+            artifact_path: dist/FastGraph-Beta-windows-x64.zip
           - name: Linux x64
             os: ubuntu-22.04
             artifact_name: FastGraph-Beta-linux-x64
@@ -54,11 +121,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements.lock
 
       - name: Install Linux system libraries
         if: runner.os == 'Linux'
@@ -82,6 +150,37 @@ jobs:
           ./build_macos.sh
           ditto -c -k --sequesterRsrc --keepParent "dist/FastGraph Beta.app" "${{ matrix.artifact_path }}"
 
+      # Not enabled yet. Enabling it requires an Apple Developer ID certificate
+      # in the runner keychain plus the four repository secrets below. Until
+      # then the app ships with an ad-hoc signature, which macOS treats as a new
+      # application on every update (the microphone grant resets each time).
+      # See "Signing and notarization (not yet enabled)" in README.md.
+      #
+      # - name: Sign and notarize macOS app
+      #   if: runner.os == 'macOS'
+      #   env:
+      #     APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #   run: |
+      #     codesign --deep --force --options runtime \
+      #       --sign "$APPLE_DEVELOPER_ID" \
+      #       --timestamp \
+      #       "dist/FastGraph Beta.app"
+      #     codesign --verify --strict --verbose=2 "dist/FastGraph Beta.app"
+      #     ditto -c -k --sequesterRsrc --keepParent \
+      #       "dist/FastGraph Beta.app" "${{ matrix.artifact_path }}"
+      #     xcrun notarytool submit "${{ matrix.artifact_path }}" \
+      #       --apple-id "$APPLE_ID" \
+      #       --team-id "$APPLE_TEAM_ID" \
+      #       --password "$APPLE_APP_PASSWORD" \
+      #       --wait
+      #     xcrun stapler staple "dist/FastGraph Beta.app"
+      #     rm -f "${{ matrix.artifact_path }}"
+      #     ditto -c -k --sequesterRsrc --keepParent \
+      #       "dist/FastGraph Beta.app" "${{ matrix.artifact_path }}"
+
       - name: Build Windows app
         if: runner.os == 'Windows'
         shell: pwsh
@@ -92,7 +191,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          ./build_linux.sh --test
+          ./build_linux.sh
           tar -czf "dist/FastGraph-Beta-linux-x64.tar.gz" -C dist "FastGraph Beta"
 
       - name: Upload workflow artifact
@@ -145,7 +244,20 @@ jobs:
             fi
           fi
 
+      - name: Generate SHA256 checksums
+        working-directory: release-assets
+        run: |
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt .
+          cat SHA256SUMS.txt
+
+      # One upload per asset. A single `gh release upload "$TAG" release-assets/*`
+      # word-splits any asset name that contains a space.
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG_NAME" release-assets/* --clobber
+        run: |
+          for asset in release-assets/*; do
+            gh release upload "$TAG_NAME" "$asset" --clobber
+          done

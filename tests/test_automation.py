@@ -1,12 +1,7 @@
-import os
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import pytest
-from PyQt6.QtWidgets import QApplication
 
-import dms.settings_manager as settings_module
 from dms.automation import (
     AutomationCondition,
     AutomationDefinition,
@@ -16,29 +11,13 @@ from dms.automation import (
     save_automation,
     scan_automation_directory,
 )
-from dms.session import SessionData
-from dms.settings_manager import SettingsManager
-from dms.theme import ThemeController
 from dms.ui.automation_widget import AutomationWidget
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import AppState
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
-def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
-    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path / "config")
-    monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
-    settings = SettingsManager()
-    settings.set("automation_directory", str(tmp_path / "automations"))
-    return MainWindow(
-        SessionData(rig="Rig", brand="DMS", model="Demo"),
-        settings,
-        ThemeController(qapp, settings),
+def _automation_window(make_main_window, tmp_path: Path):
+    return make_main_window(
+        settings={"automation_directory": str(tmp_path / "automations")}
     )
 
 
@@ -84,13 +63,13 @@ def test_default_automation_directory_uses_documents_or_home() -> None:
     assert path.name == "Fastgraph Automations"
 
 
-def test_automation_tab_splitter_and_library(qapp, monkeypatch, tmp_path: Path) -> None:
+def test_automation_tab_splitter_and_library(make_main_window, tmp_path: Path) -> None:
     save_automation(
         tmp_path / "automations" / "demo.fastgraph-automation.json",
         AutomationDefinition(name="Library Demo"),
     )
 
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = _automation_window(make_main_window, tmp_path)
 
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
         "Measure", "R&&D", "Curator", "Automation", "Settings"
@@ -109,11 +88,10 @@ def test_automation_tab_splitter_and_library(qapp, monkeypatch, tmp_path: Path) 
     assert window._automation_widget.events._library.count() == 1
     assert "Library Demo" in window._automation_widget.events._library.item(0).text()
     assert window._settings_widget._automation_dir.text() == str(tmp_path / "automations")
-    window.close()
 
 
-def test_manual_automation_switches_tabs_and_runs_console_command(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_manual_automation_switches_tabs_and_runs_console_command(make_main_window, tmp_path: Path) -> None:
+    window = _automation_window(make_main_window, tmp_path)
     automation = AutomationDefinition(
         name="Manual",
         steps=[
@@ -127,11 +105,10 @@ def test_manual_automation_switches_tabs_and_runs_console_command(qapp, monkeypa
 
     assert window._tabs.currentWidget() is window._curator_widget
     assert any("State:" in event.message for event in window._console_events.events())
-    window.close()
 
 
-def test_manual_automation_switches_input_device_and_channel(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_manual_automation_switches_input_device_and_channel(make_main_window, tmp_path: Path) -> None:
+    window = _automation_window(make_main_window, tmp_path)
     window._state = AppState.IDLE
     window._input_devices_by_index = {
         5: {"index": 5, "name": "Input A", "hostapi": 0, "max_input_channels": 2}
@@ -152,11 +129,12 @@ def test_manual_automation_switches_input_device_and_channel(qapp, monkeypatch, 
 
     assert window._current_input_device() == 5
     assert window._current_input_channel() == 1
-    window.close()
 
 
-def test_automation_unavailable_channel_logs_failure(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_automation_unavailable_channel_logs_failure(
+    make_main_window, monkeypatch, tmp_path: Path
+) -> None:
+    window = _automation_window(make_main_window, tmp_path)
     window._state = AppState.IDLE
     monkeypatch.setattr("dms.ui.main_window.QMessageBox.warning", lambda *args, **kwargs: None)
     automation = AutomationDefinition(
@@ -167,4 +145,3 @@ def test_automation_unavailable_channel_logs_failure(qapp, monkeypatch, tmp_path
     window._run_automation(automation)
 
     assert any("Automation failed" in event.message for event in window._console_events.events())
-    window.close()

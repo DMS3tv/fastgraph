@@ -1,8 +1,3 @@
-import os
-from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import numpy as np
 import pyqtgraph as pg
 import pytest
@@ -10,7 +5,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QBoxLayout,
     QCheckBox,
     QMessageBox,
@@ -18,23 +12,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.hrtf import HRTFCurve
 from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
-from dms.session import SessionData
-from dms.settings_manager import SettingsManager
-from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95, ThemeController
+from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95
 from dms.ui.main_window import AppState, MainWindow, RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _measurement(mid: str = "m1", name: str = "R&D One") -> RnDMeasurement:
@@ -52,23 +38,8 @@ def _measurement(mid: str = "m1", name: str = "R&D One") -> RnDMeasurement:
     )
 
 
-def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
-    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path / "config")
-    monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
-    settings = SettingsManager()
-    window = MainWindow(
-        SessionData(rig="Rig", brand="DMS", model="Demo"),
-        settings,
-        ThemeController(qapp, settings),
-    )
-    window._confirm_rnd_close = lambda: True
-    return window
-
-
-def test_rnd_tab_and_settings_folder_control(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_tab_and_settings_folder_control(tmp_path, make_main_window) -> None:
+    window = make_main_window()
 
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
         "Measure", "R&&D", "Curator", "Automation", "Settings"
@@ -76,11 +47,10 @@ def test_rnd_tab_and_settings_folder_control(qapp, monkeypatch, tmp_path: Path) 
     window._settings_widget._rnd_session_dir.setText(str(tmp_path / "sessions"))
     window._settings_widget._rnd_session_dir.editingFinished.emit()
     assert window._settings.get("rnd_session_directory") == str(tmp_path / "sessions")
-    window.close()
 
 
-def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> None:
+    window = make_main_window()
 
     assert window._rnd_widget._top_toolbar.objectName() == "rnd_top_toolbar"
     assert window._rnd_widget._export_btn.parent().objectName() == "rnd_footer_controls"
@@ -113,11 +83,10 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(qapp, monkeypatch, tmp_p
     assert window._current_input_channel() == 1
     window._ch_combo.setCurrentIndex(0)
     assert window._rnd_widget._input_channel_combo.currentData() == 0
-    window.close()
 
 
-def test_rnd_toolbar_uses_compact_stacked_rows(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_toolbar_uses_compact_stacked_rows(qapp, make_main_window) -> None:
+    window = make_main_window()
     window.resize(1280, 700)
     window.show()
     window._tabs.setCurrentIndex(1)
@@ -140,11 +109,10 @@ def test_rnd_toolbar_uses_compact_stacked_rows(qapp, monkeypatch, tmp_path: Path
     assert layout.direction() == QBoxLayout.Direction.LeftToRight
     assert layout.stretch(0) == 1
     assert layout.stretch(1) == 1
-    window.close()
 
 
-def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
+    window = make_main_window()
     window._state = AppState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._input_device_labels_by_index = {1: "Input A"}
@@ -163,11 +131,10 @@ def test_rnd_keep_review_creates_snapshot_measurement(qapp, monkeypatch, tmp_pat
     assert measurement.metadata["brand"] == "DMS"
     assert measurement.top_visible is True
     assert measurement.pinned is False
-    window.close()
 
 
-def test_rnd_review_curve_is_temporary_and_copied(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_review_curve_is_temporary_and_copied(make_main_window) -> None:
+    window = make_main_window()
     freqs = np.array([100.0, 1000.0])
     mag_db = np.array([1.0, 0.0])
     window._rnd_dirty = False
@@ -182,11 +149,10 @@ def test_rnd_review_curve_is_temporary_and_copied(qapp, monkeypatch, tmp_path: P
     np.testing.assert_array_equal(preview[1], np.array([1.0, 0.0]))
     assert window._rnd_widget.session.measurements == []
     assert window._rnd_dirty is False
-    window.close()
 
 
-def test_rnd_selected_item_photo_panel_tracks_measurement_photos(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_selected_item_photo_panel_tracks_measurement_photos(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement()
     window._rnd_widget.add_measurement(measurement)
 
@@ -199,15 +165,14 @@ def test_rnd_selected_item_photo_panel_tracks_measurement_photos(qapp, monkeypat
     assert window._rnd_widget._photo_count.text() == "Photos (1)"
     assert window._rnd_widget._capture_photo_btn.isEnabled()
     assert window._rnd_widget._photo_strip_layout.count() == 2  # thumbnail + stretch
-    window.close()
 
 
-def test_rnd_fail_review_does_not_keep(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
+    window = make_main_window()
     window._state = AppState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._rnd_widget.set_review_curve(window._pending_curve)
-    monkeypatch.setattr(window, "_start_rnd_measurement", lambda: None)
+    window._start_rnd_measurement = lambda: None
 
     class _Dialog:
         def choice(self):
@@ -218,15 +183,10 @@ def test_rnd_fail_review_does_not_keep(qapp, monkeypatch, tmp_path: Path) -> Non
     assert window._rnd_widget.session.measurements == []
     assert window._pending_curve is None
     assert window._rnd_widget._review_curve is None
-    window.close()
 
 
-def test_rnd_dirty_state_ignores_selection_and_tracks_content(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_dirty_state_ignores_selection_and_tracks_content(make_main_window) -> None:
+    window = make_main_window()
     window._rnd_recovery.enable()
 
     window._rnd_widget.add_measurement(_measurement())
@@ -238,15 +198,10 @@ def test_rnd_dirty_state_ignores_selection_and_tracks_content(
 
     window._rnd_widget._notes_edit.setPlainText("Changed")
     assert window._rnd_dirty is True
-    window.close()
 
 
-def test_rnd_manual_save_and_load_modes_update_dirty_state(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_manual_save_and_load_modes_update_dirty_state(tmp_path, monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     window._rnd_widget.add_measurement(_measurement("current", "Current"))
     save_path = tmp_path / "saved.fastgraph-rnd.json"
     monkeypatch.setattr(
@@ -269,7 +224,7 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
         "getOpenFileName",
         lambda *args, **kwargs: (str(incoming_path), ""),
     )
-    monkeypatch.setattr(window, "_choose_rnd_load_mode", lambda: "clear")
+    window._choose_rnd_load_mode = lambda: "clear"
     monkeypatch.setattr(
         QMessageBox,
         "question",
@@ -291,19 +246,14 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
         "getOpenFileName",
         lambda *args, **kwargs: (str(merge_path), ""),
     )
-    monkeypatch.setattr(window, "_choose_rnd_load_mode", lambda: "merge")
+    window._choose_rnd_load_mode = lambda: "merge"
 
     window._load_rnd_session()
     assert window._rnd_dirty is True
-    window.close()
 
 
-def test_rnd_manual_save_completes_partial_extension(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_manual_save_completes_partial_extension(tmp_path, monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     window._rnd_widget.add_measurement(_measurement())
     selected_path = tmp_path / "prototype.fastgraph-rnd"
     expected_path = tmp_path / "prototype.fastgraph-rnd.json"
@@ -317,15 +267,10 @@ def test_rnd_manual_save_completes_partial_extension(
     assert expected_path.is_file()
     assert not selected_path.exists()
     assert window._rnd_dirty is False
-    window.close()
 
 
-def test_rnd_recovery_warning_persists_until_success(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_recovery_warning_persists_until_success(make_main_window) -> None:
+    window = make_main_window()
 
     window._on_rnd_recovery_failed("disk full")
     window._rnd_widget.set_status("Ready")
@@ -333,7 +278,6 @@ def test_rnd_recovery_warning_persists_until_success(
 
     window._on_rnd_recovery_saved()
     assert window._rnd_widget._status_label.text() == "Ready"
-    window.close()
 
 
 @pytest.mark.parametrize(
@@ -346,28 +290,25 @@ def test_rnd_recovery_warning_persists_until_success(
     ],
 )
 def test_rnd_close_prompt_paths(
-    qapp,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
     result,
     save_result,
     expected,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     window._rnd_widget.add_measurement(_measurement())
     monkeypatch.setattr(QMessageBox, "exec", lambda self: result)
-    monkeypatch.setattr(window, "_save_rnd_session", lambda: save_result)
+    window._save_rnd_session = lambda: save_result
 
     assert MainWindow._confirm_rnd_close(window) is expected
-    window.close()
 
 
 def test_startup_recovery_restores_before_app_start_automation(
-    qapp,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     recovered = _measurement("recovered", "Recovered")
     session = window._rnd_widget.session.__class__(
         measurements=[recovered],
@@ -407,11 +348,10 @@ def test_startup_recovery_restores_before_app_start_automation(
     assert window._rnd_widget.session.measurements[0].name == "Recovered"
     assert window._rnd_dirty is True
     assert events == [("app_start", 1)]
-    window.close()
 
 
-def test_rnd_group_toggles_and_curator_send(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_group_toggles_and_curator_send(make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     second.mag_db = np.array([2.0, 1.0])
@@ -439,11 +379,10 @@ def test_rnd_group_toggles_and_curator_send(qapp, monkeypatch, tmp_path: Path) -
     assert "hrtf_name" not in layer.curve.metadata
     assert layer.curve.metadata["compensated"] is False
     assert window._tabs.currentWidget() is window._curator_widget
-    window.close()
 
 
-def test_rnd_group_variation_follows_group_viewport_visibility(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_group_variation_follows_group_viewport_visibility(make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     second.mag_db = np.array([2.0, 1.0])
@@ -475,11 +414,10 @@ def test_rnd_group_variation_follows_group_viewport_visibility(qapp, monkeypatch
     assert len(calls[-1]["bottom_group_variations"]) == 1
     assert calls[-1]["top_measurements"] == []
     assert calls[-1]["pinned_measurements"] == []
-    window.close()
 
 
-def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Only")
     group = RnDGroup(
         id="g1",
@@ -499,11 +437,10 @@ def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(qapp, monke
     assert calls[-1]["top_group_variations"] == []
     assert calls[-1]["top_measurements"] == []
     assert window._rnd_widget._status_label.text() == "Ready - Var needs 2 measurements: Prototype A"
-    window.close()
 
 
-def test_rnd_group_bottom_toggle_shows_all_group_children(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_group_bottom_toggle_shows_all_group_children(make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     group = RnDGroup(id="g1", name="Prototype A", pinned=True, measurement_ids=["m1", "m2"])
@@ -516,11 +453,10 @@ def test_rnd_group_bottom_toggle_shows_all_group_children(qapp, monkeypatch, tmp
     window._rnd_widget._redraw()
 
     assert [measurement.name for measurement, _mag in calls[-1]["pinned_measurements"]] == ["First", "Second"]
-    window.close()
 
 
-def test_rnd_offsets_are_additive_for_display_and_curator_send(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_offsets_are_additive_for_display_and_curator_send(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Offset Target")
     measurement.vertical_offset_db = 3.0
     group = RnDGroup(
@@ -548,11 +484,10 @@ def test_rnd_offsets_are_additive_for_display_and_curator_send(qapp, monkeypatch
     assert layer.curve.metadata["brand"] == "DMS"
     assert layer.curve.metadata["model"] == "Demo"
     assert layer.curve.metadata["rig"] == "Rig"
-    window.close()
 
 
-def test_rnd_offset_rows_update_selected_measurement_and_group(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_offset_rows_update_selected_measurement_and_group(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Offset Target")
     group = RnDGroup(id="g1", name="Prototype A", measurement_ids=["m1"])
     window._rnd_widget.session.measurements = [measurement]
@@ -565,11 +500,10 @@ def test_rnd_offset_rows_update_selected_measurement_and_group(qapp, monkeypatch
 
     window._rnd_widget._set_group_offset("g1", -1.5)
     assert group.vertical_offset_db == -1.5
-    window.close()
 
 
-def test_rnd_group_variation_uses_displayed_offsets(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_group_variation_uses_displayed_offsets(monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     first.vertical_offset_db = 2.0
@@ -601,11 +535,10 @@ def test_rnd_group_variation_uses_displayed_offsets(qapp, monkeypatch, tmp_path:
 
     assert np.allclose(captured[0][0], [6.0, 5.0])
     assert np.allclose(captured[0][1], [4.0, 3.0])
-    window.close()
 
 
-def test_rnd_bounds_toggle_passes_enabled_bounds_to_both_viewports(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_bounds_toggle_passes_enabled_bounds_to_both_viewports(make_main_window) -> None:
+    window = make_main_window()
     calls: list[dict] = []
     window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
 
@@ -613,11 +546,10 @@ def test_rnd_bounds_toggle_passes_enabled_bounds_to_both_viewports(qapp, monkeyp
 
     assert window._rnd_widget.session.preference_bounds_enabled is True
     assert calls[-1]["preference_bounds"].enabled is True
-    window.close()
 
 
-def test_rnd_smoothing_control_changes_displayed_curve(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_smoothing_control_changes_displayed_curve(monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Smooth Me")
     calls: list[int] = []
 
@@ -632,11 +564,10 @@ def test_rnd_smoothing_control_changes_displayed_curve(qapp, monkeypatch, tmp_pa
 
     assert calls == [12]
     assert np.allclose(mag, [13.0, 12.0])
-    window.close()
 
 
-def test_rnd_export_uses_selected_smoothing(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_export_uses_selected_smoothing(tmp_path, monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Export Smooth")
     window._rnd_widget.session.smoothing_fraction = 6
     captured: dict[str, object] = {}
@@ -653,11 +584,10 @@ def test_rnd_export_uses_selected_smoothing(qapp, monkeypatch, tmp_path: Path) -
     window._export_rnd_measurement(measurement, str(tmp_path / "smooth.txt"))
 
     assert np.allclose(captured["mag_db"], [7.0, 6.0])
-    window.close()
 
 
-def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "Reference")
     first.pinned = True
     second = _measurement("m2", "Delta")
@@ -676,11 +606,10 @@ def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(qapp, monkeyp
     assert len(deltas) == 1
     assert deltas[0][0].name == "Delta"
     assert np.allclose(deltas[0][2], [3.0, 1.5])
-    window.close()
 
 
-def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Reference")
     measurement.pinned = True
     window._rnd_widget.session.measurements = [measurement]
@@ -694,11 +623,10 @@ def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(qapp, monkeypat
     assert calls[-1]["delta_mode_active"] is True
     assert calls[-1]["delta_measurements"] == []
     assert window._rnd_widget._status_label.text() == "Ready - Delta Mode needs at least 2 bottom items"
-    window.close()
 
 
-def test_rnd_delta_mode_supports_group_variation_bands(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     group_a = RnDGroup(
         id="ga",
         name="A",
@@ -743,22 +671,20 @@ def test_rnd_delta_mode_supports_group_variation_bands(qapp, monkeypatch, tmp_pa
     assert np.allclose(median, [5.0, 5.0])
     assert np.allclose(p75, [6.0, 6.0])
     assert np.allclose(p90, [7.0, 7.0])
-    window.close()
 
 
-def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, make_main_window) -> None:
+    window = make_main_window()
 
     assert window._rnd_widget._tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window._rnd_widget._tree.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert window._rnd_widget._tree.styleSheet() == ""
     assert "QScrollBar:vertical" in qapp.styleSheet()
     assert "QScrollBar:horizontal" in qapp.styleSheet()
-    window.close()
 
 
-def test_rnd_new_group_moves_selected_measurements_in_visual_order(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_new_group_moves_selected_measurements_in_visual_order(make_main_window) -> None:
+    window = make_main_window()
     first = _measurement("m1", "First")
     second = _measurement("m2", "Second")
     third = _measurement("m3", "Third")
@@ -774,11 +700,10 @@ def test_rnd_new_group_moves_selected_measurements_in_visual_order(qapp, monkeyp
     group = window._rnd_widget.session.groups[0]
     assert group.measurement_ids == ["m1", "m3"]
     assert window._rnd_widget.session.ungrouped_order == ["m2"]
-    window.close()
 
 
-def test_rnd_target_is_passed_to_viewports_with_offset(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_target_is_passed_to_viewports_with_offset(make_main_window) -> None:
+    window = make_main_window()
     calls: list[dict] = []
     window._rnd_widget._plots.redraw = lambda **kwargs: calls.append(kwargs)
 
@@ -793,11 +718,10 @@ def test_rnd_target_is_passed_to_viewports_with_offset(qapp, monkeypatch, tmp_pa
     assert name == "House Target"
     assert np.allclose(freqs, [100.0, 1000.0])
     assert np.allclose(mag_db, [-2.0, -1.0])
-    window.close()
 
 
-def test_rnd_default_hrtf_is_applied_to_new_measurements(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_default_hrtf_is_applied_to_new_measurements(make_main_window) -> None:
+    window = make_main_window()
     window._rnd_widget._default_hrtf_combo.addItem("Fixture", "fixture.txt")
     window._rnd_widget._default_hrtf_combo.setCurrentIndex(
         window._rnd_widget._default_hrtf_combo.findData("fixture.txt")
@@ -807,16 +731,15 @@ def test_rnd_default_hrtf_is_applied_to_new_measurements(qapp, monkeypatch, tmp_
 
     assert window._rnd_widget.session.hrtf_path == "fixture.txt"
     assert window._rnd_widget.session.measurements[0].hrtf_path == "fixture.txt"
-    window.close()
 
 
-def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(qapp, monkeypatch, tmp_path: Path) -> None:
+def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(tmp_path, monkeypatch, make_main_window) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     monkeypatch.setattr(rnd_widget_module, "HRTF_DIR", hrtf_dir)
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     measurement = _measurement("m1", "Portable HRTF")
     measurement.hrtf_name = "Fixture A"
     measurement.hrtf_path = str(tmp_path / "old" / "Fixture A.txt")
@@ -826,11 +749,10 @@ def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(qapp, monkeypatch, 
 
     assert resolved == str(hrtf_path)
     assert np.allclose(mag, [0.0, -2.0])
-    window.close()
 
 
-def test_rnd_export_blocks_missing_hrtf(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_export_blocks_missing_hrtf(tmp_path, monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "Missing HRTF")
     measurement.hrtf_name = "Fixture Gone"
     measurement.hrtf_path = str(tmp_path / "missing" / "Fixture Gone.txt")
@@ -841,18 +763,16 @@ def test_rnd_export_blocks_missing_hrtf(qapp, monkeypatch, tmp_path: Path) -> No
 
     assert warnings
     assert not (tmp_path / "out.txt").exists()
-    window.close()
 
 
-def test_rnd_group_rows_receive_distinct_default_colors(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_group_rows_receive_distinct_default_colors(make_main_window) -> None:
+    window = make_main_window()
 
     window._rnd_widget._new_group()
     window._rnd_widget._new_group()
 
     colors = [group.color for group in window._rnd_widget.session.groups]
     assert len(set(colors)) == 2
-    window.close()
 
 
 def test_rnd_variation_renderer_draws_outer_inner_and_median(qapp) -> None:
@@ -878,8 +798,8 @@ def test_rnd_variation_renderer_draws_outer_inner_and_median(qapp) -> None:
     plot_widget.close()
 
 
-def test_rnd_merge_session_remaps_colliding_ids_and_names(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_merge_session_remaps_colliding_ids_and_names(make_main_window) -> None:
+    window = make_main_window()
     window._rnd_widget.add_measurement(_measurement("same", "Duplicate"))
     incoming = window._rnd_widget.session.__class__(
         measurements=[_measurement("same", "Duplicate")],
@@ -894,15 +814,10 @@ def test_rnd_merge_session_remaps_colliding_ids_and_names(qapp, monkeypatch, tmp
     assert len(set(ids)) == 2
     assert names == ["Duplicate", "Duplicate (2)"]
     assert window._rnd_widget.session.groups[0].measurement_ids[0] != "same"
-    window.close()
 
 
-def test_measure_export_row_has_send_to_rnd_and_compact_directory(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_window) -> None:
+    window = make_main_window()
     layout = window._plots._footer_widget.layout()
 
     assert layout.indexOf(window._send_to_rnd_btn) < layout.indexOf(window._export_btn)
@@ -925,15 +840,13 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(
     assert not window._send_to_rnd_btn.isEnabled()
     assert "idle" in window._send_to_rnd_btn.toolTip().lower()
     window._state = AppState.IDLE
-    window.close()
 
 
 def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
-    qapp,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     freqs = np.array([100.0, 1000.0])
     mag_db = np.array([3.0, -1.0])
     window._average = (freqs, mag_db)
@@ -941,9 +854,9 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     window._hrtf_toggle.setChecked(False)
     window._rnd_widget.session.hrtf_path = "rnd-default.txt"
     window._rnd_widget.session.hrtf_name = "R&D Default"
-    monkeypatch.setattr(window, "_current_input_device_label", lambda: "Input A")
-    monkeypatch.setattr(window, "_current_output_device_label", lambda: "Output B")
-    monkeypatch.setattr(window, "_current_input_channel", lambda: 1)
+    window._current_input_device_label = lambda: "Input A"
+    window._current_output_device_label = lambda: "Output B"
+    window._current_input_channel = lambda: 1
     window._ch_combo.clear()
     window._ch_combo.addItem("Channel 2", 1)
     recovery_calls: list[bool] = []
@@ -994,15 +907,10 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
 
     mag_db[:] = 99.0
     assert not np.allclose(measurement.mag_db, mag_db)
-    window.close()
 
 
-def test_measure_average_copies_active_hrtf_as_editable_state(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_average_copies_active_hrtf_as_editable_state(tmp_path, make_main_window) -> None:
+    window = make_main_window()
     hrtf_path = tmp_path / "average-hrtf.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
@@ -1016,7 +924,6 @@ def test_measure_average_copies_active_hrtf_as_editable_state(
     assert measurement.hrtf_path == str(hrtf_path)
     assert measurement.hrtf_name == "average-hrtf"
     assert np.allclose(measurement.mag_db, source_mag)
-    window.close()
 
 
 @pytest.mark.parametrize(
@@ -1027,12 +934,12 @@ def test_measure_average_copies_active_hrtf_as_editable_state(
     ],
 )
 def test_measure_var_sends_all_kept_curves_as_one_group(
-    qapp,
+    tmp_path,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
     hrtf_rows: str,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     hrtf_path = tmp_path / "transfer-hrtf.txt"
     hrtf_path.write_text(hrtf_rows, encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
@@ -1077,15 +984,10 @@ def test_measure_var_sends_all_kept_curves_as_one_group(
     second_mag[:] = 99.0
     assert not np.allclose(session.measurements[0].mag_db, first_mag)
     assert not np.allclose(session.measurements[1].mag_db, second_mag)
-    window.close()
 
 
-def test_rnd_tree_uses_view_checkboxes_without_show_column(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_tree_uses_view_checkboxes_without_show_column(make_main_window) -> None:
+    window = make_main_window()
     measurement = _measurement("m1", "First")
     group = RnDGroup(
         id="g1",
@@ -1125,15 +1027,14 @@ def test_rnd_tree_uses_view_checkboxes_without_show_column(
     assert group.pinned is True
     assert measurement.top_visible is False
     assert measurement.pinned is True
-    window.close()
 
 
 def test_rnd_group_collapse_survives_tree_rebuilds_without_dirtying(
     qapp,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     group = RnDGroup(id="g1", name="Prototype", expanded=True)
     window._rnd_widget.session.groups = [group]
     window._rnd_widget._sync_tree()
@@ -1171,13 +1072,11 @@ def test_rnd_group_collapse_survives_tree_rebuilds_without_dirtying(
         == group.id
     )
     assert original_item.isExpanded() is False
-    window.close()
 
 
 def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
-    qapp,
     monkeypatch,
-    tmp_path: Path,
+    make_main_window,
 ) -> None:
     plot_widget = rnd_widget_module.RnDPlotWidget()
     expected_colors = [
@@ -1208,7 +1107,7 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
     np.testing.assert_array_equal(measurement.mag_db, [1.0, 0.0])
     plot_widget.close()
 
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     splitter = window._rnd_widget._splitter
     splitter.resize(1400, 600)
     size_calls: list[list[int]] = []
@@ -1222,15 +1121,10 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
     window._rnd_widget._splitter_ratio = 0.63
     window._rnd_widget._apply_splitter_ratio()
     assert size_calls == [[round(available * 0.63), available - round(available * 0.63)]]
-    window.close()
 
 
-def test_rnd_splitter_user_ratio_is_saved_and_reused(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_rnd_splitter_user_ratio_is_saved_and_reused(monkeypatch, make_main_window) -> None:
+    window = make_main_window()
     splitter = window._rnd_widget._splitter
     splitter.resize(1400, 600)
     monkeypatch.setattr(splitter, "sizes", lambda: [560, 840])
@@ -1247,17 +1141,15 @@ def test_rnd_splitter_user_ratio_is_saved_and_reused(
     window._rnd_widget._apply_splitter_ratio()
     applied = size_calls[-1]
     assert applied[0] / sum(applied) == pytest.approx(0.4, abs=0.01)
-    window.close()
 
 
 @pytest.mark.parametrize("width", [1200, 1800, 2600])
 def test_rnd_default_splitter_stays_half_across_window_sizes(
     qapp,
-    monkeypatch,
-    tmp_path: Path,
+    make_main_window,
     width: int,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = make_main_window()
     window._rnd_widget._splitter_ratio = 0.5
     window.resize(width, 900)
     window.show()
@@ -1267,4 +1159,3 @@ def test_rnd_default_splitter_stays_half_across_window_sizes(
 
     sizes = window._rnd_widget._splitter.sizes()
     assert sizes[0] / sum(sizes) == pytest.approx(0.5, abs=0.02)
-    window.close()

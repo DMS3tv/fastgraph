@@ -1,16 +1,11 @@
 import numpy as np
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QLabel
 
 from dms.ui.measure_workspace import MeasureWorkspace, TwoChannelMeasureWidget
 
 
-def _app() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
-def test_workspace_moves_shared_controls_between_measure_modes() -> None:
-    app = _app()
-    assert app is not None
+def test_workspace_moves_shared_controls_between_measure_modes(qapp) -> None:
+    assert qapp is not None
     workspace = MeasureWorkspace()
     header = QLabel("Header")
     middle = QLabel("Middle")
@@ -32,9 +27,8 @@ def test_workspace_moves_shared_controls_between_measure_modes() -> None:
     assert workspace.single._header_widget is header
 
 
-def test_two_channel_layout_defaults_to_combined_and_channel_one_selection() -> None:
-    app = _app()
-    assert app is not None
+def test_two_channel_layout_defaults_to_combined_and_channel_one_selection(qapp) -> None:
+    assert qapp is not None
     widget = TwoChannelMeasureWidget()
 
     assert widget.selection == "combined"
@@ -50,9 +44,8 @@ def test_two_channel_layout_defaults_to_combined_and_channel_one_selection() -> 
     assert "2px solid" in widget._bottom_2.frame.styleSheet()
 
 
-def test_scope_uses_synchronized_time_and_amplitude_ranges() -> None:
-    app = _app()
-    assert app is not None
+def test_scope_uses_synchronized_time_and_amplitude_ranges(qapp) -> None:
+    assert qapp is not None
     widget = TwoChannelMeasureWidget()
     samples = np.sin(2.0 * np.pi * np.arange(480, dtype=float) / 48.0)
     widget.update_scope(samples, samples * 0.8, 48000, -3.0, -5.0, 2.0)

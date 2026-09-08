@@ -1,8 +1,3 @@
-import os
-from pathlib import Path
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import numpy as np
 import pytest
 from PyQt6.QtCore import QEvent, QSize
@@ -14,11 +9,8 @@ from PyQt6.QtWidgets import (
     QStyleOptionButton,
 )
 
-import dms.settings_manager as settings_module
 import dms.ui.main_window as main_window_module
 import dms.dither_fonts as dither_fonts
-from dms.session import SessionData
-from dms.settings_manager import SettingsManager
 from dms.theme import (
     DARK,
     DITHER,
@@ -26,7 +18,6 @@ from dms.theme import (
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
     LIGHT,
-    ThemeController,
 )
 from dms.two_channel import TwoChannelCurvePair
 from dms.ui.main_window import AppState, MainWindow
@@ -37,33 +28,14 @@ from dms.ui.modern_button import (
 from dms.ui.style_tokens import DITHER_TOKENS
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
-def _window(
-    qapp,
-    monkeypatch,
-    tmp_path: Path,
-    *,
-    theme: str = DARK,
-) -> MainWindow:
-    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path / "config")
-    monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
-    settings = SettingsManager()
-    settings.set("theme", theme)
-    settings.set("measure_two_channel_enabled", True)
-    settings.set("measure_two_channel_bottom_mode", "separate")
-    window = MainWindow(
-        SessionData(rig="Rig", brand="DMS", model="Demo"),
-        settings,
-        ThemeController(qapp, settings),
+def _window(make_main_window, *, theme: str = DARK) -> MainWindow:
+    return make_main_window(
+        theme=theme,
+        settings={
+            "measure_two_channel_enabled": True,
+            "measure_two_channel_bottom_mode": "separate",
+        },
     )
-    window._confirm_rnd_close = lambda: True
-    return window
 
 
 def _process_theme_change(qapp) -> None:
@@ -149,10 +121,8 @@ def _settle_segment_width_refresh(qapp, window: MainWindow) -> None:
     assert window._measure_submode_control._width_refresh_pending is False
 
 
-def test_restores_two_channel_layout_but_starts_in_frequency_response(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_window) -> None:
+    window = _window(make_main_window)
 
     assert window._two_channel_enabled is True
     assert window._plots._stack.currentWidget() is window._plots.two
@@ -162,13 +132,12 @@ def test_restores_two_channel_layout_but_starts_in_frequency_response(
     assert window._measure_frequency_button.text() == "Frequency Response"
     assert window._measure_balance_button.text() == "Channel Balance"
     assert window._channel_balance_active is False
-    window.close()
 
 
 def test_measure_submode_segments_change_mode_and_stop_generator(
-    qapp, monkeypatch, tmp_path: Path
+    monkeypatch, make_main_window
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = _window(make_main_window)
     stop_calls = []
     monkeypatch.setattr(
         window,
@@ -192,13 +161,10 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
     assert window._measure_submode_control.isHidden() is True
     assert window._measure_frequency_button.isChecked() is True
     assert window._measure_balance_button.isChecked() is False
-    window.close()
 
 
-def test_measure_submode_segments_are_disabled_while_busy(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> None:
+    window = _window(make_main_window)
     window._measure_balance_button.setChecked(True)
     window._state = AppState.QUEUE_RUNNING
     window._apply_state_ui()
@@ -207,13 +173,12 @@ def test_measure_submode_segments_are_disabled_while_busy(
     assert window._measure_frequency_button.isEnabled() is False
     assert window._measure_balance_button.isEnabled() is False
     assert window._measure_balance_button.isChecked() is True
-    window.close()
 
 
 def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
-    qapp, monkeypatch, tmp_path: Path
+    qapp, make_main_window
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = _window(make_main_window)
     window.show()
     _settle_segment_width_refresh(qapp, window)
 
@@ -252,20 +217,13 @@ def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
         window._measure_submode_control.sizePolicy().horizontalPolicy()
         == QSizePolicy.Policy.Fixed
     )
-    window.close()
 
 
 def test_measure_button_width_matches_dither_startup_and_switch_paths(
     qapp,
-    monkeypatch,
-    tmp_path: Path,
+    make_main_window,
 ) -> None:
-    startup_window = _window(
-        qapp,
-        monkeypatch,
-        tmp_path / "dither-startup",
-        theme=DITHER,
-    )
+    startup_window = _window(make_main_window, theme=DITHER)
     startup_window.show()
     _process_theme_change(qapp)
     startup_button = startup_window._start_queue_btn
@@ -280,12 +238,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
     startup_window.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
-    switch_window = _window(
-        qapp,
-        monkeypatch,
-        tmp_path / "dither-switch",
-        theme=DARK,
-    )
+    switch_window = _window(make_main_window, theme=DARK)
     switch_window.show()
     _process_theme_change(qapp)
     switch_button = switch_window._start_queue_btn
@@ -306,13 +259,10 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
 
     assert switch_button.grab().toImage().width() == dark_width
     assert switch_button.sizeHint().width() == dark_hint_width
-    switch_window.close()
 
 
-def test_measure_submode_accessibility_and_responsive_width(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_submode_accessibility_and_responsive_width(make_main_window) -> None:
+    window = _window(make_main_window)
 
     assert window._measure_submode_control.accessibleName() == "Measure mode"
     assert window._measure_submode_control.toolTip()
@@ -335,13 +285,10 @@ def test_measure_submode_accessibility_and_responsive_width(
         window._queue_bar.compact_breakpoint
         == window._queue_bar._BASE_COMPACT_WIDTH
     )
-    window.close()
 
 
-def test_single_and_two_channel_workspaces_survive_mode_changes(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window) -> None:
+    window = _window(make_main_window)
     window._kept_curves = [_curve(9.0)]
     window._recompute_average()
     window._two_channel_pairs = [TwoChannelCurvePair(_curve(1.0), _curve(-2.0))]
@@ -360,13 +307,10 @@ def test_single_and_two_channel_workspaces_survive_mode_changes(
     np.testing.assert_allclose(
         window._bottom_curve_for_display_and_export()[1], -2.0
     )
-    window.close()
 
 
-def test_pair_processing_uses_one_shared_reference_offset(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main_window) -> None:
+    window = _window(make_main_window)
     freqs = np.array([100.0, 1000.0, 10000.0])
     responses = iter(
         [
@@ -404,13 +348,12 @@ def test_pair_processing_uses_one_shared_reference_offset(
         + 10.0 ** (second_reference / 10.0)
     ) / 2.0
     assert 10.0 * np.log10(reference_power) == pytest.approx(0.0, abs=1e-6)
-    window.close()
 
 
 def test_second_stage_failure_discards_pair_and_schedules_full_retry(
-    qapp, monkeypatch, tmp_path: Path
+    monkeypatch, make_main_window
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = _window(make_main_window)
     window._queue_target = 1
     window._queue_index = 0
     window._current_sweep_attempts = 1
@@ -438,4 +381,3 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     assert window._state == AppState.QUEUE_RUNNING
     assert window._start_next_sweep in scheduled
     window._queue_target = 0
-    window.close()

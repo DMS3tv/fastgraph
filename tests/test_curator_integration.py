@@ -1,52 +1,33 @@
-import os
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import numpy as np
-import pytest
 from PyQt6.QtTest import QTest
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import QApplication, QGroupBox, QToolButton
+from PyQt6.QtWidgets import QGroupBox, QToolButton
 
-import dms.settings_manager as settings_module
 from dms.curator.transforms import apply_layer_transform
 from dms.hrtf import HRTFCurve
 from dms.session import SessionData
-from dms.settings_manager import SettingsManager
-from dms.theme import ThemeController
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import AppState
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
-def _window(qapp, monkeypatch, tmp_path: Path) -> MainWindow:
-    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path / "config")
-    monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
-    monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
-    settings = SettingsManager()
-    return MainWindow(
-        SessionData(rig="Test Rig", brand="DMS", model="Demo"),
-        settings,
-        ThemeController(qapp, settings),
+def _window(make_main_window):
+    return make_main_window(
+        session=SessionData(rig="Test Rig", brand="DMS", model="Demo"),
+        confirm_rnd_close=False,
     )
 
 
-def test_curator_is_middle_tab(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_curator_is_middle_tab(make_main_window) -> None:
+    window = _window(make_main_window)
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
         "Measure", "R&&D", "Curator", "Automation", "Settings"
     ]
     assert window._queue_level_persist_toggle.minimumSizeHint().width() >= 54
-    window.close()
 
 
-def test_measure_controls_are_embedded_around_plots(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
+    window = _window(make_main_window)
 
     assert window._plots._between_plots_widget.objectName() == "measure_interplot_controls"
     assert window._plots._footer_widget.objectName() == "measure_export_controls"
@@ -62,13 +43,10 @@ def test_measure_controls_are_embedded_around_plots(qapp, monkeypatch, tmp_path:
     assert window._level_meter.parent() is window._plots._between_plots_widget
     assert window._export_dir_input.parent() is window._plots._footer_widget
     assert not window._clear_btn.isEnabled()
-    window.close()
 
 
-def test_session_and_bluetooth_controls_precede_tabs(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_session_and_bluetooth_controls_precede_tabs(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -97,13 +75,10 @@ def test_session_and_bluetooth_controls_precede_tabs(
     window._tabs.setCurrentWidget(window._console_widget)
     qapp.processEvents()
     assert header.isVisible()
-    window.close()
 
 
-def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(make_main_window) -> None:
+    window = _window(make_main_window)
     measure = window._tabs.widget(0)
 
     assert measure.layout().count() == 1
@@ -118,13 +93,12 @@ def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(
 
     window._set_queue_bar_compact(True)
     assert window._queue_progress_bar.parent() is window._queue_progress_widget
-    window.close()
 
 
 def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    qapp,
+    make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -152,13 +126,10 @@ def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(
     window._inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
     assert not window._inputs_overlay.isVisible()
-    window.close()
 
 
-def test_inputs_overlay_closes_after_an_outside_click(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     window._open_inputs_overlay()
@@ -174,11 +145,10 @@ def test_inputs_overlay_closes_after_an_outside_click(
     qapp.processEvents()
 
     assert not window._inputs_overlay.isVisible()
-    window.close()
 
 
-def test_inputs_overlay_closes_on_tab_change(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_inputs_overlay_closes_on_tab_change(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.show()
     window._open_inputs_overlay()
     window._inputs_overlay_animation.setCurrentTime(180)
@@ -186,13 +156,10 @@ def test_inputs_overlay_closes_on_tab_change(qapp, monkeypatch, tmp_path: Path) 
     window._inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
     assert not window._inputs_overlay.isVisible()
-    window.close()
 
 
-def test_metadata_button_opens_dropdown_and_saves_session(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_metadata_button_opens_dropdown_and_saves_session(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -220,13 +187,10 @@ def test_metadata_button_opens_dropdown_and_saves_session(
     assert window._session.model == "Dropdown Test"
     assert window._session.channel_side == "L"
     assert not window._metadata_overlay.isVisible()
-    window.close()
 
 
-def test_measure_plots_keep_frequency_endpoints_inside_view(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_measure_plots_keep_frequency_endpoints_inside_view(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -237,13 +201,10 @@ def test_measure_plots_keep_frequency_endpoints_inside_view(
         x_min, x_max = plot.getPlotItem().getViewBox().viewRange()[0]
         assert x_min < expected_min
         assert x_max > expected_max
-    window.close()
 
 
-def test_settings_tab_saves_immediately_and_disables_edits_while_busy(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_settings_tab_saves_immediately_and_disables_edits_while_busy(make_main_window) -> None:
+    window = _window(make_main_window)
     settings_widget = window._settings_widget
 
     settings_widget._fs.setCurrentIndex(settings_widget._fs.findData(96000))
@@ -262,13 +223,10 @@ def test_settings_tab_saves_immediately_and_disables_edits_while_busy(
     assert not window._metadata_btn.isEnabled()
     assert not window._clear_metadata_btn.isEnabled()
     assert not window._bluetooth_mode_toggle.isEnabled()
-    window.close()
 
 
-def test_settings_column_is_compact_and_left_aligned(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_settings_column_is_compact_and_left_aligned(qapp, make_main_window) -> None:
+    window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
     window._tabs.setCurrentWidget(window._settings_scroll)
@@ -278,31 +236,25 @@ def test_settings_column_is_compact_and_left_aligned(
     assert column.x() == 0
     assert column.width() == 560
     assert column.geometry().right() < window._settings_widget.width()
-    window.close()
 
 
-def test_window_title_refreshes_when_metadata_is_cleared(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
-    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (True, False))
+def test_window_title_refreshes_when_metadata_is_cleared(make_main_window) -> None:
+    window = _window(make_main_window)
+    window._confirm_clear_metadata = lambda: (True, False)
     window._clear_metadata()
 
     assert "Unknown Unknown @ Unknown Rig" in window.windowTitle()
-    window.close()
 
 
-def test_metadata_clear_confirmation_and_preference(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_metadata_clear_confirmation_and_preference(make_main_window) -> None:
+    window = _window(make_main_window)
 
-    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (False, True))
+    window._confirm_clear_metadata = lambda: (False, True)
     window._clear_metadata()
     assert window._session.display_name() == "DMS Demo"
     assert window._settings.get("confirm_clear_metadata") is True
 
-    monkeypatch.setattr(window, "_confirm_clear_metadata", lambda: (True, True))
+    window._confirm_clear_metadata = lambda: (True, True)
     window._clear_metadata()
     assert window._session.display_name() == "Unknown Unknown"
     assert window._settings.get("confirm_clear_metadata") is False
@@ -310,13 +262,10 @@ def test_metadata_clear_confirmation_and_preference(
 
     window._settings_widget._confirm_clear_metadata.setChecked(True)
     assert window._settings.get("confirm_clear_metadata") is True
-    window.close()
 
 
-def test_clear_confirmation_preference_and_tab_isolation(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> None:
+    window = _window(make_main_window)
     curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._kept_curves = [curve]
     window._recompute_average()
@@ -326,13 +275,13 @@ def test_clear_confirmation_preference_and_tab_isolation(
     window._console_events.publish("INFO", "test", "keep me")
     event_count = len(window._console_events.events())
 
-    monkeypatch.setattr(window, "_confirm_clear_all", lambda: (False, True))
+    window._confirm_clear_all = lambda: (False, True)
     window._clear_all()
     assert len(window._kept_curves) == 1
     assert window._kept_curves[0] is curve
     assert window._settings.get("confirm_clear_measurements") is True
 
-    monkeypatch.setattr(window, "_confirm_clear_all", lambda: (True, True))
+    window._confirm_clear_all = lambda: (True, True)
     window._clear_all()
     assert window._kept_curves == []
     assert window._settings.get("confirm_clear_measurements") is False
@@ -342,11 +291,10 @@ def test_clear_confirmation_preference_and_tab_isolation(
 
     window._settings_widget._confirm_clear.setChecked(True)
     assert window._settings.get("confirm_clear_measurements") is True
-    window.close()
 
 
-def test_send_average_offsets_display_and_preserves_editable_hrtf(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_send_average_offsets_display_and_preserves_editable_hrtf(make_main_window, tmp_path: Path) -> None:
+    window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n10000 3\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
@@ -375,11 +323,10 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(qapp, monkeypa
     assert layer.curve.metadata["compensated"] is True
     source_mag[:] = 99.0
     assert not np.allclose(layer.curve.mag_db, source_mag)
-    window.close()
 
 
-def test_send_variation_offsets_display_with_editable_hrtf(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_send_variation_offsets_display_with_editable_hrtf(make_main_window, tmp_path: Path) -> None:
+    window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
@@ -407,15 +354,13 @@ def test_send_variation_offsets_display_with_editable_hrtf(qapp, monkeypatch, tm
         QTest.qWait(50)
     assert window._curator_widget._graph.wipeProgress >= 0.98
     assert len(window._curator_widget._graph._items) > 3
-    window.close()
 
 
 def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
-    qapp,
-    monkeypatch,
+    make_main_window,
     tmp_path: Path,
 ) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+    window = _window(make_main_window)
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
         "100 1 2 3 4 5\n"
@@ -449,13 +394,10 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
         expected,
     ):
         assert np.allclose(actual, wanted + median_offset)
-    window.close()
 
 
-def test_send_variation_offsets_to_zero_without_changing_source_shape(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_window) -> None:
+    window = _window(make_main_window)
     window._variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
     window._variation = (
@@ -479,11 +421,10 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(
     assert np.allclose(np.diff(displayed.median_db), [1.0, 1.0])
     QTest.qWait(250)
     assert len(window._curator_widget._graph._items) > 3
-    window.close()
 
 
-def test_curator_console_commands_update_workspace_and_log(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_curator_console_commands_update_workspace_and_log(make_main_window, tmp_path: Path) -> None:
+    window = _window(make_main_window)
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
 
@@ -510,11 +451,10 @@ def test_curator_console_commands_update_workspace_and_log(qapp, monkeypatch, tm
         event.source == "curator" and event.severity == "ERROR"
         for event in window._console_events.events()
     )
-    window.close()
 
 
-def test_curator_console_full_command_surface(qapp, monkeypatch, tmp_path: Path) -> None:
-    window = _window(qapp, monkeypatch, tmp_path)
+def test_curator_console_full_command_surface(make_main_window, tmp_path: Path) -> None:
+    window = _window(make_main_window)
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("100 0 1 2 3 4\n1000 1 2 3 4 5\n", encoding="utf-8")
@@ -544,4 +484,3 @@ def test_curator_console_full_command_surface(qapp, monkeypatch, tmp_path: Path)
     window._run_console_command("curator reset")
     window._run_console_command("curator clear")
     assert window._curator_widget.graph_state.layers == []
-    window.close()

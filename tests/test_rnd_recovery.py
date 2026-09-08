@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 from PyQt6.QtGui import QImage
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
 
 import dms.rnd.persistence as persistence
 from dms.rnd.models import RnDGroup, RnDMeasurement, RnDSession
@@ -17,11 +16,6 @@ from dms.rnd.persistence import (
 )
 from dms.rnd.photos import RnDPhotoStore, attachment_directory
 from dms.rnd.recovery import RnDRecoveryManager
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _measurement(mid: str = "m1", name: str = "One") -> RnDMeasurement:

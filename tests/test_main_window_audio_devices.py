@@ -1,15 +1,8 @@
-import os
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PyQt6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
 
 from dms.ui.main_window import MainWindow
 from dms.ui.main_window import AppState
 from dms import audio_engine
-
-
-_APP = None
 
 
 class _Settings:
@@ -94,15 +87,6 @@ class _Harness:
         self.start_next_sweep_count += 1
 
 
-def _app() -> QApplication:
-    global _APP
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    _APP = app
-    return app
-
-
 def _devices():
     outputs = [
         {
@@ -167,8 +151,7 @@ def _devices():
     return outputs, inputs
 
 
-def test_windows_normal_mode_shows_only_preferred_wasapi_devices(monkeypatch) -> None:
-    _app()
+def test_windows_normal_mode_shows_only_preferred_wasapi_devices(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -202,8 +185,7 @@ def test_windows_normal_mode_shows_only_preferred_wasapi_devices(monkeypatch) ->
     assert settings.data["output_device"]["index"] == 5
 
 
-def test_windows_advanced_mode_shows_all_backends(monkeypatch) -> None:
-    _app()
+def test_windows_advanced_mode_shows_all_backends(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -230,8 +212,7 @@ def test_windows_advanced_mode_shows_all_backends(monkeypatch) -> None:
     )
 
 
-def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(monkeypatch) -> None:
-    _app()
+def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -254,8 +235,7 @@ def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(monkeypatch)
     assert settings.data["input_device"]["hostapi_name"] == "Windows WASAPI"
 
 
-def test_windows_input_selection_auto_matches_output_backend(monkeypatch) -> None:
-    _app()
+def test_windows_input_selection_auto_matches_output_backend(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -280,8 +260,7 @@ def test_windows_input_selection_auto_matches_output_backend(monkeypatch) -> Non
     assert harness._out_dev_combo.currentData() == 5
 
 
-def test_windows_mismatched_backends_block_queue_start(monkeypatch) -> None:
-    _app()
+def test_windows_mismatched_backends_block_queue_start(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -314,8 +293,7 @@ def test_windows_mismatched_backends_block_queue_start(monkeypatch) -> None:
     assert harness.start_next_sweep_count == 0
 
 
-def test_windows_default_non_bluetooth_latency_is_high_until_user_override(monkeypatch) -> None:
-    _app()
+def test_windows_default_non_bluetooth_latency_is_high_until_user_override(qapp, monkeypatch) -> None:
     settings = _Settings(
         {
             "latency": "low",
@@ -332,8 +310,7 @@ def test_windows_default_non_bluetooth_latency_is_high_until_user_override(monke
     assert harness._sweep_latency_mode() == "low"
 
 
-def test_non_windows_latency_behavior_is_unchanged(monkeypatch) -> None:
-    _app()
+def test_non_windows_latency_behavior_is_unchanged(qapp, monkeypatch) -> None:
     settings = _Settings(
         {
             "latency": "low",
@@ -347,8 +324,7 @@ def test_non_windows_latency_behavior_is_unchanged(monkeypatch) -> None:
     assert harness._sweep_latency_mode() == "low"
 
 
-def test_manual_refresh_reinitializes_backend_before_enumerating(monkeypatch) -> None:
-    _app()
+def test_manual_refresh_reinitializes_backend_before_enumerating(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     refreshed_outputs = [
         {
@@ -412,8 +388,7 @@ def test_manual_refresh_reinitializes_backend_before_enumerating(monkeypatch) ->
     assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."
 
 
-def test_manual_refresh_preserves_valid_device_selection(monkeypatch) -> None:
-    _app()
+def test_manual_refresh_preserves_valid_device_selection(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     settings = _Settings(
         {
@@ -446,8 +421,7 @@ def test_manual_refresh_preserves_valid_device_selection(monkeypatch) -> None:
     assert harness._statusbar.messages[-1] == "Audio devices refreshed."
 
 
-def test_manual_refresh_falls_back_when_selected_device_disappears(monkeypatch) -> None:
-    _app()
+def test_manual_refresh_falls_back_when_selected_device_disappears(qapp, monkeypatch) -> None:
     outputs, inputs = _devices()
     current = {"outputs": outputs, "inputs": inputs}
     settings = _Settings(

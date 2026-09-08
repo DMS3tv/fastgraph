@@ -10,7 +10,7 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 | # | Phase | Status |
 |---|---|---|
 | 0 | Records and hygiene (branch, records, .gitignore, PR #8, README fixes) | done 2026-09-08 |
-| 1 | Test infrastructure and the widget leak (conftest, ThemeController lifetime) | core done; fixture migration in progress |
+| 1 | Test infrastructure and the widget leak (conftest, ThemeController lifetime) | done 2026-09-08; full suite 78 s |
 | 2 | Measurement integrity gate for standard mode | done 2026-09-08 |
 | 3 | Bluetooth reliability | done 2026-09-08 (hardware acceptance pending, Phase 10) |
 | 4 | Measurement queue extraction and audio-thread hygiene | pending |
@@ -44,3 +44,4 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 | 2026-09-08 | Phase 4 part 1: pure `dms/measure_queue.py` (22-row transition table), `dms/ui/sweep_runner.py`, `is_device_failure()` | 67 new tests; not yet wired into the window |
 | 2026-09-08 | Phase 6: parser handles BOM/UTF-16/decimal commas/mixed row widths/duplicate frequencies; 1 kHz normalization warns instead of clamping; smoothing works on linear grids (log grids byte-identical); combine is a sweep-weighted mixture of normals (±1 dB with ±10 dB → ±6.57 dB, was ±5.5); HRTF edge hold; PNG drops out-of-band points and honours the 25 dB/decade lock; BRAND contrast guard, Show Names, bounds interpolation, multi-select Remove, Move Up/Down, STALE badge on combined layers, bounds toggle refuses to latch without files | 169 curator/brand/export tests green; dark, BRAND and poster renders inspected |
 | 2026-09-08 | Phase 5a: `dms/file_io.py` atomic writes + backup-on-corrupt for settings (mode 0600), calibration, automations, with a startup warning; settings type coercion; Squiglink trust-on-first-use host keys (`squiglink_host_keys`, SHA256 fingerprint prompt, mismatch fails before credentials are sent), 20 s connect timeout, upload on a worker thread behind a cancellable progress dialog, credentials saved only after success, password scrubbed from error logs; update checker https-only and github-only with `packaging` version compare; console appends incrementally. Credit: adapted from GoldenSound's PR #9 | 135 focused tests; full suite 627 passed |
+| 2026-09-08 | Phase 1 migration: 19 test files moved onto the shared conftest (session `qapp`, `make_main_window`, no per-file platform/env lines); the factory now releases the window reference instead of deleteLater(); fixed a real per-module QApplication teardown failure that broke shortcut + automation tests when run together | full suite 630 passed in 78 s (was 26–50 min); 6 leak warnings left in Squiglink window tests (follow-up) |

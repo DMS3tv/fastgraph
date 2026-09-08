@@ -1,21 +1,6 @@
-import os
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 import pytest
-from PyQt6.QtWidgets import QApplication
 
 from dms.ui import calibration_dialog
-
-
-_APP: QApplication | None = None
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    global _APP
-    _APP = QApplication.instance() or QApplication([])
-    return _APP
 
 
 def _dialog(qapp, channel: int) -> calibration_dialog.CalibrationDialog:

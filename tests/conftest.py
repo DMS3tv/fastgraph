@@ -146,13 +146,15 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     yield _make
 
-    for window in created:
+    # Release the Python reference instead of calling deleteLater(): the window
+    # owns parentless top-level widgets and menus only through its __dict__,
+    # and deleting the C++ object first strands about 180 of them per window.
+    # Dropping the last reference lets sip destroy the whole tree together.
+    while created:
+        window = created.pop()
         try:
             window.close()
         except Exception:
             pass
-        try:
-            window.deleteLater()
-        except Exception:
-            pass
+        del window
     flush_deferred_deletes()

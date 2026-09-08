@@ -42,15 +42,6 @@ from dms.ui.theme_surface import (
 )
 
 
-_APP: QApplication | None = None
-
-
-def _app() -> QApplication:
-    global _APP
-    _APP = QApplication.instance() or QApplication([])
-    return _APP
-
-
 def test_style_tokens_define_the_documented_scale() -> None:
     geometry = DARK_TOKENS.geometry
     assert geometry.radius_micro == 4
@@ -129,8 +120,7 @@ def test_dither_is_registered_with_reusable_behavior_flags() -> None:
     assert DITHER_TOKENS.typography.heading_family == "DIN Condensed"
 
 
-def test_dither_font_resolver_reports_a_missing_din_condensed(monkeypatch) -> None:
-    _app()
+def test_dither_font_resolver_reports_a_missing_din_condensed(qapp, monkeypatch) -> None:
     dither_fonts.reset_font_cache()
     monkeypatch.setattr(
         QFontDatabase,
@@ -203,9 +193,8 @@ def test_brand_styles_measure_submode_selected_state() -> None:
     assert 'QPushButton[measureSegment="true"]:checked:disabled' in stylesheet
 
 
-def test_modern_button_roles_cover_semantic_actions() -> None:
-    app = _app()
-    assert app is not None
+def test_modern_button_roles_cover_semantic_actions(qapp) -> None:
+    assert qapp is not None
     assert ModernButton("Export Average").role() == "primary"
     assert ModernButton("Keep").role() == "positive"
     assert ModernButton("Remove").role() == "danger"
@@ -247,12 +236,12 @@ def _painted_button_label_requirement(button: ModernButton) -> int:
 
 
 def test_modern_button_size_hints_fit_painted_labels_in_each_theme(
+    qapp,
     monkeypatch,
     tmp_path,
 ) -> None:
-    app = _app()
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
-    controller = ThemeController(app, SettingsManager())
+    controller = ThemeController(qapp, SettingsManager())
     labels = (
         "Measure",
         "Cancel Queue",
@@ -290,12 +279,12 @@ def test_modern_button_size_hints_fit_painted_labels_in_each_theme(
 
 
 def test_dither_button_size_hint_does_not_depend_on_plain_style_measurement(
+    qapp,
     monkeypatch,
     tmp_path,
 ) -> None:
-    app = _app()
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
-    controller = ThemeController(app, SettingsManager())
+    controller = ThemeController(qapp, SettingsManager())
     controller.set_theme(DITHER, persist=False)
     button = ModernButton("Headphone Metadata")
     button.ensurePolished()
@@ -311,26 +300,24 @@ def test_dither_button_size_hint_does_not_depend_on_plain_style_measurement(
     assert button.minimumSizeHint().width() > required_width
 
 
-def test_modern_button_can_use_a_dark_mode_only_accent() -> None:
-    app = _app()
+def test_modern_button_can_use_a_dark_mode_only_accent(qapp) -> None:
     button = ModernButton("Inputs")
     button.setProperty("darkAccentColor", "#A970FF")
 
-    app.setProperty("fastgraphVisualMode", "dark")
+    qapp.setProperty("fastgraphVisualMode", "dark")
     assert button._accent(button._tokens()).name().upper() == "#A970FF"
-    app.setProperty("fastgraphVisualMode", "light")
+    qapp.setProperty("fastgraphVisualMode", "light")
     assert button._accent(button._tokens()).name().upper() == LIGHT_TOKENS.accent
-    app.setProperty("fastgraphVisualMode", "brand")
+    qapp.setProperty("fastgraphVisualMode", "brand")
     assert button._accent(button._tokens()).name().upper() == BRAND_TOKENS.accent
 
 
-def test_modern_button_hover_and_press_endpoints() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_modern_button_hover_and_press_endpoints(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button.resize(button.sizeHint())
     button.show()
-    app.processEvents()
+    qapp.processEvents()
 
     rest = button._glow_profile()
     assert button.graphicsEffect() is None
@@ -349,9 +336,8 @@ def test_modern_button_hover_and_press_endpoints() -> None:
     assert flash["uniform_alpha"] > hover["uniform_alpha"]
 
 
-def test_fastgraph95_button_disables_glow_and_uses_square_geometry() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", FASTGRAPH_95)
+def test_fastgraph95_button_disables_glow_and_uses_square_geometry(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", FASTGRAPH_95)
     button = ModernButton("Action")
     button.resize(button.sizeHint())
 
@@ -364,24 +350,22 @@ def test_fastgraph95_button_disables_glow_and_uses_square_geometry() -> None:
     assert FASTGRAPH_95_TOKENS.geometry.radius_button == 0
 
 
-def test_dither_button_selects_the_flat_third_paint_path() -> None:
-    app = _app()
+def test_dither_button_selects_the_flat_third_paint_path(qapp) -> None:
     button = ModernButton("Action")
 
-    app.setProperty("fastgraphVisualMode", DITHER)
+    qapp.setProperty("fastgraphVisualMode", DITHER)
     assert button._control_paint_path() == "flat"
     assert button._glow_profile()["center_alpha"] == 0
     assert button._flat_role_color(DITHER_TOKENS).name().upper() == DITHER_TOKENS.text
 
-    app.setProperty("fastgraphVisualMode", FASTGRAPH_95)
+    qapp.setProperty("fastgraphVisualMode", FASTGRAPH_95)
     assert button._control_paint_path() == "classic"
-    app.setProperty("fastgraphVisualMode", DARK)
+    qapp.setProperty("fastgraphVisualMode", DARK)
     assert button._control_paint_path() == "modern"
 
 
-def test_dither_button_hover_uses_cached_discrete_density_steps() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", DITHER)
+def test_dither_button_hover_uses_cached_discrete_density_steps(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", DITHER)
     button = ModernButton("Action")
 
     button._set_hover_progress(0.18)
@@ -442,9 +426,8 @@ def test_aperiodic_bounds_dither_is_denser_near_boundaries() -> None:
     assert boundary_coverage > center_coverage * 2
 
 
-def test_fastgraph95_dark_uses_classic_renderer_without_bright_surfaces() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", FASTGRAPH_95_DARK)
+def test_fastgraph95_dark_uses_classic_renderer_without_bright_surfaces(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", FASTGRAPH_95_DARK)
     button = ModernButton("Action")
 
     assert button._tokens() is FASTGRAPH_95_DARK_TOKENS
@@ -453,9 +436,8 @@ def test_fastgraph95_dark_uses_classic_renderer_without_bright_surfaces() -> Non
     assert FASTGRAPH_95_DARK_TOKENS.plot_bg == "#202020"
 
 
-def test_hackerman95_uses_terminal_tokens_and_neon_trace_palette() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", HACKERMAN_95)
+def test_hackerman95_uses_terminal_tokens_and_neon_trace_palette(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", HACKERMAN_95)
     button = ModernButton("Action")
 
     assert button._tokens() is HACKERMAN_95_TOKENS
@@ -471,9 +453,8 @@ def test_hackerman95_uses_terminal_tokens_and_neon_trace_palette() -> None:
     assert HACKERMAN_95_TOKENS.trace_palette[0] == "#39FF14"
 
 
-def test_modern_button_animates_hover_and_press() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_modern_button_animates_hover_and_press(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button.resize(button.sizeHint())
     button._animate_hover(1.0)
@@ -488,31 +469,29 @@ def test_modern_button_animates_hover_and_press() -> None:
     assert button.pressProgress() < 0.05
 
 
-def test_modern_button_focus_and_disabled_states() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "brand")
+def test_modern_button_focus_and_disabled_states(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "brand")
     button = ModernButton("Action")
     button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     button.resize(button.sizeHint())
     button.show()
     button.setFocus()
-    app.processEvents()
+    qapp.processEvents()
     assert button._effective_hover() >= BRAND_TOKENS.motion.focus_glow_strength
 
     button.setEnabled(False)
-    app.processEvents()
+    qapp.processEvents()
     assert button.graphicsEffect() is None
     assert button._effective_hover() == 0.0
     assert button._glow_profile()["center_alpha"] == 0
 
 
-def test_button_uses_nested_rectangles_for_the_recessed_well() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_button_uses_nested_rectangles_for_the_recessed_well(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button.resize(button.sizeHint())
     button.show()
-    app.processEvents()
+    qapp.processEvents()
     outer, well, face = button._paint_rects()
     assert outer.contains(well)
     assert well.contains(face)
@@ -521,9 +500,8 @@ def test_button_uses_nested_rectangles_for_the_recessed_well() -> None:
     assert button.sizeHint().height() >= DARK_TOKENS.geometry.button_height + 4
 
 
-def test_button_click_flash_has_a_visible_release_tail() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_button_click_flash_has_a_visible_release_tail(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button._begin_click_flash()
     assert button.pressProgress() >= 0.32
@@ -531,35 +509,32 @@ def test_button_click_flash_has_a_visible_release_tail() -> None:
     assert button.pressProgress() >= 0.58
 
 
-def test_palette_change_refreshes_button_mode() -> None:
-    app = _app()
+def test_palette_change_refreshes_button_mode(qapp) -> None:
     button = ModernButton("Action")
-    app.setProperty("fastgraphVisualMode", "brand")
+    qapp.setProperty("fastgraphVisualMode", "brand")
     QApplication.sendEvent(button, QEvent(QEvent.Type.ApplicationPaletteChange))
     assert button._tokens() is BRAND_TOKENS
 
 
-def test_rounded_viewport_keeps_the_plot_as_a_direct_capture_target() -> None:
-    app = _app()
+def test_rounded_viewport_keeps_the_plot_as_a_direct_capture_target(qapp) -> None:
     child = QWidget()
     frame = RoundedViewportFrame(child)
     frame.resize(320, 180)
     frame.show()
-    app.processEvents()
+    qapp.processEvents()
     assert frame.radius == 10
     assert frame.child is child
     assert child.parentWidget() is frame
     assert frame._overlay.geometry() == frame.rect()
 
 
-def test_modern_spin_boxes_preserve_value_behaviour() -> None:
-    app = _app()
+def test_modern_spin_boxes_preserve_value_behaviour(qapp) -> None:
     integer = ModernSpinBox()
     integer.setRange(1, 5)
     integer.setValue(2)
     integer.resize(110, 36)
     integer.show()
-    app.processEvents()
+    qapp.processEvents()
     QTest.mouseClick(integer._step_up_button, Qt.MouseButton.LeftButton)
     assert integer.value() == 3
     QTest.keyClick(integer, Qt.Key.Key_Down)

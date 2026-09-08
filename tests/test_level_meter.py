@@ -1,5 +1,4 @@
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
 
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.style_tokens import (
@@ -13,15 +12,6 @@ from dms.ui.style_tokens import (
 )
 
 
-_APP: QApplication | None = None
-
-
-def _app() -> QApplication:
-    global _APP
-    _APP = QApplication.instance() or QApplication([])
-    return _APP
-
-
 def test_level_meter_fraction_and_threshold_colors() -> None:
     assert LevelMeterWidget._fraction(-60.0) == 0.0
     assert LevelMeterWidget._fraction(-30.0) == 0.5
@@ -33,8 +23,7 @@ def test_level_meter_fraction_and_threshold_colors() -> None:
     assert blended not in {DARK_TOKENS.accent.lower(), DARK_TOKENS.warning.lower()}
 
 
-def test_level_meter_uses_mode_tokens_and_nested_recessed_rects() -> None:
-    app = _app()
+def test_level_meter_uses_mode_tokens_and_nested_recessed_rects(qapp) -> None:
     meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
     meter.resize(220, 32)
     outer, well, track = meter._paint_rects()
@@ -47,7 +36,7 @@ def test_level_meter_uses_mode_tokens_and_nested_recessed_rects() -> None:
         ("dither", DITHER_TOKENS),
         ("brand", BRAND_TOKENS),
     ):
-        app.setProperty("fastgraphVisualMode", mode)
+        qapp.setProperty("fastgraphVisualMode", mode)
         assert meter._tokens() is tokens
         assert not meter._uses_classic_blocks()
         assert meter._uses_flat_dither() is (mode == "dither")
@@ -57,13 +46,12 @@ def test_level_meter_uses_mode_tokens_and_nested_recessed_rects() -> None:
         assert not image.isNull()
 
 
-def test_level_meter_interpolates_samples_and_fades_smoothly() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_level_meter_interpolates_samples_and_fades_smoothly(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
     meter.resize(220, 32)
     meter.show()
-    app.processEvents()
+    qapp.processEvents()
     meter.set_level(-6.0)
     meter._level_animation.setCurrentTime(meter._RISE_MS // 2)
     assert -60.0 < meter._display_db < -6.0
@@ -78,9 +66,8 @@ def test_level_meter_interpolates_samples_and_fades_smoothly() -> None:
     assert not hasattr(meter, "_peak_db")
 
 
-def test_level_meter_clamps_level_and_renders_vertically() -> None:
-    app = _app()
-    app.setProperty("fastgraphVisualMode", "dark")
+def test_level_meter_clamps_level_and_renders_vertically(qapp) -> None:
+    qapp.setProperty("fastgraphVisualMode", "dark")
     meter = LevelMeterWidget(orientation=Qt.Orientation.Vertical)
     meter.resize(32, 180)
     meter.set_level(-0.2)
@@ -90,8 +77,7 @@ def test_level_meter_clamps_level_and_renders_vertically() -> None:
     assert not meter.grab().toImage().isNull()
 
 
-def test_fastgraph95_level_meter_uses_separate_progress_blocks() -> None:
-    app = _app()
+def test_fastgraph95_level_meter_uses_separate_progress_blocks(qapp) -> None:
     meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
     meter.resize(420, 32)
     _outer, _well, track = meter._paint_rects()
@@ -104,7 +90,7 @@ def test_fastgraph95_level_meter_uses_separate_progress_blocks() -> None:
         ("fastgraph95_dark", FASTGRAPH_95_DARK_TOKENS),
         ("hackerman95", HACKERMAN_95_TOKENS),
     ):
-        app.setProperty("fastgraphVisualMode", mode)
+        qapp.setProperty("fastgraphVisualMode", mode)
         meter.set_level(-7.0)
         meter._level_animation.setCurrentTime(meter._RISE_MS)
         assert meter._uses_classic_blocks()

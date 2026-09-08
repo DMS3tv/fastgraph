@@ -1,18 +1,12 @@
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PyQt6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
 
 import dms.ui.main_window as main_window_module
 from dms.ui.main_window import MainWindow
-
-
-_APP = None
 
 
 class _Settings:
@@ -32,15 +26,6 @@ class _Status:
 
     def showMessage(self, message: str) -> None:
         self.messages.append(message)
-
-
-def _app() -> QApplication:
-    global _APP
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    _APP = app
-    return app
 
 
 def _write_hrtf(path: Path) -> None:
@@ -68,8 +53,7 @@ def _fake_window(settings: _Settings):
     return fake
 
 
-def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(monkeypatch, tmp_path: Path) -> None:
-    _app()
+def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(qapp, monkeypatch, tmp_path: Path) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     _write_hrtf(hrtf_dir / "Beta.txt")
@@ -103,9 +87,8 @@ def test_population_average_hrtf_loads_as_a_variation_compensation() -> None:
 
 
 def test_selecting_built_in_hrtf_loads_and_enables_compensation(
-    monkeypatch, tmp_path: Path
+    qapp, monkeypatch, tmp_path: Path
 ) -> None:
-    _app()
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
@@ -128,9 +111,8 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
 
 
 def test_selecting_none_clears_hrtf_and_disables_compensation(
-    monkeypatch, tmp_path: Path
+    qapp, monkeypatch, tmp_path: Path
 ) -> None:
-    _app()
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
@@ -152,9 +134,8 @@ def test_selecting_none_clears_hrtf_and_disables_compensation(
 
 
 def test_restore_ignores_missing_or_legacy_custom_hrtf_path(
-    monkeypatch, tmp_path: Path
+    qapp, monkeypatch, tmp_path: Path
 ) -> None:
-    _app()
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     _write_hrtf(hrtf_dir / "Built In.txt")

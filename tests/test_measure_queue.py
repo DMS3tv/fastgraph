@@ -559,15 +559,12 @@ def test_clear_all_is_a_noop_while_busy():
 @pytest.mark.parametrize(
     "message",
     [
-        "PortAudio error: Invalid device",
-        "PortAudio error starting stream: -9996",
         "Input device unavailable: Scarlett 2i2",
         "Output device unavailable: Built-in Output",
         "Input channel 1 not available (device has 1 ch).",
         "Output channel 1 not available (device has 1 ch).",
         "Selected device is unavailable.",
-        "Output stream failed to open",
-        "portaudio error: lowercase spelling",
+        "selected DEVICE is unavailable (case-insensitive)",
     ],
 )
 def test_is_device_failure_true(message):
@@ -582,6 +579,12 @@ def test_is_device_failure_true(message):
         "Timing drift too large",
         "Processing error: shapes do not match",
         "Sweep error: unexpected",
+        # Stream-level errors can be transient (busy exclusive device, a
+        # hiccup at stream start) so they keep their retry prompt.
+        "PortAudio error: Invalid device",
+        "PortAudio error starting stream: -9996",
+        "Output stream failed to open",
+        "Channel 2 stream failed.",
         "",
     ],
 )
@@ -600,7 +603,7 @@ def test_is_device_failure_false_when_failure_reason_present():
 
 def test_device_and_timing_classifiers_do_not_overlap():
     device_messages = [
-        "PortAudio error: Invalid device",
+        "Output device unavailable: Built-in Output",
         "Input device unavailable: Scarlett 2i2",
         "Selected device is unavailable.",
     ]

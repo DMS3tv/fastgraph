@@ -411,11 +411,12 @@ def is_retryable_timing_failure(
 #: measurement-quality failure. Sourced from every ``error.emit`` in
 #: ``SweepWorker._run_inner`` (``dms/audio_engine.py``) plus the device guard in
 #: ``MainWindow._start_next_sweep``. Matched case-insensitively.
+#: Only a device that is gone or lacks the channel is hopeless. A PortAudio
+#: stream error can be transient (a busy exclusive-mode device, a hiccup at
+#: stream start), so it keeps its retry prompt.
 _DEVICE_FAILURE_TOKENS = (
-    "portaudio",
     "device unavailable",
     "not available (device has",
-    "stream failed",
     "input device unavailable",
     "output device unavailable",
     "selected device is unavailable",

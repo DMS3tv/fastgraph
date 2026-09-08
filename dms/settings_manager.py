@@ -25,6 +25,7 @@ _DEFAULTS: dict[str, Any] = {
     "queue_output_level_persist": False,
     "confirm_clear_measurements": True,
     "confirm_clear_metadata": True,
+    "confirm_discard_measurements": True,
     "export_directory": "",
     "rnd_session_directory": "",
     "rnd_notes_expanded": True,

@@ -1144,8 +1144,13 @@ class MainWindow(QMainWindow):
 
         self._hrtf: Optional[HRTFCurve] = None
 
+        # Kept for compatibility with code that inspects them; the runner owns
+        # the real thread and worker.
         self._sweep_thread: Optional[_SweepThread] = None
         self._active_sweep_worker: Optional[SweepWorker] = None
+        self._sweep_runner = SweepRunner(self)
+        self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
+        self._devices_dirty = False
         self._pass_fail_dialog: Optional[PassFailDialog] = None
         self._rnd_review_dialog: Optional[RnDReviewDialog] = None
         self._rnd_sweep_active = False
@@ -2378,6 +2383,11 @@ class MainWindow(QMainWindow):
         if args and args[0] == "start" and len(args) <= 3:
             if self._state != AppState.IDLE:
                 raise ValueError("A measurement can only be started while idle.")
+            if self._channel_balance_mode_active() or self._channel_balance_active:
+                raise ValueError(
+                    "Switch to Frequency Response and stop Channel Balance before "
+                    "starting a measurement."
+                )
             if len(args) >= 2:
                 count = self._parse_console_setting("queue_count", args[1])
                 self._settings.set_session("queue_count", count)
@@ -3419,36 +3429,46 @@ class MainWindow(QMainWindow):
 
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
+        selected_vanished = (
+            selected_out not in {idx for idx, _name, _hostapi in current_out}
+            or selected_in not in {idx for idx, _name, _hostapi in current_in}
+        )
 
-        if (
-            self._state == AppState.SWEEPING
-            and (
-                selected_out not in {idx for idx, _name, _hostapi in current_out}
-                or selected_in not in {idx for idx, _name, _hostapi in current_in}
-            )
-        ):
+        if selected_vanished and self._state != AppState.IDLE:
+            # Whether a sweep is running, a pair is between channels, or a
+            # review is open: the device is gone, so the queue is over.
             self._abort_active_sweep()
+            self._close_pass_fail_dialog()
+            self._queue.reset()
             self._state = AppState.IDLE
+            self._update_queue_progress()
+            self._apply_state_ui()
             self._statusbar.showMessage(
-                "Audio device change detected. Active sweep aborted safely."
+                "Audio device change detected. Active measurement aborted safely."
             )
 
-        self._refresh_devices()
+        if self._queue.allows_device_reselect() and not self._rnd_sweep_active:
+            self._refresh_devices()
+        else:
+            # Never re-select devices under a running queue or an open review;
+            # the refresh happens as soon as the window returns to idle.
+            self._devices_dirty = True
 
     def _abort_active_sweep(self) -> None:
-        if self._sweep_thread is not None and self._sweep_thread.isRunning():
-            try:
-                self._sweep_thread.abort()
-            except Exception:
-                pass
+        """Stop the running sweep and wait for its thread to end.
+
+        Waiting matters: sounddevice's play/record state is process-global, so
+        a stale thread that stops later would truncate the next sweep.
+        """
+        try:
+            self._sweep_runner.abort()
+        except Exception:
+            pass
 
     def _cleanup_sweep_thread(self) -> None:
-        if self._sweep_thread is not None:
-            self._sweep_thread.deleteLater()
-            self._sweep_thread = None
-        if self._active_sweep_worker is not None:
-            self._active_sweep_worker.deleteLater()
-            self._active_sweep_worker = None
+        """Compatibility hook; the runner releases its thread and worker itself."""
+        self._sweep_thread = None
+        self._active_sweep_worker = None
 
     def _start_level_monitor(self) -> None:
         self._level_monitor.stop()
@@ -3640,6 +3660,13 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(self._pending_update_url))
 
     def _apply_state_ui(self) -> None:
+        if (
+            getattr(self, "_devices_dirty", False)
+            and self._queue.allows_device_reselect()
+            and not self._rnd_sweep_active
+        ):
+            self._devices_dirty = False
+            self._refresh_devices()
         idle = self._state == AppState.IDLE
         pass_fail = self._state == AppState.PASS_FAIL
         busy = self._state in {AppState.SWEEPING, AppState.QUEUE_RUNNING}
@@ -3706,6 +3733,17 @@ class MainWindow(QMainWindow):
 
     def _start_queue(self) -> None:
         if self._state != AppState.IDLE:
+            return
+
+        # The Measure button is disabled in Channel Balance mode, but the
+        # keyboard shortcut, the console and automations reach this method
+        # directly; the guard must live here.
+        if MainWindow._channel_balance_mode_active(self) or getattr(
+            self, "_channel_balance_active", False
+        ):
+            self._statusbar.showMessage(
+                "Start blocked: switch to Frequency Response and stop Channel Balance first."
+            )
             return
 
         if self._current_output_device() is None:
@@ -3801,6 +3839,7 @@ class MainWindow(QMainWindow):
                 self._pending_pair = None
                 self._pending_pair_first_raw = None
                 self._pending_pair_first_diagnostics = None
+        self._stop_channel_balance()
         self._state = AppState.SWEEPING
         self._apply_state_ui()
         self._sweep_progress.setValue(0)
@@ -3844,9 +3883,8 @@ class MainWindow(QMainWindow):
         worker.timing_quality.connect(self._on_timing_quality)
         worker.measurement_diagnostics.connect(self._on_measurement_diagnostics)
 
-        self._active_sweep_worker = worker
-        self._sweep_thread = _SweepThread(
-            worker,
+        started = self._sweep_runner.start(
+            lambda: worker,
             sweep=sweep,
             output_device=output_device,
             input_device=input_device,
@@ -3877,8 +3915,11 @@ class MainWindow(QMainWindow):
             sweep_f_low=_MEASUREMENT_F_MIN,
             sweep_f_high=_MEASUREMENT_F_MAX,
         )
-        self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
-        self._sweep_thread.start()
+        if not started:
+            self._on_sweep_error(
+                "The previous sweep is still stopping. Wait a moment and try again."
+            )
+            return
 
         channel_text = (
             f", channel {self._two_channel_stage}"
@@ -4068,8 +4109,12 @@ class MainWindow(QMainWindow):
             message=message,
             failure_reason=failure_reason,
         )
+        # A device or stream failure is terminal: retrying only repeats it, so
+        # two-channel mode must not offer a pair retry for it.
         retry_complete_pair = bool(
-            getattr(self, "_two_channel_enabled", False) and self._queue_active()
+            getattr(self, "_two_channel_enabled", False)
+            and self._queue_active()
+            and not is_device_failure(message, failure_reason)
         )
         if (
             self._queue_active()
@@ -4127,11 +4172,6 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._state = AppState.IDLE
-
-        self._apply_state_ui()
-        self._start_level_monitor()
-        self._statusbar.showMessage(message)
         dialog_message = message
         if (
             self._last_measurement_diagnostics is not None
@@ -4143,6 +4183,14 @@ class MainWindow(QMainWindow):
                 f"{message}\n\n"
                 f"{format_diagnostics_summary(self._last_measurement_diagnostics)}"
             )
+        # Terminal: the queue is over. A full reset clears the counters too, so
+        # no phantom queue survives in the progress bar or the console.
+        self._queue.reset()
+        self._state = AppState.IDLE
+        self._update_queue_progress()
+        self._apply_state_ui()
+        self._start_level_monitor()
+        self._statusbar.showMessage(message)
         QMessageBox.warning(self, "Sweep Error", dialog_message)
 
     def _on_sweep_thread_finished(self) -> None:
@@ -4219,12 +4267,10 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._log_event("WARNING", "review", "Measurement rejected", index=self._queue_index + 1)
-        self._pending_curve = None
-        self._pending_pair = None
-        self._pending_pair_first_raw = None
-        self._pending_pair_first_diagnostics = None
-        self._start_second_pair_stage = False
-        self._two_channel_stage = 0
+        # A manual Fail repeats the same index with a fresh retry budget; the
+        # attempts that produced the rejected sweep were not timing failures.
+        self._queue.reset(keep_counters=True)
+        self._current_sweep_attempts = 0
         self._state = AppState.QUEUE_RUNNING
         self._apply_state_ui()
         self._update_plots()
@@ -4236,10 +4282,8 @@ class MainWindow(QMainWindow):
     def _cancel_queue(self) -> None:
         self._abort_active_sweep()
         self._close_pass_fail_dialog()
-        self._pending_curve = None
-        self._queue_target = 0
-        self._queue_index = 0
-        self._current_sweep_attempts = 0
+        # One reset clears the counters and every pending curve or pair.
+        self._queue.reset()
         self._state = AppState.IDLE
         self._sweep_progress.setValue(0)
         self._update_queue_progress()
@@ -4249,8 +4293,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Queue canceled.")
 
     def _finish_queue(self) -> None:
-        self._queue_target = 0
-        self._current_sweep_attempts = 0
+        self._queue.reset()
         self._state = AppState.IDLE
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
@@ -4369,6 +4412,7 @@ class MainWindow(QMainWindow):
         self._start_rnd_sweep()
 
     def _start_rnd_sweep(self) -> None:
+        self._stop_channel_balance()
         self._current_sweep_attempts += 1
         self._state = AppState.SWEEPING
         self._apply_state_ui()
@@ -4404,9 +4448,8 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._on_sweep_progress)
         worker.timing_quality.connect(self._on_timing_quality)
         worker.measurement_diagnostics.connect(self._on_measurement_diagnostics)
-        self._active_sweep_worker = worker
-        self._sweep_thread = _SweepThread(
-            worker,
+        started = self._sweep_runner.start(
+            lambda: worker,
             sweep=sweep,
             output_device=output_device,
             input_device=input_device,
@@ -4430,8 +4473,11 @@ class MainWindow(QMainWindow):
             sweep_f_low=_MEASUREMENT_F_MIN,
             sweep_f_high=_MEASUREMENT_F_MAX,
         )
-        self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
-        self._sweep_thread.start()
+        if not started:
+            self._on_rnd_sweep_error(
+                "The previous sweep is still stopping. Wait a moment and try again."
+            )
+            return
         self._statusbar.showMessage(f"R&D sweep started (attempt {self._current_sweep_attempts}).")
         self._log_event(
             "INFO",
@@ -5004,9 +5050,7 @@ class MainWindow(QMainWindow):
             self._variation = None
             self._pending_curve = None
             self._plots.clear_all()
-        self._queue_target = 0
-        self._queue_index = 0
-        self._current_sweep_attempts = 0
+        self._queue.reset()
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
         self._sync_export_button()
@@ -6778,6 +6822,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_rnd_close():
             event.ignore()
             return
+        if not self._confirm_measure_close():
+            event.ignore()
+            return
 
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
@@ -6786,8 +6833,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Join the sweep thread before Qt tears the window down; a live
+        # PortAudio duplex stream at interpreter exit crashes on some hosts.
         try:
-            self._abort_active_sweep()
+            self._sweep_runner.shutdown()
         except Exception:
             pass
 
@@ -6813,6 +6862,20 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # A Squiglink upload in flight: ask it to stop and give it a moment so
+        # its QThread is not destroyed while running.
+        try:
+            context = self._squiglink_upload_context or {}
+            upload_worker = context.get("worker")
+            upload_thread = context.get("thread")
+            if upload_worker is not None:
+                upload_worker.cancel()
+            if upload_thread is not None and upload_thread.isRunning():
+                upload_thread.quit()
+                upload_thread.wait(2000)
+        except Exception:
+            pass
+
         try:
             self._rnd_recovery.shutdown_clean()
         except Exception as exc:
@@ -6822,6 +6885,32 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.removeEventFilter(self)
         super().closeEvent(event)
+
+    def _confirm_measure_close(self) -> bool:
+        """Ask before closing with kept Measure curves that were never exported."""
+        if not bool(self._settings.get("confirm_discard_measurements")):
+            return True
+        kept = (
+            len(self._two_channel_pairs)
+            if self._two_channel_enabled
+            else len(self._kept_curves)
+        )
+        if kept == 0:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Discard Measurements?")
+        dialog.setText(
+            f"The Measure tab holds {kept} kept measurement{'s' if kept != 1 else ''}."
+        )
+        dialog.setInformativeText(
+            "They are not saved anywhere. Close Fastgraph and discard them?"
+        )
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return dialog.exec() == QMessageBox.StandardButton.Discard
 
     def _confirm_rnd_close(self) -> bool:
         if self._rnd_widget.session.is_empty() or not self._rnd_dirty:

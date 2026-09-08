@@ -100,8 +100,11 @@ from dms.hrtf import HRTFCurve
 from dms.measurement_alignment import (
     MeasurementWarningReason,
     format_diagnostics_summary,
+    is_device_failure,
     is_retryable_timing_failure,
 )
+from dms.measure_queue import Effect, MeasurementQueue, QueueDecision, QueueState
+from dms.ui.sweep_runner import SweepRunner
 from dms.measurement_profiles import (
     PROFILE_SNAPSHOT_SETTING,
     bluetooth_profile_updates,
@@ -977,6 +980,112 @@ class _MeasureSubmodeControl(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # ------------------------------------------------------------------
+    # Queue state shims
+    #
+    # The measurement queue state lives in ``self._queue`` (a pure
+    # ``MeasurementQueue``). These properties keep the historical field names
+    # so existing code and tests that read or assign them keep working; each
+    # forwards to the queue object.
+    # ------------------------------------------------------------------
+
+    @property
+    def _state(self) -> str:
+        return self._queue.state.value
+
+    @_state.setter
+    def _state(self, value: object) -> None:
+        raw = value.value if isinstance(value, QueueState) else str(value)
+        self._queue.state = QueueState(raw)
+
+    @property
+    def _queue_target(self) -> int:
+        return self._queue.target
+
+    @_queue_target.setter
+    def _queue_target(self, value: int) -> None:
+        self._queue.target = int(value)
+
+    @property
+    def _queue_index(self) -> int:
+        return self._queue.index
+
+    @_queue_index.setter
+    def _queue_index(self, value: int) -> None:
+        self._queue.index = int(value)
+
+    @property
+    def _current_sweep_attempts(self) -> int:
+        return self._queue.attempts
+
+    @_current_sweep_attempts.setter
+    def _current_sweep_attempts(self, value: int) -> None:
+        self._queue.attempts = int(value)
+
+    @property
+    def _two_channel_stage(self) -> int:
+        return self._queue.stage
+
+    @_two_channel_stage.setter
+    def _two_channel_stage(self, value: int) -> None:
+        self._queue.stage = int(value)
+
+    @property
+    def _start_second_pair_stage(self) -> bool:
+        return self._queue.start_second_stage
+
+    @_start_second_pair_stage.setter
+    def _start_second_pair_stage(self, value: bool) -> None:
+        self._queue.start_second_stage = bool(value)
+
+    @property
+    def _pending_curve(self):
+        return self._queue.pending_curve
+
+    @_pending_curve.setter
+    def _pending_curve(self, value) -> None:
+        self._queue.pending_curve = value
+
+    @property
+    def _pending_pair(self):
+        return self._queue.pending_pair
+
+    @_pending_pair.setter
+    def _pending_pair(self, value) -> None:
+        self._queue.pending_pair = value
+
+    @property
+    def _pending_pair_first_raw(self):
+        return self._queue.pending_pair_first_raw
+
+    @_pending_pair_first_raw.setter
+    def _pending_pair_first_raw(self, value) -> None:
+        self._queue.pending_pair_first_raw = value
+
+    @property
+    def _pending_pair_first_diagnostics(self):
+        return self._queue.pending_pair_first_diagnostics
+
+    @_pending_pair_first_diagnostics.setter
+    def _pending_pair_first_diagnostics(self, value) -> None:
+        self._queue.pending_pair_first_diagnostics = value
+
+    @property
+    def _last_timing_quality(self):
+        return self._queue.last_timing_quality
+
+    @_last_timing_quality.setter
+    def _last_timing_quality(self, value) -> None:
+        self._queue.last_timing_quality = value
+
+    @property
+    def _last_measurement_diagnostics(self):
+        return self._queue.last_diagnostics
+
+    @_last_measurement_diagnostics.setter
+    def _last_measurement_diagnostics(self, value) -> None:
+        self._queue.last_diagnostics = value
+
     def __init__(
         self,
         session: SessionData,
@@ -984,6 +1093,7 @@ class MainWindow(QMainWindow):
         theme_controller: Optional[ThemeController] = None,
     ) -> None:
         super().__init__()
+        self._queue = MeasurementQueue(max_attempts=_MAX_SWEEP_ATTEMPTS)
         self._session = session
         self._settings = settings
         if theme_controller is None:
@@ -1241,6 +1351,7 @@ class MainWindow(QMainWindow):
             self._stop_channel_balance()
             self._measure_frequency_button.setChecked(True)
         self._two_channel_enabled = enabled
+        self._queue.two_channel = enabled
         self._settings.set("measure_two_channel_enabled", enabled)
         self._plots.set_two_channel_enabled(enabled)
         self._measure_submode_control.setVisible(enabled)

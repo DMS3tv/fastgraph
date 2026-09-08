@@ -9,6 +9,7 @@ import shlex
 import tempfile
 import json
 import os
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
@@ -67,6 +68,7 @@ from dms.ui.modern_spinbox import (
 )
 
 from dms.audio_engine import (
+    DevicePoller,
     DualLevelMonitor,
     LevelMonitor,
     SweepWorker,
@@ -140,6 +142,7 @@ from dms.rnd.persistence import (
     RND_SESSION_EXTENSION,
     ensure_rnd_session_extension,
     load_rnd_session,
+    same_session_file,
     save_rnd_session,
     session_snapshot as rnd_persistence_snapshot,
 )
@@ -254,6 +257,24 @@ _CONSOLE_SETTING_SPECS = {
     "queue_count": ("int", 1, 100),
     "output_level": ("float", -120.0, 0.0),
 }
+
+#: Triggers an automation step can raise itself. Queueing these would let an
+#: automation re-trigger itself without end, so the re-entrancy guard stays.
+_AUTOMATION_REENTRANT_TRIGGERS = {"export_complete", "app_error"}
+_AUTOMATION_QUEUE_LIMIT = 32
+
+#: Console commands that do what a risky action does, spelled as text.
+_RISKY_CONSOLE_PREFIXES = (
+    "measure",
+    "export",
+    "settings set",
+    "curator export",
+    "rnd",
+)
+
+#: ``{name}`` placeholders, substituted in one pass so a value that contains
+#: another variable's placeholder is never expanded a second time.
+_AUTOMATION_VARIABLE_PATTERN = re.compile(r"\{([^{}]+)\}")
 
 _CONSOLE_SETTING_KEYS = {
     "bluetooth_mode": "bluetooth_headphone_mode",
@@ -1230,9 +1251,12 @@ class MainWindow(QMainWindow):
         self._balance_ui_timer.setInterval(33)
         self._balance_ui_timer.timeout.connect(self._refresh_balance_scope)
 
-        self._device_check_timer = QTimer(self)
-        self._device_check_timer.timeout.connect(self._check_devices)
-        self._device_check_timer.start(1500)
+        # Device enumeration is four PortAudio calls; it runs on the poller's
+        # own thread and only reports back when the device set changed.
+        self._device_poller = DevicePoller(parent=self)
+        self._device_poller.devices_changed.connect(self._check_devices)
+        self._sync_device_poller()
+        self._device_poller.start()
 
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
@@ -1949,11 +1973,63 @@ class MainWindow(QMainWindow):
         return default_automation_directory()
 
     def _run_automation_trigger(self, trigger: str) -> None:
+        """Queue every automation for ``trigger`` and run them in order.
+
+        Two automations on the same trigger used to mean the second one was
+        dropped with a warning. They are queued instead and run one after the
+        other. ``export_complete`` and ``app_error`` keep the old guard: those
+        two are raised by automation steps themselves, so queueing them would
+        let an automation re-trigger itself forever.
+        """
         widget = getattr(self, "_automation_widget", None)
         if widget is None:
             return
+        running = getattr(self, "_automation_running", False)
+        if running and trigger in _AUTOMATION_REENTRANT_TRIGGERS:
+            self._log_event(
+                "DEBUG",
+                "automation",
+                "Automation trigger ignored while an automation is running",
+                trigger=trigger,
+            )
+            return
+        queue = self._automation_pending()
         for automation in widget.events.automations_for_trigger(trigger):
-            self._run_automation(automation, triggered_by=trigger)
+            if len(queue) >= _AUTOMATION_QUEUE_LIMIT:
+                self._log_event(
+                    "WARNING",
+                    "automation",
+                    "Automation queue is full; dropped an automation",
+                    name=automation.name,
+                    trigger=trigger,
+                )
+                break
+            queue.append((automation, trigger))
+        if not running:
+            self._drain_automation_queue()
+
+    def _automation_pending(self) -> list[tuple[AutomationDefinition, str]]:
+        """The trigger queue, created on first use."""
+        queue = getattr(self, "_automation_queue", None)
+        if queue is None:
+            queue = []
+            self._automation_queue = queue
+        return queue
+
+    def _drain_automation_queue(self) -> None:
+        """Run queued automations sequentially, never re-entering a run."""
+        if getattr(self, "_automation_running", False) or getattr(
+            self, "_automation_draining", False
+        ):
+            return
+        queue = self._automation_pending()
+        self._automation_draining = True
+        try:
+            while queue:
+                automation, trigger = queue.pop(0)
+                self._run_automation(automation, triggered_by=trigger)
+        finally:
+            self._automation_draining = False
 
     def _run_automation(self, automation: AutomationDefinition, triggered_by: str = "manual") -> None:
         if getattr(self, "_automation_running", False):
@@ -1986,6 +2062,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Automation Failed", str(exc))
         finally:
             self._automation_running = False
+            self._drain_automation_queue()
 
     def _automation_condition_matches(self, step: AutomationStep, variables: dict[str, object]) -> bool:
         condition = step.condition
@@ -2015,6 +2092,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _automation_step_is_risky(step: AutomationStep) -> bool:
+        """Whether this step needs the risky-action confirmation.
+
+        ``console_command`` is judged by what it would run: the console can
+        start a queue, export, or change a setting, and those are exactly the
+        actions that ask first when spelled as their own action name.
+        """
+        if step.action == "console_command":
+            command = " ".join(f"{step.target} {step.value}".split()).casefold()
+            return command.startswith(_RISKY_CONSOLE_PREFIXES)
         return step.action in {
             "measure_start",
             "measure_pass",
@@ -2059,9 +2145,17 @@ class MainWindow(QMainWindow):
         elif action == "clear_variable":
             variables.pop(target, None)
         elif action in {"increment_variable", "decrement_variable"}:
-            current = float(variables.get(target, 0) or 0)
+            raw = variables.get(target, 0)
+            current = float(raw or 0)
             delta = float(value or 1)
-            variables[target] = current + delta if action == "increment_variable" else current - delta
+            result = current + delta if action == "increment_variable" else current - delta
+            # A counter that started as an int stays an int: "3" reads better
+            # than "3.0" in a prompt, an export name, or a comparison.
+            keeps_int = isinstance(raw, int) and not isinstance(raw, bool)
+            if keeps_int and float(delta).is_integer():
+                variables[target] = int(result)
+            else:
+                variables[target] = result
         elif action == "measure_start":
             args = ["start"]
             if target:
@@ -2107,10 +2201,21 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _expand_automation_text(text: str, variables: dict[str, object]) -> str:
-        result = str(text or "")
-        for key, value in variables.items():
-            result = result.replace("{" + str(key) + "}", str(value))
-        return result
+        """Replace every ``{name}`` placeholder in one pass.
+
+        Substituting one variable at a time meant a value that itself contained
+        ``{other}`` was expanded again by a later variable, so the result
+        depended on dictionary order. Unknown names are left as written.
+        """
+        lookup = {str(key): value for key, value in variables.items()}
+
+        def replace(match: "re.Match[str]") -> str:
+            key = match.group(1)
+            if key in lookup:
+                return str(lookup[key])
+            return match.group(0)
+
+        return _AUTOMATION_VARIABLE_PATTERN.sub(replace, str(text or ""))
 
     def _automation_navigate(self, target: str) -> None:
         normalized = target.strip().lower()
@@ -3410,14 +3515,38 @@ class MainWindow(QMainWindow):
                 self._current_input_channel(),
             )
 
-    def _check_devices(self) -> None:
+    def _sync_device_poller(self) -> None:
+        """Pause polling whenever PortAudio must not be re-enumerated."""
+        poller = getattr(self, "_device_poller", None)
+        if poller is None:
+            return
+        busy = (
+            not self._queue.allows_device_reselect()
+            or getattr(self, "_rnd_sweep_active", False)
+        )
+        poller.pause(busy)
+
+    def _check_devices(
+        self,
+        output_devices: Optional[list[dict]] = None,
+        input_devices: Optional[list[dict]] = None,
+    ) -> None:
+        """React to a device-set change reported by :class:`DevicePoller`.
+
+        The lists arrive from the poller thread; they are only enumerated here
+        when a caller (a test, or a manual check) passes nothing.
+        """
+        if output_devices is None:
+            output_devices = get_output_devices()
+        if input_devices is None:
+            input_devices = get_input_devices()
         current_out = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_output_devices()
+            for d in output_devices
         ]
         current_in = [
             (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in get_input_devices()
+            for d in input_devices
         ]
 
         if current_out == self._last_output_devices and current_in == (
@@ -3667,6 +3796,7 @@ class MainWindow(QMainWindow):
         ):
             self._devices_dirty = False
             self._refresh_devices()
+        self._sync_device_poller()
         idle = self._state == AppState.IDLE
         pass_fail = self._state == AppState.PASS_FAIL
         busy = self._state in {AppState.SWEEPING, AppState.QUEUE_RUNNING}
@@ -5827,7 +5957,20 @@ class MainWindow(QMainWindow):
                 dialog = RnDRecoveryDialog(candidates, self)
                 dialog.exec()
                 candidate = dialog.selected_candidate()
-                if dialog.action == RnDRecoveryDialog.RESTORE:
+                if (
+                    dialog.action == RnDRecoveryDialog.RESTORE
+                    and getattr(candidate, "unsupported", False)
+                ):
+                    # Intact, but written by a newer build. It is left in place
+                    # rather than quarantined so a Fastgraph update can read it.
+                    QMessageBox.warning(
+                        self,
+                        "Newer R&D Session",
+                        "That recovered session was saved by a newer Fastgraph "
+                        "and cannot be opened by this version. It was left in "
+                        "place so a newer Fastgraph can recover it.",
+                    )
+                elif dialog.action == RnDRecoveryDialog.RESTORE:
                     session, missing_photos = self._rnd_recovery.load_candidate(
                         candidate,
                         self._rnd_widget.photo_store,
@@ -5874,7 +6017,14 @@ class MainWindow(QMainWindow):
         self._rnd_recovery.schedule()
 
     def _on_rnd_recovery_saved(self) -> None:
-        self._rnd_widget.set_recovery_warning("")
+        # The newest snapshot is safe either way; "degraded" means only the
+        # previous generation could not be kept, and it clears itself once a
+        # rotation succeeds.
+        self._rnd_widget.set_recovery_warning(
+            "R&D recovery degraded"
+            if getattr(self._rnd_recovery, "rotation_degraded", False)
+            else ""
+        )
         if self._restored_recovery_candidate is not None:
             self._rnd_recovery.discard(self._restored_recovery_candidate)
             self._restored_recovery_candidate = None
@@ -5895,6 +6045,21 @@ class MainWindow(QMainWindow):
         if not path_str:
             return False
         path = ensure_rnd_session_extension(Path(path_str))
+        # The file dialog checked the name the user typed; the canonical
+        # extension is added afterwards, so "prototype" can still land on an
+        # existing "prototype.fastgraph-rnd.json" without a warning.
+        if path.exists() and not same_session_file(
+            getattr(self._rnd_widget.session, "source_path", ""), path
+        ):
+            choice = QMessageBox.question(
+                self,
+                "Replace R&D Session?",
+                f"Replace {path.name}?\n\n{path.parent}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
         self._rnd_widget.session.saved_app_version = __version__
         try:
             save_rnd_session(
@@ -6829,7 +6994,7 @@ class MainWindow(QMainWindow):
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
         try:
-            self._device_check_timer.stop()
+            self._device_poller.stop()
         except Exception:
             pass
 

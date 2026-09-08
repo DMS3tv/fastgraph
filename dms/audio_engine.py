@@ -11,7 +11,7 @@ from typing import Any, Optional, Callable
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, pyqtSignal, pyqtSlot
 
 from dms.measurement_alignment import (
     AlignmentSettings,
@@ -286,6 +286,21 @@ def device_channel_count(device: Any, kind: str = "input") -> int:
 # Level monitor — runs as a background InputStream
 # ---------------------------------------------------------------------------
 
+#: Silence floor reported by every level reader, in dBFS.
+SILENCE_DBFS = -120.0
+
+#: How often the monitors re-emit their latest level on the GUI thread.
+LEVEL_EMIT_INTERVAL_MS = 50
+
+
+def _block_dbfs(block: np.ndarray) -> float:
+    """RMS of one mono block in dBFS. Cheap enough for a realtime callback."""
+    rms = float(np.sqrt(np.mean(block ** 2)))
+    if rms <= 0.0:
+        return SILENCE_DBFS
+    return 20.0 * float(np.log10(rms))
+
+
 class LevelMonitor(QObject):
     level_updated = pyqtSignal(float)  # RMS in dBFS (-inf … 0)
     error_occurred = pyqtSignal(str)
@@ -297,6 +312,35 @@ class LevelMonitor(QObject):
         self._channel: int = 0
         self._running = False
         self._lock = threading.Lock()
+        self._latest_dbfs = SILENCE_DBFS
+        # The PortAudio callback only stores a float; the signal is emitted
+        # from this timer on the thread that owns the monitor, so nothing
+        # allocates or locks a Qt event queue inside the realtime callback.
+        self._emit_timer = QTimer(self)
+        self._emit_timer.setInterval(LEVEL_EMIT_INTERVAL_MS)
+        self._emit_timer.timeout.connect(self._emit_latest)
+
+    def latest_dbfs(self) -> float:
+        """Most recent block level in dBFS (``SILENCE_DBFS`` when silent)."""
+        with self._lock:
+            return self._latest_dbfs
+
+    def _emit_latest(self) -> None:
+        self.level_updated.emit(self.latest_dbfs())
+
+    def _start_emit_timer(self) -> None:
+        if QCoreApplication.instance() is None:
+            return
+        try:
+            self._emit_timer.start()
+        except Exception:
+            pass
+
+    def _stop_emit_timer(self) -> None:
+        try:
+            self._emit_timer.stop()
+        except Exception:
+            pass
 
     def start(
         self,
@@ -311,6 +355,7 @@ class LevelMonitor(QObject):
             self._device = device_index
             self._channel = channel_index
             self._running = True
+            self._latest_dbfs = SILENCE_DBFS
         try:
             dev = device_by_index(device_index, kind="input")
             if dev is None:
@@ -338,14 +383,18 @@ class LevelMonitor(QObject):
                 latency="low",
             )
             self._stream.start()
+            self._start_emit_timer()
         except Exception as e:
             with self._lock:
                 self._running = False
+            self._stop_emit_timer()
             self.error_occurred.emit(f"Level monitor error: {e}")
 
     def stop(self) -> None:
         with self._lock:
             self._running = False
+            self._latest_dbfs = SILENCE_DBFS
+        self._stop_emit_timer()
         stream = self._stream
         self._stream = None
         if stream is not None:
@@ -361,13 +410,10 @@ class LevelMonitor(QObject):
             if not self._running:
                 return
             ch = min(self._channel, indata.shape[1] - 1)
-        mono = indata[:, ch]
-        rms = float(np.sqrt(np.mean(mono ** 2)))
-        if rms > 0:
-            db = 20.0 * np.log10(rms)
-        else:
-            db = -120.0
-        self.level_updated.emit(db)
+        db = _block_dbfs(indata[:, ch])
+        # No signal emission here: this runs on the PortAudio callback thread.
+        with self._lock:
+            self._latest_dbfs = db
 
     def _on_finished(self) -> None:
         pass
@@ -383,6 +429,34 @@ class DualLevelMonitor(QObject):
         super().__init__(parent)
         self._stream: Optional[sd.InputStream] = None
         self._running = False
+        self._lock = threading.Lock()
+        self._latest_pair = (SILENCE_DBFS, SILENCE_DBFS)
+        self._emit_timer = QTimer(self)
+        self._emit_timer.setInterval(LEVEL_EMIT_INTERVAL_MS)
+        self._emit_timer.timeout.connect(self._emit_latest)
+
+    def latest_pair_dbfs(self) -> tuple[float, float]:
+        """Most recent (left, right) block levels in dBFS."""
+        with self._lock:
+            return self._latest_pair
+
+    def _emit_latest(self) -> None:
+        left, right = self.latest_pair_dbfs()
+        self.levels_updated.emit(left, right)
+
+    def _start_emit_timer(self) -> None:
+        if QCoreApplication.instance() is None:
+            return
+        try:
+            self._emit_timer.start()
+        except Exception:
+            pass
+
+    def _stop_emit_timer(self) -> None:
+        try:
+            self._emit_timer.stop()
+        except Exception:
+            pass
 
     def start(self, device_index: int, device_label: str, fs: int, buffer_size: int) -> None:
         self.stop()
@@ -402,13 +476,18 @@ class DualLevelMonitor(QObject):
                 latency="low",
             )
             self._stream.start()
+            self._start_emit_timer()
         except Exception as exc:
             self._running = False
             self._stream = None
+            self._stop_emit_timer()
             self.error_occurred.emit(f"Two-channel level monitor error: {exc}")
 
     def stop(self) -> None:
         self._running = False
+        with self._lock:
+            self._latest_pair = (SILENCE_DBFS, SILENCE_DBFS)
+        self._stop_emit_timer()
         stream = self._stream
         self._stream = None
         if stream is not None:
@@ -421,11 +500,169 @@ class DualLevelMonitor(QObject):
     def _callback(self, indata: np.ndarray, _frames: int, _time_info, _status) -> None:
         if not self._running or indata.shape[1] < 2:
             return
-        levels: list[float] = []
-        for channel in (0, 1):
-            rms = float(np.sqrt(np.mean(indata[:, channel] ** 2)))
-            levels.append(20.0 * np.log10(rms) if rms > 0.0 else -120.0)
-        self.levels_updated.emit(levels[0], levels[1])
+        pair = (_block_dbfs(indata[:, 0]), _block_dbfs(indata[:, 1]))
+        # No signal emission here: this runs on the PortAudio callback thread.
+        with self._lock:
+            self._latest_pair = pair
+
+
+# ---------------------------------------------------------------------------
+# Device poller — enumerates devices off the GUI thread
+# ---------------------------------------------------------------------------
+
+#: How often the device poller re-enumerates PortAudio.
+DEVICE_POLL_INTERVAL_MS = 1500
+
+
+def _device_identity(devices: list[dict]) -> list[tuple[int, str, int]]:
+    """The fields a hotplug can change; used to decide whether to notify."""
+    identity: list[tuple[int, str, int]] = []
+    for device in devices:
+        try:
+            identity.append(
+                (
+                    int(device["index"]),
+                    str(device["name"]),
+                    int(device.get("hostapi", -1)),
+                )
+            )
+        except Exception:
+            continue
+    return identity
+
+
+class _DevicePollWorker(QObject):
+    """Lives on the poller's QThread and owns the polling timer."""
+
+    devices_changed = pyqtSignal(list, list)
+
+    def __init__(self, interval_ms: int, report_initial: bool = False) -> None:
+        super().__init__()
+        self._interval_ms = int(interval_ms)
+        self._timer: Optional[QTimer] = None
+        self._paused = False
+        self._stopped = False
+        self._silent_first = not report_initial
+        self._last: Optional[tuple[list, list]] = None
+
+    def set_paused(self, paused: bool) -> None:
+        # A single bool assignment; safe to call from the GUI thread.
+        self._paused = bool(paused)
+
+    def request_stop(self) -> None:
+        self._stopped = True
+
+    @pyqtSlot()
+    def begin(self) -> None:
+        if self._stopped:
+            return
+        if self._timer is None:
+            self._timer = QTimer(self)
+            self._timer.setInterval(self._interval_ms)
+            self._timer.timeout.connect(self.poll)
+        self._timer.start()
+        self.poll()
+
+    @pyqtSlot()
+    def poll(self) -> None:
+        if self._stopped or self._paused:
+            return
+        try:
+            outputs = get_output_devices()
+            inputs = get_input_devices()
+        except Exception:
+            return
+        identity = (_device_identity(outputs), _device_identity(inputs))
+        if identity == self._last:
+            return
+        self._last = identity
+        if self._silent_first:
+            # The first poll only establishes the baseline: the caller already
+            # knows the device set it started with.
+            self._silent_first = False
+            return
+        if self._stopped:
+            return
+        self.devices_changed.emit(outputs, inputs)
+
+
+class DevicePoller(QObject):
+    """Poll PortAudio for hotplugs on a worker thread.
+
+    ``devices_changed`` carries the output and input device lists and fires
+    only when the visible set of devices actually differs from the previous
+    poll, so the GUI thread never enumerates devices on a timer. The poll that
+    ``start()`` kicks off is silent — it records the baseline the caller
+    already enumerated for itself — unless ``report_initial`` is set.
+    """
+
+    devices_changed = pyqtSignal(list, list)
+
+    def __init__(
+        self,
+        interval_ms: int = DEVICE_POLL_INTERVAL_MS,
+        parent: Optional[QObject] = None,
+        report_initial: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self._interval_ms = int(interval_ms)
+        self._report_initial = bool(report_initial)
+        self._thread: Optional[QThread] = None
+        self._worker: Optional[_DevicePollWorker] = None
+        self._paused = False
+        # A QThread that refused to join is never destroyed; deleting a
+        # running QThread aborts the process.
+        self._orphaned_threads: list[QThread] = []
+
+    def is_running(self) -> bool:
+        return self._thread is not None
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        worker = _DevicePollWorker(self._interval_ms, self._report_initial)
+        worker.set_paused(self._paused)
+        worker.devices_changed.connect(self._on_devices_changed)
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.begin)
+        thread.finished.connect(worker.deleteLater)
+        self._worker = worker
+        self._thread = thread
+        thread.start()
+
+    def pause(self, paused: bool) -> None:
+        """Suspend polling; PortAudio must not be enumerated under a stream."""
+        self._paused = bool(paused)
+        worker = self._worker
+        if worker is not None:
+            worker.set_paused(self._paused)
+
+    def stop(self) -> None:
+        thread = self._thread
+        worker = self._worker
+        self._thread = None
+        self._worker = None
+        if worker is not None:
+            worker.request_stop()
+            try:
+                worker.devices_changed.disconnect(self._on_devices_changed)
+            except Exception:
+                pass
+        if thread is None:
+            return
+        try:
+            thread.quit()
+            if not thread.wait(5000):
+                self._orphaned_threads.append(thread)
+        except Exception:
+            self._orphaned_threads.append(thread)
+
+    def _on_devices_changed(self, outputs: list, inputs: list) -> None:
+        self.devices_changed.emit(outputs, inputs)
 
 
 # ---------------------------------------------------------------------------

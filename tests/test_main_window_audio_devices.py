@@ -32,6 +32,16 @@ class _LevelMonitor:
         self.stop_count += 1
 
 
+class _Queue:
+    """The slice of ``MeasureQueue`` that ``_check_devices`` consults."""
+
+    def __init__(self, allows_reselect: bool = True) -> None:
+        self.allows_reselect = allows_reselect
+
+    def allows_device_reselect(self) -> bool:
+        return self.allows_reselect
+
+
 class _Harness:
     _current_output_device = MainWindow._current_output_device
     _current_input_device = MainWindow._current_input_device
@@ -52,6 +62,8 @@ class _Harness:
     _manual_refresh_devices = MainWindow._manual_refresh_devices
     _refresh_channels = MainWindow._refresh_channels
     _start_queue = MainWindow._start_queue
+    _check_devices = MainWindow._check_devices
+    _sync_device_poller = MainWindow._sync_device_poller
 
     def __init__(self, settings: _Settings) -> None:
         self._settings = settings
@@ -72,6 +84,9 @@ class _Harness:
         self._last_output_devices = []
         self._last_input_devices = []
         self._level_monitor = _LevelMonitor()
+        self._queue = _Queue()
+        self._rnd_sweep_active = False
+        self._devices_dirty = False
         self.apply_count = 0
         self.monitor_count = 0
         self.start_next_sweep_count = 0
@@ -458,3 +473,100 @@ def test_manual_refresh_falls_back_when_selected_device_disappears(qapp, monkeyp
     assert settings.data["output_device"]["index"] == 5
     assert settings.data["input_device"]["index"] == 43
     assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."
+
+
+def _forbid_enumeration(monkeypatch) -> None:
+    def _fail():
+        raise AssertionError("_check_devices must not enumerate on the GUI thread")
+
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", _fail)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", _fail)
+
+
+def test_check_devices_uses_the_lists_the_poller_hands_it(qapp, monkeypatch) -> None:
+    """E5: the poller thread enumerates; the GUI slot only compares."""
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+    harness._refresh_devices()
+
+    refreshed: list[bool] = []
+    harness._refresh_devices = lambda: refreshed.append(True)
+    _forbid_enumeration(monkeypatch)
+
+    # Same device set as the last refresh: nothing to do, nothing enumerated.
+    harness._check_devices(outputs, inputs)
+    assert refreshed == []
+
+    # One output gone: the window re-selects because it is idle.
+    harness._check_devices(outputs[1:], inputs)
+    assert refreshed == [True]
+    assert harness._devices_dirty is False
+
+
+def test_check_devices_defers_while_the_queue_holds_the_devices(qapp, monkeypatch) -> None:
+    outputs, inputs = _devices()
+    settings = _Settings(
+        {
+            "input_device": None,
+            "output_device": None,
+            "input_channel": 0,
+            "windows_advanced_audio_drivers": True,
+        }
+    )
+    harness = _Harness(settings)
+    monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
+    monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
+    monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
+    monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
+    harness._refresh_devices()
+
+    refreshed: list[bool] = []
+    harness._refresh_devices = lambda: refreshed.append(True)
+    harness._queue.allows_reselect = False
+    _forbid_enumeration(monkeypatch)
+
+    harness._check_devices(outputs[1:], inputs)
+
+    assert refreshed == []
+    assert harness._devices_dirty is True
+
+
+def test_sync_device_poller_pauses_while_busy(qapp) -> None:
+    settings = _Settings({"input_channel": 0, "windows_advanced_audio_drivers": True})
+    harness = _Harness(settings)
+
+    class _Poller:
+        def __init__(self) -> None:
+            self.paused: list[bool] = []
+
+        def pause(self, paused: bool) -> None:
+            self.paused.append(bool(paused))
+
+    poller = _Poller()
+
+    # No poller yet: the guard must not raise during window construction.
+    harness._sync_device_poller()
+
+    harness._device_poller = poller
+    harness._sync_device_poller()
+    harness._queue.allows_reselect = False
+    harness._sync_device_poller()
+    harness._queue.allows_reselect = True
+    harness._rnd_sweep_active = True
+    harness._sync_device_poller()
+    harness._rnd_sweep_active = False
+    harness._sync_device_poller()
+
+    assert poller.paused == [False, True, True, False]

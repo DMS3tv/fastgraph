@@ -1,4 +1,10 @@
+import time
+
+import numpy as np
+import pytest
 from PyQt6.QtCore import Qt
+
+from dms import audio_engine
 
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.style_tokens import (
@@ -98,3 +104,97 @@ def test_fastgraph95_level_meter_uses_separate_progress_blocks(qapp) -> None:
         assert meter._control_paint_path() == "classic"
         assert meter._tokens() is tokens
         assert not meter.grab().toImage().isNull()
+
+
+def _pump_until(qapp, predicate, timeout: float = 3.0) -> bool:
+    """Spin the GUI event loop until ``predicate`` holds or time runs out."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    qapp.processEvents()
+    return bool(predicate())
+
+
+def test_level_monitor_callback_never_emits_from_the_audio_thread(qapp) -> None:
+    """B10: the PortAudio callback stores a float; it must not touch Qt."""
+    monitor = audio_engine.LevelMonitor()
+    emitted: list[float] = []
+    monitor.level_updated.connect(emitted.append)
+    monitor._running = True
+    monitor._channel = 0
+
+    block = np.full((256, 1), 0.5, dtype=np.float32)
+    monitor._callback(block, 256, None, None)
+
+    assert emitted == []
+    assert monitor.latest_dbfs() == pytest.approx(-6.02, abs=0.05)
+
+    monitor._callback(np.zeros((256, 1), dtype=np.float32), 256, None, None)
+    assert emitted == []
+    assert monitor.latest_dbfs() == audio_engine.SILENCE_DBFS
+
+
+def test_level_monitor_emits_the_latest_value_from_the_gui_timer(qapp) -> None:
+    monitor = audio_engine.LevelMonitor()
+    emitted: list[float] = []
+    monitor.level_updated.connect(emitted.append)
+    monitor._running = True
+    monitor._channel = 0
+    monitor._callback(np.full((256, 1), 0.25, dtype=np.float32), 256, None, None)
+
+    monitor._start_emit_timer()
+    try:
+        assert monitor._emit_timer.interval() == audio_engine.LEVEL_EMIT_INTERVAL_MS
+        assert _pump_until(qapp, lambda: bool(emitted))
+        assert emitted[-1] == pytest.approx(monitor.latest_dbfs())
+    finally:
+        monitor._stop_emit_timer()
+
+    count = len(emitted)
+    _pump_until(qapp, lambda: False, timeout=0.2)
+    assert len(emitted) == count
+
+
+def test_dual_level_monitor_callback_stores_both_channels(qapp) -> None:
+    monitor = audio_engine.DualLevelMonitor()
+    emitted: list[tuple[float, float]] = []
+    monitor.levels_updated.connect(lambda left, right: emitted.append((left, right)))
+    monitor._running = True
+
+    block = np.zeros((256, 2), dtype=np.float32)
+    block[:, 0] = 0.5
+    monitor._callback(block, 256, None, None)
+
+    assert emitted == []
+    left, right = monitor.latest_pair_dbfs()
+    assert left == pytest.approx(-6.02, abs=0.05)
+    assert right == audio_engine.SILENCE_DBFS
+
+    monitor._start_emit_timer()
+    try:
+        assert _pump_until(qapp, lambda: bool(emitted))
+        assert emitted[-1] == pytest.approx((left, right))
+    finally:
+        monitor._stop_emit_timer()
+
+
+def test_level_monitors_reset_to_silence_on_stop(qapp) -> None:
+    monitor = audio_engine.LevelMonitor()
+    monitor._running = True
+    monitor._callback(np.full((64, 1), 0.5, dtype=np.float32), 64, None, None)
+    monitor.stop()
+    assert monitor.latest_dbfs() == audio_engine.SILENCE_DBFS
+    assert not monitor._emit_timer.isActive()
+
+    dual = audio_engine.DualLevelMonitor()
+    dual._running = True
+    dual._callback(np.full((64, 2), 0.5, dtype=np.float32), 64, None, None)
+    dual.stop()
+    assert dual.latest_pair_dbfs() == (
+        audio_engine.SILENCE_DBFS,
+        audio_engine.SILENCE_DBFS,
+    )
+    assert not dual._emit_timer.isActive()

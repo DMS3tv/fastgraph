@@ -43,8 +43,43 @@
 - Release builds run the test suite first, upload assets one at a time (the
   Windows zip name broke the old upload), publish SHA256SUMS.txt, and
   install from a pinned requirements.lock.
+- R&D: saving a session never deletes photos that belong to another
+  session, and Save As asks before replacing a file; crash recovery survives
+  a failed generation rotation and reports sessions saved by a newer
+  Fastgraph instead of quarantining them; View 2 honours a grouped
+  measurement's own checkbox; measurements cannot be dropped onto other
+  measurements; Remove acts on every selected row; group rename keeps text
+  in parentheses; HRTF files are cached instead of re-read on every redraw.
+- Automation: the editor keeps the condition operator and values and the
+  confirmation flag when an automation is re-saved, Duplicate no longer
+  blanks the source, triggers that fire while another automation runs are
+  queued instead of dropped, and `console_command` steps that start
+  measurements or exports ask for confirmation like the direct actions.
+- Audio: level meters no longer emit Qt signals from the PortAudio callback,
+  and device enumeration runs on a background thread and pauses during a
+  queue, so the interface no longer hitches every 1.5 seconds.
+
+### Changed
+
+- Frequency responses are now computed through an impulse-response window
+  (deconvolution, circular window with tapers, transform back). The result
+  matches the previous method within 0.07 dB on a linear system and keeps
+  the headphone's decay while rejecting harmonic distortion products.
+  Per-sweep resampling to the log grid averages the power within each cell
+  instead of sampling single FFT bins.
+- Exported averages and Squiglink uploads now contain the curve shown on
+  screen, smoothed at 1/48 octave; the file header says so.
+- Population-HRTF variation bands combine measurement and compensation
+  spread in quadrature instead of pairing the widest percentiles. The old
+  behaviour is available as `hrtf_variation_combination = "worst_case"`.
 
 ### Added
+
+- Measure: a Distortion toggle between the plots draws THD, H2 and H3
+  relative to the fundamental on a right-hand axis when the sweep's SNR is
+  at least 20 dB, and the review dialog reports THD over 100 Hz to 10 kHz.
+- Measure: a Level selector for 1 kHz reference or absolute dB SPL using
+  the input device's SPL calibration and the output level.
 
 - Settings: "Sweep Noise Margin Min", "SNR Warning Below", and "Save failed
   recordings for diagnosis". Saved dumps can be replayed offline with

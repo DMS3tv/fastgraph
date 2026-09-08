@@ -407,6 +407,40 @@ def is_retryable_timing_failure(
     )
 
 
+#: Substrings that identify an audio-device or stream failure rather than a
+#: measurement-quality failure. Sourced from every ``error.emit`` in
+#: ``SweepWorker._run_inner`` (``dms/audio_engine.py``) plus the device guard in
+#: ``MainWindow._start_next_sweep``. Matched case-insensitively.
+_DEVICE_FAILURE_TOKENS = (
+    "portaudio",
+    "device unavailable",
+    "not available (device has",
+    "stream failed",
+    "input device unavailable",
+    "output device unavailable",
+    "selected device is unavailable",
+)
+
+
+def is_device_failure(
+    message: str,
+    failure_reason: Optional[str],
+) -> bool:
+    """Return whether a sweep failure came from the audio device, not the data.
+
+    A device failure is terminal: retrying it only produces the same error, so
+    two-channel mode must not offer a "retry the pair?" prompt for it.
+
+    ``failure_reason`` is set only by the measurement-quality checks that raise
+    through :func:`_raise_alignment_error`; when it is present the failure is by
+    definition a data-quality failure, never a device one.
+    """
+    if failure_reason is not None:
+        return False
+    msg = (message or "").lower()
+    return any(token in msg for token in _DEVICE_FAILURE_TOKENS)
+
+
 def normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
     """Return valid cross-correlation sequence between signal and pattern."""
     sig = np.asarray(signal).astype(np.float64, copy=False)

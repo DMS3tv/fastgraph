@@ -45,6 +45,9 @@ _DEFAULTS: dict[str, Any] = {
     "start_alignment_confidence_min": 6.0,
     "sweep_noise_margin_min_db": 3.0,
     "snr_warn_db": 10.0,
+    # Write the raw recording and a JSON sidecar to the app data folder on
+    # every alignment failure so it can be replayed offline.
+    "save_failed_recordings": False,
     "end_marker_confidence_min": 7.0,
     "timing_drift_max_ms": 35.0,
     "update_check_enabled": True,

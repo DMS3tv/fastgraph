@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Fixed
+
+- Standard-mode measurements now reject silent or unrelated recordings
+  instead of showing a flat 0 dB curve. Alignment confidence is measured as
+  peak-to-background of the sweep correlation in every mode (default 6.0),
+  with a hard floor on the correlation coefficient and a mid-band noise
+  margin; a recording is rejected only when both confidence and margin fail,
+  so headphones with strong band-edge rolloff, echoes, and clipped sweeps are
+  still accepted. Low SNR warns in the review dialog. A stored 9.0 confidence
+  setting from earlier versions moves to the new default once.
+- Bluetooth sweeps whose end markers are degraded by codec smear now use the
+  sweep-correlation fallback with a warning instead of failing. Only a
+  reversed marker order blocks the fallback, and every Bluetooth failure now
+  reports SNR and signal-margin diagnostics.
+- Test suite: Qt deferred deletes are flushed between tests, so the suite no
+  longer slows down quadratically (the slowest file went from 258 s to 16 s).
+  The theme controller skips re-applying an unchanged stylesheet.
+
+### Added
+
+- Settings: "Sweep Noise Margin Min", "SNR Warning Below", and "Save failed
+  recordings for diagnosis". Saved dumps can be replayed offline with
+  `tools/replay_failed_recording.py`.
+- Diagnostics summaries include the sweep correlation peak, the next-best
+  alignment ratio, the mid-band level above noise, and sweep coverage by
+  tenth.
+
+### Notes
+
+- The all-modes enforcement, non-finite sample guard and several persistence
+  ideas are adapted from GoldenSound's pull request #9 with thanks.
+
 ## [0.4.2] - 2026-08-29
 
 ### Added

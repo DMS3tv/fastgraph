@@ -378,6 +378,9 @@ def test_bluetooth_weak_end_markers_use_sweep_fallback(monkeypatch) -> None:
         marker_locked_candidate=None,
         start_confidence=3.0,
         start_marker_confidence=52.5,
+        background_confidence=3.0,
+        nextbest_confidence=3.0,
+        peak_correlation=0.9,
     )
     end_result = EndMarkerResult(
         selected_sweep_start=layout.sweep_start_sample,
@@ -819,11 +822,18 @@ def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
     _write_at(rec, delay + layout.end_marker_1_start_sample, 2.0 * layout.end_marker_2)
     _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
 
-    with pytest.raises(
-        MeasurementAlignmentError,
-        match="Low end-marker confidence|Unable to verify end marker timing|Timing drift too large",
-    ):
-        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+    # The marker pair must not be trusted for timing. Because the sweep itself
+    # aligned with full confidence, the result is the sweep-correlation
+    # fallback with a visible warning rather than a hard failure.
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.diagnostics.alignment_mode == "sweep_fallback"
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
+    )
+    assert result.end.marker_confidence == 0.0
+    assert result.end.selected_sweep_start == layout.sweep_start_sample + delay
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
 
 def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
@@ -836,11 +846,16 @@ def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
     ] = 0.0
     _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
 
-    with pytest.raises(
-        MeasurementAlignmentError,
-        match="Low end-marker confidence|Unable to verify end marker timing|Timing drift too large",
-    ):
-        align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+    # A duplicated marker cannot be a valid pair, so marker timing is
+    # discarded; the perfectly aligned sweep is kept through the fallback.
+    result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
+
+    assert result.diagnostics.alignment_mode == "sweep_fallback"
+    assert result.diagnostics.warning_reason == (
+        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
+    )
+    assert result.end.marker_confidence == 0.0
+    np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
 
 def test_loud_reversed_marker_artifacts_do_not_displace_ordered_pair() -> None:

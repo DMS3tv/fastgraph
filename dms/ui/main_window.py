@@ -3692,6 +3692,9 @@ class MainWindow(QMainWindow):
                 self._settings.get("sweep_noise_margin_min_db")
             ),
             snr_warn_db=float(self._settings.get("snr_warn_db")),
+            failed_recording_dir=self._failed_recording_dir(),
+            sweep_f_low=_MEASUREMENT_F_MIN,
+            sweep_f_high=_MEASUREMENT_F_MAX,
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -4242,6 +4245,9 @@ class MainWindow(QMainWindow):
                 self._settings.get("sweep_noise_margin_min_db")
             ),
             snr_warn_db=float(self._settings.get("snr_warn_db")),
+            failed_recording_dir=self._failed_recording_dir(),
+            sweep_f_low=_MEASUREMENT_F_MIN,
+            sweep_f_high=_MEASUREMENT_F_MAX,
         )
         self._sweep_thread.finished.connect(self._on_sweep_thread_finished)
         self._sweep_thread.start()
@@ -6187,6 +6193,12 @@ class MainWindow(QMainWindow):
         host = str(self._settings.get("squiglink_host") or "").strip()
         port = int(self._settings.get("squiglink_port") or 22)
         return host, port
+
+    def _failed_recording_dir(self) -> Optional[str]:
+        """Folder for failed-recording dumps, or None when the setting is off."""
+        if not bool(self._settings.get("save_failed_recordings")):
+            return None
+        return str(config_dir() / "failed_recordings")
 
     def _upload_to_squiglink(self) -> None:
         curve = self._bottom_curve_for_display_and_export()

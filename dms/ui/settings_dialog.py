@@ -227,6 +227,15 @@ class SettingsWidget(QWidget):
             "Confirm before clearing headphone metadata"
         )
         safety_layout.addWidget(self._confirm_clear_metadata)
+        self._save_failed_recordings = QCheckBox(
+            "Save failed recordings for diagnosis"
+        )
+        self._save_failed_recordings.setToolTip(
+            "When a sweep is rejected, write the raw recording and a JSON sidecar "
+            "to the application data folder (failed_recordings). Replay them with "
+            "tools/replay_failed_recording.py. Off by default."
+        )
+        safety_layout.addWidget(self._save_failed_recordings)
         layout.addWidget(self._safety_group)
 
         self._rnd_group = QGroupBox("R&D Sessions")
@@ -331,6 +340,9 @@ class SettingsWidget(QWidget):
         )
         self._confirm_clear_metadata.toggled.connect(
             lambda checked: self._save("confirm_clear_metadata", checked)
+        )
+        self._save_failed_recordings.toggled.connect(
+            lambda checked: self._save("save_failed_recordings", checked)
         )
         self._rnd_session_dir.editingFinished.connect(
             lambda: self._save("rnd_session_directory", self._rnd_session_dir.text().strip())
@@ -438,10 +450,13 @@ class SettingsWidget(QWidget):
             self._post_silence,
             self._latency,
             self._start_conf_min,
+            self._noise_margin_min,
+            self._snr_warn,
             self._end_conf_min,
             self._timing_drift_max_ms,
             self._confirm_clear,
             self._confirm_clear_metadata,
+            self._save_failed_recordings,
             self._rnd_session_dir,
             self._automation_dir,
             *self._shortcut_edits.values(),
@@ -478,6 +493,9 @@ class SettingsWidget(QWidget):
             )
             self._confirm_clear_metadata.setChecked(
                 bool(self._settings.get("confirm_clear_metadata"))
+            )
+            self._save_failed_recordings.setChecked(
+                bool(self._settings.get("save_failed_recordings"))
             )
             self._rnd_session_dir.setText(str(self._settings.get("rnd_session_directory") or ""))
             self._automation_dir.setText(str(self._settings.get("automation_directory") or ""))

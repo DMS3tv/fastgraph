@@ -19,6 +19,7 @@ from dms.measurement_alignment import (
     align_recording_to_layout,
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
+from dms.recording_dump import save_failed_recording
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +466,9 @@ class SweepWorker(QObject):
         output_channel: int | None = None,
         sweep_noise_margin_min_db: float = 3.0,
         snr_warn_db: float = 10.0,
+        failed_recording_dir: str | None = None,
+        sweep_f_low: float = 20.0,
+        sweep_f_high: float = 20000.0,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -477,6 +481,7 @@ class SweepWorker(QObject):
                 start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
                 output_channel,
                 sweep_noise_margin_min_db, snr_warn_db,
+                failed_recording_dir, sweep_f_low, sweep_f_high,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -491,6 +496,9 @@ class SweepWorker(QObject):
         output_channel=None,
         sweep_noise_margin_min_db=3.0,
         snr_warn_db=10.0,
+        failed_recording_dir=None,
+        sweep_f_low=20.0,
+        sweep_f_high=20000.0,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)
@@ -578,25 +586,52 @@ class SweepWorker(QObject):
 
         rec_mono = recording[:, 0]
 
+        alignment_settings = AlignmentSettings(
+            latency=latency,
+            bluetooth_headphone_mode=bluetooth_headphone_mode,
+            start_alignment_confidence_min=start_alignment_confidence_min,
+            end_marker_confidence_min=end_marker_confidence_min,
+            timing_drift_max_ms=timing_drift_max_ms,
+            sweep_noise_margin_min_db=sweep_noise_margin_min_db,
+            snr_warn_db=snr_warn_db,
+        )
         try:
             alignment = align_recording_to_layout(
                 rec_mono=rec_mono,
                 sweep=sweep,
                 layout=layout,
-                settings=AlignmentSettings(
-                    latency=latency,
-                    bluetooth_headphone_mode=bluetooth_headphone_mode,
-                    start_alignment_confidence_min=start_alignment_confidence_min,
-                    end_marker_confidence_min=end_marker_confidence_min,
-                    timing_drift_max_ms=timing_drift_max_ms,
-                    sweep_noise_margin_min_db=sweep_noise_margin_min_db,
-                    snr_warn_db=snr_warn_db,
-                ),
+                settings=alignment_settings,
             )
         except MeasurementAlignmentError as exc:
-            self.measurement_diagnostics.emit(
-                replace(exc.diagnostics, buffer_size=int(buffer_size))
-            )
+            diagnostics = replace(exc.diagnostics, buffer_size=int(buffer_size))
+            if failed_recording_dir:
+                try:
+                    save_failed_recording(
+                        failed_recording_dir,
+                        rec_mono,
+                        fs=int(fs),
+                        sweep_duration_s=len(sweep) / float(fs),
+                        f_low=float(sweep_f_low),
+                        f_high=float(sweep_f_high),
+                        pre_silence_s=float(pre_silence),
+                        post_silence_s=float(post_silence),
+                        bluetooth_headphone_mode=bool(bluetooth_headphone_mode),
+                        alignment_settings=alignment_settings,
+                        diagnostics=diagnostics,
+                        failure_message=str(exc),
+                        failure_reason=exc.reason,
+                        extra={
+                            "input_device": input_device_label,
+                            "output_device": output_device_label,
+                            "input_channel": int(input_channel),
+                            "output_channel": output_channel,
+                            "buffer_size": int(buffer_size),
+                        },
+                    )
+                except Exception:
+                    # Diagnostics must never turn a failed sweep into a crash.
+                    pass
+            self.measurement_diagnostics.emit(diagnostics)
             self.error.emit(str(exc))
             return
         except ValueError as exc:

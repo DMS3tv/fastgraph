@@ -163,9 +163,19 @@ class MeasurementAlignmentResult:
 _BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE = 3.0
 _BLUETOOTH_FALLBACK_STRONG_SWEEP_CONFIDENCE = 5.0
 _BLUETOOTH_FALLBACK_MIN_START_MARKER_CONFIDENCE = 3.5
-_BLUETOOTH_FALLBACK_MIN_SNR_DB = 18.0
+# Real Bluetooth runs in the diagnostics log have a median SNR of 16 dB; the
+# old 18 dB floor made the fallback unreachable in practice.
+_BLUETOOTH_FALLBACK_MIN_SNR_DB = 10.0
 _BLUETOOTH_FALLBACK_MIN_SWEEP_RMS = 1e-7
-_BLUETOOTH_FALLBACK_MIN_SWEEP_MATCH = 0.20
+# Normalized correlation coefficient of the deconvolution-free sweep match.
+# Unlike the old raw time-domain dot product with the undeconvolved sweep,
+# this is not defeated by a headphone's phase response.
+_BLUETOOTH_FALLBACK_MIN_PEAK_CORRELATION = 0.10
+# End-marker quality floors. Below these the marker pair is not trusted for
+# timing; the sweep-correlation fallback is used instead of failing. Only a
+# reversed marker order (identity below 1.0) blocks the fallback outright.
+_MARKER_MIN_AGREEMENT = 0.18
+_MARKER_MIN_IDENTITY_RATIO = 1.02
 
 
 def _diagnostics_from_results(
@@ -909,24 +919,20 @@ def _bluetooth_sweep_fallback_result(
             else end_result.marker_confidence
         )
         strong_marker_conf_min = min(float(settings.end_marker_confidence_min), 2.5)
-        strong_invalid_identity = (
+        # A reversed marker order means the recording is not what was played;
+        # nothing downstream can be trusted. Weak chip agreement or a small
+        # identity margin only means the markers are unusable for timing,
+        # which is exactly the case the sweep-correlation fallback exists for.
+        reversed_marker_order = (
             raw_marker_conf >= 1.0
-            and (
-                (
-                    end_result.marker_identity_ratio is not None
-                    and end_result.marker_identity_ratio < 1.08
-                )
-                or (
-                    end_result.marker_agreement is not None
-                    and end_result.marker_agreement < 0.10
-                )
-            )
+            and end_result.marker_identity_ratio is not None
+            and end_result.marker_identity_ratio < 1.0
         )
         strong_invalid_drift = (
             marker_failure_reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
             and raw_marker_conf >= strong_marker_conf_min
         )
-        if strong_invalid_identity or strong_invalid_drift:
+        if reversed_marker_order or strong_invalid_drift:
             return None
 
         fallback_end_result = EndMarkerResult(
@@ -952,19 +958,12 @@ def _bluetooth_sweep_fallback_result(
     )
     sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
     sweep_rms = float(np.sqrt(np.mean(np.square(sweep_rec))))
-    sweep_match = 0.0
-    sweep_ref = np.asarray(sweep).astype(np.float32, copy=False)
     snr_db = _estimate_bluetooth_fallback_snr_db(
         rec,
         sweep_rec,
         start_idx,
         layout,
     )
-    if len(sweep_ref) == len(sweep_rec):
-        rec_norm = float(np.sqrt(np.sum(np.square(sweep_rec))))
-        ref_norm = float(np.sqrt(np.sum(np.square(sweep_ref))))
-        if rec_norm > 1e-12 and ref_norm > 1e-12:
-            sweep_match = abs(float(np.dot(sweep_rec, sweep_ref) / (rec_norm * ref_norm)))
 
     sweep_conf_ok = (
         fallback_start_result.start_confidence
@@ -982,7 +981,8 @@ def _bluetooth_sweep_fallback_result(
         or not start_evidence_ok
         or snr_db < _BLUETOOTH_FALLBACK_MIN_SNR_DB
         or sweep_rms < _BLUETOOTH_FALLBACK_MIN_SWEEP_RMS
-        or sweep_match < _BLUETOOTH_FALLBACK_MIN_SWEEP_MATCH
+        or fallback_start_result.peak_correlation
+        < _BLUETOOTH_FALLBACK_MIN_PEAK_CORRELATION
     ):
         return None
 
@@ -992,6 +992,14 @@ def _bluetooth_sweep_fallback_result(
         sweep_rms / (10.0 ** (snr_db / 20.0)) if 0.0 < snr_db < 120.0 else 0.0
     )
     integrity = compute_sweep_integrity(sweep_rec, fallback_noise_rms)
+    _enforce_sweep_integrity(
+        layout,
+        settings,
+        fallback_start_result,
+        integrity,
+        snr_db,
+        end_result=fallback_end_result,
+    )
     warning_message = (
         "Bluetooth markers were unreliable; sweep correlation was used. "
         "Review repeatability before keeping."
@@ -1174,8 +1182,8 @@ def find_end_markers(
         result for result in pair_results
         if (
             result[5] >= max(1.8, end_conf_min * 0.85)
-            and result[7] >= 0.18
-            and result[8] >= 1.08
+            and result[7] >= _MARKER_MIN_AGREEMENT
+            and result[8] >= _MARKER_MIN_IDENTITY_RATIO
         )
     ]
     best_err_result = None
@@ -1210,7 +1218,10 @@ def find_end_markers(
         stretch_2,
     ) = chosen
     raw_marker_conf = marker_conf
-    if agreement < 0.18 or identity_ratio < 1.08:
+    if agreement < _MARKER_MIN_AGREEMENT or identity_ratio < _MARKER_MIN_IDENTITY_RATIO:
+        # The pair is not trusted for timing. Zeroing the confidence routes
+        # the caller to the sweep-correlation fallback; the raw value stays
+        # in diagnostics.
         marker_conf = 0.0
     drift_ms = 1000.0 * timing_err / float(layout.fs)
     marker_template_stretch = 0.5 * (float(stretch_1) + float(stretch_2))
@@ -1485,6 +1496,16 @@ def align_recording_to_layout(
         rec, layout, settings, start_result, end_result
     )
     sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
+    # Level evidence is computed before any marker decision so that every
+    # failure below carries SNR and integrity metrics in its diagnostics.
+    noise_rms = noise_floor_rms(
+        rec,
+        end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
+        end_result.selected_sweep_start,
+        layout.fs,
+    )
+    snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
+    integrity = compute_sweep_integrity(sweep_rec, noise_rms)
 
     end_conf_min = float(settings.end_marker_confidence_min)
     if bool(settings.bluetooth_headphone_mode):
@@ -1534,6 +1555,8 @@ def align_recording_to_layout(
             settings,
             start=start_result,
             end=end_result,
+            snr_db=snr_db,
+            integrity=integrity,
         )
 
     if (
@@ -1560,6 +1583,8 @@ def align_recording_to_layout(
             settings,
             start=start_result,
             end=end_result,
+            snr_db=snr_db,
+            integrity=integrity,
         )
 
     warning_reason = None
@@ -1594,6 +1619,8 @@ def align_recording_to_layout(
                 settings,
                 start=start_result,
                 end=end_result,
+                snr_db=snr_db,
+                integrity=integrity,
             )
         else:
             hint = "Please retry and consider high latency mode."
@@ -1604,6 +1631,8 @@ def align_recording_to_layout(
                 settings,
                 start=start_result,
                 end=end_result,
+                snr_db=snr_db,
+                integrity=integrity,
             )
 
     if bluetooth_mode:
@@ -1623,14 +1652,6 @@ def align_recording_to_layout(
             marker_template_stretch=end_result.marker_template_stretch,
         )
 
-    noise_rms = noise_floor_rms(
-        rec,
-        end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
-        end_result.selected_sweep_start,
-        layout.fs,
-    )
-    snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
-    integrity = compute_sweep_integrity(sweep_rec, noise_rms)
     _enforce_sweep_integrity(
         layout, settings, start_result, integrity, snr_db, end_result=end_result
     )

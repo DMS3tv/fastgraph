@@ -20,11 +20,37 @@
   longer slows down quadratically (the slowest file went from 258 s to 16 s).
   The theme controller skips re-applying an unchanged stylesheet.
 
+- Measure queue: a terminal sweep error, a manual Fail, Cancel Queue and
+  Clear All now reset the whole queue state, so no phantom queue remains and
+  a manual Fail restores the retry budget. Device-unavailable errors are
+  terminal in Two Channel mode instead of prompting three pair retries. The
+  keyboard shortcut, console and automations can no longer start a queue
+  while Channel Balance is active. Device changes no longer re-select
+  devices mid-queue. Closing waits for a running sweep or upload and asks
+  before discarding kept Measure curves.
+- Settings, calibration and automation files are written atomically; a
+  damaged file is backed up and reported instead of silently replaced.
+- Squiglink uploads verify the server's SSH host key on first use, time out
+  after 20 s, run on a background thread with a cancellable progress dialog,
+  and save credentials only after a successful upload.
+- Curator: decimal-comma and BOM files import correctly, combined variation
+  bands use a proper mixture model instead of percentiles of percentiles,
+  smoothing works on linearly spaced files, PNG exports drop out-of-band
+  points and honour the 25 dB/decade lock, BRAND colours pass the contrast
+  guard, Show Names works outside Clean Slate, Remove acts on every selected
+  layer, layers can be reordered, and combined layers show STALE when a
+  source changes.
+- Release builds run the test suite first, upload assets one at a time (the
+  Windows zip name broke the old upload), publish SHA256SUMS.txt, and
+  install from a pinned requirements.lock.
+
 ### Added
 
 - Settings: "Sweep Noise Margin Min", "SNR Warning Below", and "Save failed
   recordings for diagnosis". Saved dumps can be replayed offline with
   `tools/replay_failed_recording.py`.
+- Settings: "Squiglink host keys" pinning (`squiglink_host_keys`) and
+  "Confirm before discarding kept measurements".
 - Diagnostics summaries include the sweep correlation peak, the next-best
   alignment ratio, the mid-band level above noise, and sweep coverage by
   tenth.

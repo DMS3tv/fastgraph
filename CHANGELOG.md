@@ -80,6 +80,21 @@
   at least 20 dB, and the review dialog reports THD over 100 Hz to 10 kHz.
 - Measure: a Level selector for 1 kHz reference or absolute dB SPL using
   the input device's SPL calibration and the output level.
+- Measure sessions: a Session menu saves and loads `.fastgraph-measure.json`
+  files holding the kept sweeps or pairs with their diagnostics, the
+  headphone metadata, the HRTF selection and the level mode, so a sitting
+  can be reopened and re-exported later. Unsaved work is marked in the
+  window title, the close prompt offers Save, and a crash-recovery copy is
+  kept like the R&D one. Settings gains a default session folder.
+- Compare: a Compare menu loads a target curve, shows the measurement minus
+  target as a delta view with a 0 dB line, overlays up to three reference
+  curves from TXT or session files with a legend, reports a per-band
+  deviation score and match percentage in the review dialog and status bar,
+  and suggests a parametric EQ that can be copied or saved as an Equalizer
+  APO block. Console commands `measure session`, `measure target` and
+  `measure eq` drive the same features.
+- Frequency axes are always labelled in Hz instead of an automatic kHz or
+  MHz prefix.
 
 - Settings: "Sweep Noise Margin Min", "SNR Warning Below", and "Save failed
   recordings for diagnosis". Saved dumps can be replayed offline with

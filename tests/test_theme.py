@@ -86,12 +86,17 @@ def test_dither_stylesheet_uses_rust_start_accent() -> None:
 
 
 def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
+    # A blunt guard: it fails for any stylesheet edit at all, including a
+    # purely additive one. Re-snapshot it only after confirming with
+    # ``git diff dms/theme.py`` that nothing existing was changed.
+    # Last re-snapshotted for the QToolButton[menuButton] rules the Measure
+    # Session and Compare menu buttons need.
     expected = {
-        DARK: "f08dd7ee40fad3aa38e441596f6ce1d4f59afc4849887ec0dda9ee60de5c0c0f",
-        LIGHT: "b0c41c6ef5a85db3ee68bb2264d29c098bd8a99776f5a5ce8b4e42c9ca680741",
-        FASTGRAPH_95: "bc3b97e6949eb76d9363c11780c154b01f6a701d3c748617ad78658778f78c72",
-        FASTGRAPH_95_DARK: "99a28cf3738a5216c22104dffbf3413069691cf02432ac6123c44423c3fe7a63",
-        HACKERMAN_95: "235ff7e5cf43ac3b15ed6af47ef62e79b5d5eeacbb6a95e610a477a21426724c",
+        DARK: "a2f3bc82d8411c1ffa32df9c089cbc165f532b75be7fcc0bdfa2030ef977ade7",
+        LIGHT: "fcc8e9d7d1cf28a112744e25deee9d9439d93692ff4b59b7e08b8f23256f632c",
+        FASTGRAPH_95: "0decb425e62424ea54fb8489daf838fcceee294eae9885848cd40ba39605f7ba",
+        FASTGRAPH_95_DARK: "f53c5b92170d451d5be32b84879b69eff807afdf19b20313f9d23cd323acceb2",
+        HACKERMAN_95: "f628cdbd725d34847089772661963332d4a4ceac2173ca12e19e07ff6297df08",
     }
 
     for theme, expected_digest in expected.items():
@@ -100,7 +105,7 @@ def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
 
     brand_stylesheet = brand_application_stylesheet()
     assert hashlib.sha256(brand_stylesheet.encode()).hexdigest() == (
-        "944b3a73f2681d07cfdeb66ae68238afc0919bd592c24a9b4548b7251c7403ae"
+        "a82706dee736a6adecee1e7a8ff70c8967fe30cb231d671300921b524383bae2"
     )
 
 

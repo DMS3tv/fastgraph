@@ -37,6 +37,13 @@ _DEFAULTS: dict[str, Any] = {
     "confirm_discard_measurements": True,
     "export_directory": "",
     "rnd_session_directory": "",
+    "measure_session_directory": "",
+    # Target comparison. The target path is reloaded at startup when the file
+    # is still there and silently dropped when it is not; delta view and the
+    # offset mode are remembered the same way the other Measure toggles are.
+    "measure_target_path": "",
+    "measure_delta_view": False,
+    "measure_delta_offset_mode": "1khz",
     "rnd_notes_expanded": True,
     "rnd_splitter_ratio": 0.5,
     "automation_directory": "",

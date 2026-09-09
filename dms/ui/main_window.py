@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
     QLayout,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QProgressDialog,
@@ -88,6 +89,16 @@ from dms.audio_engine import (
 from dms.channel_balance import ChannelBalanceEngine, frequency_limit
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
+from dms.comparison import (
+    OFFSET_MODES,
+    ReferenceLayer,
+    delta_curve,
+    deviation_score,
+    format_deviation_summary,
+    load_reference_from_measure_session,
+    load_reference_from_txt,
+    load_target_curve,
+)
 from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
 from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
@@ -105,7 +116,17 @@ from dms.measurement_alignment import (
     is_device_failure,
     is_retryable_timing_failure,
 )
+from dms.measure_persistence import (
+    MEASURE_SESSION_EXTENSION,
+    MeasureSessionLoadError,
+    ensure_measure_session_extension,
+    load_measure_session,
+    save_measure_session,
+    same_session_file as same_measure_session_file,
+)
 from dms.measure_queue import Effect, MeasurementQueue, QueueDecision, QueueState
+from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
+from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
 from dms.ui.sweep_runner import SweepRunner
 from dms.measurement_profiles import (
     PROFILE_SNAPSHOT_SETTING,
@@ -167,13 +188,14 @@ from dms.squiglink import (
     read_remote_phone_book,
     write_remote_phone_book,
 )
-from dms.theme import ThemeController
+from dms.theme import ThemeController, theme_trace_palette
 from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
 from dms.version import __version__
 from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.automation_widget import AutomationWidget
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
+from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
 from dms.ui.measure_workspace import MeasureWorkspace
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.rnd_widget import RnDWidget
@@ -202,6 +224,9 @@ _DISTORTION_MIN_SNR_DB = 20.0
 #: Band the pass/fail summary reports THD over.
 _DISTORTION_SUMMARY_F_MIN = 100.0
 _DISTORTION_SUMMARY_F_MAX = 10000.0
+#: A/B reference layers held alongside the measurement. Three is as many as
+#: the bottom viewport can carry before the average stops being the subject.
+_MAX_REFERENCE_LAYERS = 3
 
 
 class RnDRecoveryDialog(QDialog):
@@ -241,6 +266,59 @@ class RnDRecoveryDialog(QDialog):
         layout.addLayout(row)
 
     def selected_candidate(self) -> RecoveryCandidate:
+        return self._candidate_combo.currentData()
+
+    def _finish(self, action: str) -> None:
+        self.action = action
+        self.accept()
+
+
+class MeasureRecoveryDialog(QDialog):
+    """Select and act on a recoverable Measure session.
+
+    Deliberately the R&D dialog's twin: the two workspaces recover the same
+    way, so anything learned in one reads the same in the other.
+    """
+
+    RESTORE = "restore"
+    DISCARD = "discard"
+    KEEP = "keep"
+
+    def __init__(
+        self,
+        candidates: list[MeasureRecoveryCandidate],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Recover Measure Session")
+        self.setModal(True)
+        self.action = self.KEEP
+        self._candidates = candidates
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "Fastgraph found Measure session data that was not cleared during "
+            "a normal exit."
+        ))
+        self._candidate_combo = QComboBox()
+        for candidate in candidates:
+            self._candidate_combo.addItem(candidate.label, candidate)
+        layout.addWidget(self._candidate_combo)
+
+        row = QHBoxLayout()
+        restore = QPushButton("Restore Session")
+        restore.clicked.connect(lambda: self._finish(self.RESTORE))
+        discard = QPushButton("Discard")
+        discard.clicked.connect(lambda: self._finish(self.DISCARD))
+        keep = QPushButton("Keep for Later")
+        keep.clicked.connect(lambda: self._finish(self.KEEP))
+        row.addWidget(restore)
+        row.addWidget(discard)
+        row.addStretch(1)
+        row.addWidget(keep)
+        layout.addLayout(row)
+
+    def selected_candidate(self) -> MeasureRecoveryCandidate:
         return self._candidate_combo.currentData()
 
     def _finish(self, action: str) -> None:
@@ -462,6 +540,7 @@ class PassFailDialog(QDialog):
         timing_quality: Optional[tuple[float, float, float, float]] = None,
         diagnostics: Optional[object] = None,
         distortion: Optional[HarmonicAnalysis] = None,
+        deviation_summary: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -573,6 +652,24 @@ class PassFailDialog(QDialog):
                     "< 15 dB noisy."
                 )
             layout.addWidget(timing_box)
+
+        if deviation_summary:
+            # How far this one sweep sits from the loaded target. Muted and
+            # monospaced: it is context for the decision, not the decision.
+            deviation_box = QFrame()
+            deviation_box.setObjectName("diagnostic_box")
+            deviation_layout = QVBoxLayout(deviation_box)
+            deviation_layout.setContentsMargins(10, 8, 10, 8)
+            deviation_layout.setSpacing(4)
+            heading = QLabel("Deviation from target")
+            heading.setProperty("tone", "muted")
+            deviation_layout.addWidget(heading)
+            deviation_label = QLabel(deviation_summary)
+            deviation_label.setObjectName("diagnostic_details")
+            deviation_label.setProperty("tone", "muted")
+            deviation_label.setTextFormat(Qt.TextFormat.PlainText)
+            deviation_layout.addWidget(deviation_label)
+            layout.addWidget(deviation_box)
 
         if diagnostics is not None:
             details_toggle = QToolButton()
@@ -1196,6 +1293,12 @@ class MainWindow(QMainWindow):
             tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
         ] = None
         self._pending_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        # Per-capture metadata kept positionally beside the curves, so a saved
+        # session carries the diagnostics, timing and distortion the review
+        # dialog showed. ``_kept_pair_meta`` is bookkeeping only: a kept pair
+        # already carries its own per-channel diagnostics.
+        self._kept_sweep_meta: list[dict] = []
+        self._kept_pair_meta: list[dict] = []
         self._two_channel_pairs: list[TwoChannelCurvePair] = []
         self._pending_pair: TwoChannelCurvePair | None = None
         self._pending_pair_first_raw: tuple[np.ndarray, np.ndarray] | None = None
@@ -1263,6 +1366,16 @@ class MainWindow(QMainWindow):
         self._keyboard_shortcuts: list[QShortcut] = []
         self._rnd_dirty = False
         self._restored_recovery_candidate: RecoveryCandidate | None = None
+        # Measure session file the workspace currently belongs to, and whether
+        # it holds changes that file does not.
+        self._measure_session_path: Optional[Path] = None
+        self._measure_dirty = False
+        self._restored_measure_candidate: MeasureRecoveryCandidate | None = None
+        # Target comparison. The target survives restarts through settings;
+        # reference layers are deliberately session-only.
+        self._measure_target: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._measure_target_path: Optional[Path] = None
+        self._measure_reference_layers: list[ReferenceLayer] = []
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -1283,6 +1396,13 @@ class MainWindow(QMainWindow):
         )
         self._rnd_recovery.save_succeeded.connect(self._on_rnd_recovery_saved)
         self._rnd_recovery.save_failed.connect(self._on_rnd_recovery_failed)
+        # The manager appends its own ``measure/`` segment, so both workspaces
+        # share one recovery root without colliding.
+        self._measure_recovery = MeasureRecoveryManager(
+            config_dir() / "recovery",
+            parent=self,
+        )
+        self._measure_recovery.save_failed.connect(self._on_measure_recovery_failed)
         self._rnd_widget.state_changed.connect(self._on_rnd_state_changed)
         self._rnd_widget.selection_changed.connect(self._on_rnd_selection_changed)
         self._rnd_widget.view_state_changed.connect(self._on_rnd_selection_changed)
@@ -1294,6 +1414,7 @@ class MainWindow(QMainWindow):
                 preserve_standard=False,
             )
         self._restore_hrtf_state()
+        self._restore_measure_comparison_state()
         self._refresh_devices()
         self._start_level_monitor()
         self._apply_state_ui()
@@ -1308,6 +1429,7 @@ class MainWindow(QMainWindow):
         )
         self._log_event("DEBUG", "diagnostics", "Runtime environment", **runtime_diagnostics())
         QTimer.singleShot(0, self._initialize_rnd_recovery)
+        QTimer.singleShot(0, self._initialize_measure_recovery)
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -2400,6 +2522,7 @@ class MainWindow(QMainWindow):
             "  settings list | settings get <name> | settings set <name> <value>",
             "  settings save [<name>|all]",
             "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
+            "  measure session save|load <path> | measure target <path>|clear | measure eq [max_filters]",
             "  export average [path] | export variation [path] | export squiglink | export log [path]",
             "  curator help  (Curator workspace commands)",
         ))
@@ -2596,7 +2719,50 @@ class MainWindow(QMainWindow):
                 raise ValueError("There is no active measurement queue to cancel.")
             self._cancel_queue()
             return
-        raise ValueError("Usage: measure start [count] [level_db]|pass|fail|cancel")
+        if args[:1] == ["session"] and len(args) == 3:
+            action = args[1].lower()
+            if action == "save":
+                path = ensure_measure_session_extension(Path(args[2]).expanduser())
+                save_measure_session(self._current_measure_session(), path)
+                self._measure_session_path = path
+                self._clear_measure_dirty()
+                self._command_reply(f"Saved Measure session: {path}")
+                return
+            if action == "load":
+                if not self._load_measure_session(str(Path(args[2]).expanduser())):
+                    raise ValueError("The Measure session was not loaded.")
+                return
+            raise ValueError("Usage: measure session save|load <path>")
+        if args[:1] == ["target"] and len(args) == 2:
+            if args[1].lower() == "clear":
+                self._clear_measure_target()
+                self._command_reply("Target cleared.")
+                return
+            if not self._load_measure_target(str(Path(args[1]).expanduser())):
+                raise ValueError("The target curve was not loaded.")
+            self._command_reply(f"Target loaded: {args[1]}")
+            return
+        if args[:1] == ["eq"] and len(args) <= 2:
+            average = self._bottom_curve_for_display_and_export()
+            if self._measure_target is None:
+                raise ValueError("Load a target curve first: measure target <path>")
+            if average is None:
+                raise ValueError("No averaged measurement is available yet.")
+            max_filters = int(args[1]) if len(args) == 2 else 8
+            if not 1 <= max_filters <= 10:
+                raise ValueError("measure eq accepts 1 to 10 filters.")
+            from dms.comparison import format_eq_apo, suggest_eq
+
+            delta = self._measure_delta_result(average)
+            self._command_reply(
+                format_eq_apo(suggest_eq(delta, max_filters=max_filters))
+            )
+            return
+        raise ValueError(
+            "Usage: measure start [count] [level_db]|pass|fail|cancel"
+            " | measure session save|load <path> | measure target <path>|clear"
+            " | measure eq [max_filters]"
+        )
 
     def _run_export_command(self, args: list[str]) -> None:
         if not args:
@@ -2845,6 +3011,45 @@ class MainWindow(QMainWindow):
         self._level_mode_combo.currentIndexChanged.connect(self._on_level_mode_changed)
         row.addWidget(self._level_mode_combo)
 
+        self._compare_menu_btn = QToolButton()
+        self._compare_menu_btn.setText("Compare ▾")
+        self._compare_menu_btn.setProperty("menuButton", True)
+        self._compare_menu_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._compare_menu_btn.setToolTip(
+            "Compare the average against a target curve or other measurements."
+        )
+        self._compare_menu = QMenu(self._compare_menu_btn)
+        self._load_target_action = self._compare_menu.addAction("Load Target…")
+        self._load_target_action.triggered.connect(lambda: self._load_measure_target())
+        self._clear_target_action = self._compare_menu.addAction("Clear Target")
+        self._clear_target_action.triggered.connect(self._clear_measure_target)
+        self._delta_view_action = self._compare_menu.addAction(
+            "Delta View (measurement − target)"
+        )
+        self._delta_view_action.setCheckable(True)
+        self._delta_view_action.setChecked(
+            bool(self._settings.get("measure_delta_view"))
+        )
+        self._delta_view_action.toggled.connect(self._on_delta_view_toggled)
+        self._compare_menu.addSeparator()
+        self._load_reference_action = self._compare_menu.addAction("Load Reference…")
+        self._load_reference_action.triggered.connect(
+            lambda: self._load_measure_reference()
+        )
+        self._clear_references_action = self._compare_menu.addAction(
+            "Clear References"
+        )
+        self._clear_references_action.triggered.connect(
+            self._clear_measure_references
+        )
+        self._compare_menu.addSeparator()
+        self._eq_suggestion_action = self._compare_menu.addAction("EQ Suggestion…")
+        self._eq_suggestion_action.triggered.connect(self._open_eq_suggestion)
+        self._compare_menu_btn.setMenu(self._compare_menu)
+        row.addWidget(self._compare_menu_btn)
+
         self._undo_btn = QPushButton("Undo")
         self._undo_btn.clicked.connect(self._undo_last_measurement)
         row.addWidget(self._undo_btn)
@@ -2862,6 +3067,35 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(6, 4, 6, 4)
         row.setSpacing(8)
+
+        self._session_menu_btn = QToolButton()
+        self._session_menu_btn.setText("Session ▾")
+        self._session_menu_btn.setProperty("menuButton", True)
+        self._session_menu_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._session_menu_btn.setToolTip(
+            "Save, reopen or start over on a Measure session file."
+        )
+        self._session_menu = QMenu(self._session_menu_btn)
+        self._new_session_action = self._session_menu.addAction("New Session")
+        self._new_session_action.triggered.connect(self._new_measure_session)
+        self._save_session_action = self._session_menu.addAction("Save Session")
+        self._save_session_action.triggered.connect(
+            lambda: self._save_measure_session()
+        )
+        self._save_session_as_action = self._session_menu.addAction(
+            "Save Session As…"
+        )
+        self._save_session_as_action.triggered.connect(
+            lambda: self._save_measure_session(save_as=True)
+        )
+        self._load_session_action = self._session_menu.addAction("Load Session…")
+        self._load_session_action.triggered.connect(
+            lambda: self._load_measure_session()
+        )
+        self._session_menu_btn.setMenu(self._session_menu)
+        row.addWidget(self._session_menu_btn)
 
         row.addWidget(QLabel("Export directory:"))
         self._export_dir_input = QLineEdit()
@@ -3936,6 +4170,11 @@ class MainWindow(QMainWindow):
         ):
             widget.setEnabled(idle)
 
+        for name in ("_session_menu_btn", "_compare_menu_btn"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(idle)
+
         self._two_channel_toggle.setEnabled(idle)
         self._measure_submode_control.setEnabled(idle)
         self._bottom_layout_combo.setEnabled(idle)
@@ -4447,6 +4686,9 @@ class MainWindow(QMainWindow):
                 return
             self._close_pass_fail_dialog()
             self._two_channel_pairs.append(self._pending_pair)
+            self._kept_pair_meta.append(
+                {"timing_quality": self._last_timing_quality}
+            )
             self._kept_distortion = self._queue.last_distortion
             self._pending_pair = None
             self._pending_pair_first_raw = None
@@ -4457,6 +4699,7 @@ class MainWindow(QMainWindow):
             self._recompute_two_channel_results()
             self._update_queue_progress()
             self._update_plots()
+            self._mark_measure_dirty()
             self._run_automation_trigger("measurement_kept")
             if self._queue_index >= self._queue_target:
                 self._finish_queue()
@@ -4471,6 +4714,11 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._kept_curves.append(self._pending_curve)
+        self._kept_sweep_meta.append({
+            "diagnostics": self._last_measurement_diagnostics,
+            "timing_quality": self._last_timing_quality,
+            "distortion": self._queue.last_distortion,
+        })
         self._kept_distortion = self._queue.last_distortion
         self._log_event(
             "INFO", "review", "Measurement kept",
@@ -4490,6 +4738,12 @@ class MainWindow(QMainWindow):
         self._recompute_variation()
         self._update_queue_progress()
         self._update_plots()
+        self._mark_measure_dirty()
+        match = self._target_match_message()
+        if match:
+            self._statusbar.showMessage(
+                f"Kept {len(self._kept_curves)} measurement(s). {match}"
+            )
 
         if self._queue_index >= self._queue_target:
             self._finish_queue()
@@ -4536,7 +4790,10 @@ class MainWindow(QMainWindow):
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
         self._start_level_monitor()
-        self._statusbar.showMessage("Queue complete.")
+        match = self._target_match_message()
+        self._statusbar.showMessage(
+            f"Queue complete. {match}" if match else "Queue complete."
+        )
         self._run_automation_trigger("queue_complete")
 
     def _update_queue_progress(self) -> None:
@@ -4572,6 +4829,7 @@ class MainWindow(QMainWindow):
             timing_quality=self._last_timing_quality,
             diagnostics=self._last_measurement_diagnostics,
             distortion=self._queue.last_distortion,
+            deviation_summary=self._pending_deviation_summary(),
             parent=self,
         )
         dlg.adjustSize()
@@ -5098,6 +5356,8 @@ class MainWindow(QMainWindow):
     def _update_plots(self, *_args, show_pending: bool = False) -> None:
         overlay_freqs, overlay_series = self._distortion_overlay_series()
         self._plots.set_distortion_overlay(overlay_freqs, overlay_series)
+        self._sync_compare_layers()
+        delta_on = self._delta_view_enabled()
         if self._two_channel_enabled:
             active_hrtf = self._hrtf if self._is_hrtf_active() else None
             pairs = list(self._two_channel_pairs)
@@ -5132,12 +5392,27 @@ class MainWindow(QMainWindow):
                     hrtf=active_hrtf,
                 )
             self._two_channel_variations = variations
+            show_variation = self._bottom_view_mode() == "variation"
+            if delta_on:
+                # Limitation: two-channel delta view replaces only the *active*
+                # bottom viewport's curve. The other viewports keep showing
+                # their own averages, the pane titles still read "Average", and
+                # the target line and reference layers are single-channel only.
+                active_key = self._active_two_channel_key()
+                delta = self._measure_delta_result(
+                    averages.get(active_key)
+                    if isinstance(averages.get(active_key), tuple)
+                    else None
+                )
+                if delta is not None:
+                    averages[active_key] = (delta.freqs, delta.delta_db)
+                    show_variation = False
             self._plots.two.update_frequency_response(
                 top_channel_1=channel_curves(pairs, 1),
                 top_channel_2=channel_curves(pairs, 2),
                 averages=averages,
                 variations=variations,
-                show_variation=self._bottom_view_mode() == "variation",
+                show_variation=show_variation,
             )
             self._sync_export_button()
             return
@@ -5149,11 +5424,22 @@ class MainWindow(QMainWindow):
         if show_pending and self._pending_curve is not None:
             kept = kept + [self._pending_curve]
 
+        bottom_mode = self._bottom_view_mode()
+        if delta_on:
+            # The bottom viewport shows measurement - target instead of the
+            # average, so the variation band has nothing to describe.
+            delta = self._measure_delta_result(
+                self._bottom_curve_for_display_and_export()
+            )
+            if delta is not None:
+                avg = (delta.freqs, delta.delta_db)
+                bottom_mode = "average"
+
         self._plots.update_curves(
             kept=kept,
             average=avg,
             variation=self._variation,
-            bottom_mode=self._bottom_view_mode(),
+            bottom_mode=bottom_mode,
             animate_last=show_pending and self._pending_curve is not None,
         )
         self._sync_export_button()
@@ -5361,6 +5647,7 @@ class MainWindow(QMainWindow):
             self._settings.set("hrtf_path", None)
             self._sync_hrtf_ui()
             self._update_plots()
+            self._mark_measure_dirty()
             self._statusbar.showMessage("HRTF cleared.")
             return
 
@@ -5372,6 +5659,7 @@ class MainWindow(QMainWindow):
             if self._hrtf.is_variation and hasattr(self, "_variation_toggle"):
                 self._variation_toggle.setChecked(True)
             self._update_plots()
+            self._mark_measure_dirty()
             kind = "population variation compensation" if self._hrtf.is_variation else "HRTF"
             self._statusbar.showMessage(f"Loaded {kind}: {Path(path).name}")
         except Exception as exc:
@@ -5410,6 +5698,9 @@ class MainWindow(QMainWindow):
                 failed.append(f"{Path(path).name}: {exc}")
                 continue
             self._kept_curves.append(curve)
+            # An imported curve carries no sweep of its own, so its metadata
+            # slot stays empty; the lists must still line up one for one.
+            self._kept_sweep_meta.append({})
             loaded += 1
 
         if loaded > 0:
@@ -5417,6 +5708,7 @@ class MainWindow(QMainWindow):
             self._recompute_variation()
             self._update_queue_progress()
             self._update_plots()
+            self._mark_measure_dirty()
 
         if loaded == 0 and failed:
             QMessageBox.warning(
@@ -5475,6 +5767,7 @@ class MainWindow(QMainWindow):
         """
         if self._two_channel_enabled:
             self._two_channel_pairs.clear()
+            self._kept_pair_meta.clear()
             self._two_channel_averages.clear()
             self._two_channel_variations.clear()
             self._pending_pair = None
@@ -5483,16 +5776,21 @@ class MainWindow(QMainWindow):
             self._update_plots()
         else:
             self._kept_curves.clear()
+            self._kept_sweep_meta.clear()
             self._average = None
             self._variation = None
             self._pending_curve = None
+            # ``clear_all`` resets the comparison layers too, so the loaded
+            # target and references are pushed straight back onto the plot.
             self._plots.clear_all()
+            self._sync_compare_layers()
         self._queue.reset()
         self._kept_distortion = None
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
         self._sync_export_button()
         self._apply_state_ui()
+        self._mark_measure_dirty()
 
     def _confirm_clear_all(self) -> tuple[bool, bool]:
         dialog = QMessageBox(self)
@@ -5528,16 +5826,21 @@ class MainWindow(QMainWindow):
             if not self._two_channel_pairs:
                 return
             self._two_channel_pairs.pop()
+            if self._kept_pair_meta:
+                self._kept_pair_meta.pop()
             self._recompute_two_channel_results()
         else:
             if not self._kept_curves:
                 return
             self._kept_curves.pop()
+            if self._kept_sweep_meta:
+                self._kept_sweep_meta.pop()
             self._recompute_average()
             self._recompute_variation()
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
+        self._mark_measure_dirty()
         self._statusbar.showMessage("Last kept measurement removed.")
 
     def _save_metadata_overlay(self) -> None:
@@ -5547,6 +5850,7 @@ class MainWindow(QMainWindow):
         self._refresh_session_labels()
         self._refresh_window_title()
         self._close_metadata_overlay()
+        self._mark_measure_dirty()
         self._statusbar.showMessage("Headphone metadata updated.")
 
     def _clear_metadata(self) -> None:
@@ -5565,6 +5869,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_session_labels()
         self._refresh_window_title()
+        self._mark_measure_dirty()
         self._statusbar.showMessage("Headphone metadata cleared.")
 
     def _confirm_clear_metadata(self) -> tuple[bool, bool]:
@@ -6457,6 +6762,614 @@ class MainWindow(QMainWindow):
         if clicked is add_btn:
             return "add"
         return "cancel"
+
+    # ------------------------------------------------------------------
+    # Measure sessions
+    # ------------------------------------------------------------------
+
+    def _measure_default_dir(self) -> Path:
+        configured = str(
+            self._settings.get("measure_session_directory") or ""
+        ).strip()
+        if configured:
+            return Path(configured).expanduser()
+        documents = Path.home() / "Documents"
+        return documents if documents.exists() else Path.home()
+
+    def _current_measure_session(self) -> MeasureSession:
+        """The Measure workspace's live state as a serializable session."""
+        hrtf_path = self._hrtf.path if self._hrtf is not None else None
+        return MeasureSession.from_window_state(
+            session_data=self._session,
+            kept_curves=self._kept_curves,
+            pairs=self._two_channel_pairs,
+            two_channel=self._two_channel_enabled,
+            bottom_mode=self._two_channel_bottom_mode,
+            level_mode=self._level_mode(),
+            hrtf_path=hrtf_path,
+            hrtf_name=Path(hrtf_path).stem if hrtf_path else None,
+            hrtf_enabled=self._is_hrtf_active(),
+            sweep_diagnostics=[
+                meta.get("diagnostics") for meta in self._kept_sweep_meta
+            ],
+            sweep_timing_quality=[
+                meta.get("timing_quality") for meta in self._kept_sweep_meta
+            ],
+            sweep_distortion=[
+                meta.get("distortion") for meta in self._kept_sweep_meta
+            ],
+            source_path=(
+                str(self._measure_session_path)
+                if self._measure_session_path is not None
+                else None
+            ),
+        )
+
+    def _mark_measure_dirty(self) -> None:
+        """Record an unsaved change and queue a crash-recovery snapshot."""
+        self._measure_dirty = True
+        self._refresh_window_title()
+        recovery = getattr(self, "_measure_recovery", None)
+        if recovery is None:
+            return
+        session = self._current_measure_session()
+        if session.is_empty():
+            recovery.clear_active()
+            return
+        recovery.schedule(session.to_dict())
+
+    def _clear_measure_dirty(self) -> None:
+        """The workspace now matches a file, so the recovery copy is redundant."""
+        self._measure_dirty = False
+        recovery = getattr(self, "_measure_recovery", None)
+        if recovery is not None:
+            recovery.clear_active()
+        self._refresh_window_title()
+
+    def _new_measure_session(self) -> None:
+        if self._state != AppState.IDLE:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "A new Measure session can only be started while idle.",
+            )
+            return
+        if not self._confirm_discard_measure_session():
+            return
+        # The save-or-discard prompt above already covered the question
+        # ``_clear_all`` would ask, so the discard runs unprompted here; with
+        # nothing kept there is nothing to discard at all.
+        if self._has_kept_measurements():
+            self._discard_all_measurements()
+        self._kept_sweep_meta.clear()
+        self._kept_pair_meta.clear()
+        self._measure_session_path = None
+        self._clear_measure_dirty()
+        self._statusbar.showMessage("New Measure session.")
+        self._log_event("INFO", "measure", "New Measure session started")
+
+    def _save_measure_session(self, *, save_as: bool = False) -> bool:
+        path = self._measure_session_path
+        if save_as or path is None:
+            default_path = path or (
+                self._measure_default_dir()
+                / f"fastgraph-measure-session{MEASURE_SESSION_EXTENSION}"
+            )
+            path_str, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Measure Session",
+                str(default_path),
+                f"Fastgraph Measure Session (*{MEASURE_SESSION_EXTENSION});;"
+                "JSON Files (*.json);;All Files (*)",
+            )
+            if not path_str:
+                return False
+            path = ensure_measure_session_extension(Path(path_str))
+            # The dialog checked the name the user typed; the canonical
+            # extension is added afterwards, so "demo" can still land on an
+            # existing "demo.fastgraph-measure.json" without a warning.
+            if path.exists() and not same_measure_session_file(
+                self._measure_session_path, path
+            ):
+                choice = QMessageBox.question(
+                    self,
+                    "Replace Measure Session?",
+                    f"Replace {path.name}?\n\n{path.parent}",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if choice != QMessageBox.StandardButton.Yes:
+                    return False
+        try:
+            written = save_measure_session(self._current_measure_session(), path)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                f"Could not save the Measure session.\n\n{exc}",
+            )
+            return False
+        self._measure_session_path = written
+        self._settings.set("measure_session_directory", str(written.parent))
+        self._settings_widget.refresh_from_settings()
+        self._clear_measure_dirty()
+        self._statusbar.showMessage(f"Saved Measure session: {written}")
+        self._log_event("INFO", "measure", "Measure session saved", path=str(written))
+        return True
+
+    def _load_measure_session(self, requested_path: Optional[str] = None) -> bool:
+        if self._state != AppState.IDLE:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "Measure sessions can only be loaded while idle.",
+            )
+            return False
+        if not self._confirm_discard_measure_session():
+            return False
+        path_str = requested_path
+        if path_str is None:
+            path_str, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Measure Session",
+                str(self._measure_default_dir()),
+                "Fastgraph Measure Session "
+                "(*.fastgraph-measure.json *.json);;All Files (*)",
+            )
+            if not path_str:
+                return False
+        try:
+            session = load_measure_session(Path(path_str))
+        except UnsupportedMeasureSessionVersion as exc:
+            QMessageBox.warning(self, "Newer Measure Session", str(exc))
+            return False
+        except MeasureSessionLoadError as exc:
+            QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Could not load the Measure session.\n\n{exc}",
+            )
+            return False
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Could not load the Measure session.\n\n{exc}",
+            )
+            return False
+
+        self._apply_measure_session(session)
+        self._measure_session_path = Path(path_str)
+        self._settings.set(
+            "measure_session_directory", str(Path(path_str).parent)
+        )
+        self._settings_widget.refresh_from_settings()
+        self._clear_measure_dirty()
+        self._statusbar.showMessage(f"Loaded Measure session: {path_str}")
+        self._log_event(
+            "INFO", "measure", "Measure session loaded", path=str(path_str)
+        )
+        return True
+
+    def _apply_measure_session(self, session: MeasureSession) -> None:
+        """Replace the Measure workspace with a loaded session's state."""
+        self._queue.reset()
+        self._kept_distortion = None
+        self._pending_curve = None
+        self._pending_pair = None
+        self._pending_pair_first_raw = None
+        self._pending_pair_first_diagnostics = None
+        self._two_channel_stage = 0
+        self._queue_index = 0
+
+        self._kept_curves = [sweep.curve for sweep in session.sweeps]
+        self._kept_sweep_meta = [
+            {
+                "diagnostics": sweep.diagnostics,
+                "timing_quality": sweep.timing_quality,
+                "distortion": sweep.distortion_summary,
+            }
+            for sweep in session.sweeps
+        ]
+        self._two_channel_pairs = session.pair_objects()
+        self._kept_pair_meta = [{} for _ in self._two_channel_pairs]
+        self._average = None
+        self._variation = None
+        self._two_channel_averages = {}
+        self._two_channel_variations = {}
+
+        self._session = session.metadata
+        self._refresh_session_labels()
+        self._metadata_editor.set_session(self._session)
+
+        if bool(session.two_channel) != bool(self._two_channel_enabled):
+            self._two_channel_toggle.setChecked(bool(session.two_channel))
+
+        index = self._bottom_layout_combo.findData(session.bottom_mode)
+        if index >= 0 and index != self._bottom_layout_combo.currentIndex():
+            self._bottom_layout_combo.setCurrentIndex(index)
+
+        self._apply_session_level_mode(session.level_mode)
+        self._apply_session_hrtf(session)
+
+        self._recompute_average()
+        self._recompute_variation()
+        self._recompute_two_channel_results()
+        self._update_queue_progress()
+        self._update_plots()
+        self._apply_state_ui()
+        self._refresh_window_title()
+
+    def _apply_session_level_mode(self, level_mode: str) -> None:
+        wanted = "dbspl" if str(level_mode) == "dbspl" else "ref_1khz"
+        if wanted == self._level_mode():
+            return
+        if wanted == "dbspl" and self._calibrated_sensitivity() is None:
+            QMessageBox.warning(
+                self,
+                "Not Calibrated",
+                "This session was saved in dB SPL, but the selected input "
+                "device has no calibration. Levels stay at the 1 kHz "
+                "reference.",
+            )
+            return
+        self._settings.set("measure_level_mode", wanted)
+        self._spl_uncalibrated_warned = False
+        self._sync_level_mode_combo()
+
+    def _apply_session_hrtf(self, session: MeasureSession) -> None:
+        if not session.hrtf_path and not session.hrtf_name:
+            return
+        index = -1
+        if session.hrtf_path:
+            index = self._hrtf_combo.findData(session.hrtf_path)
+        if index < 0 and session.hrtf_name:
+            index = self._hrtf_combo.findText(session.hrtf_name)
+        if index < 0:
+            QMessageBox.warning(
+                self,
+                "Missing HRTF",
+                f"The HRTF this session used ({session.hrtf_name or session.hrtf_path}) "
+                "is not installed. It was left unset.",
+            )
+            return
+        self._hrtf_combo.blockSignals(True)
+        self._hrtf_combo.setCurrentIndex(index)
+        self._hrtf_combo.blockSignals(False)
+        self._on_hrtf_selected()
+        self._hrtf_toggle.setChecked(bool(session.hrtf_enabled))
+
+    def _confirm_discard_measure_session(self) -> bool:
+        """Offer to save before something replaces the Measure workspace."""
+        if not self._measure_dirty:
+            return True
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Save Measure Session?")
+        dialog.setText("The Measure session has unsaved changes.")
+        dialog.setInformativeText("Save it before it is replaced?")
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(
+            QMessageBox.StandardButton.Save
+            if self._measure_session_path is not None
+            else QMessageBox.StandardButton.Cancel
+        )
+        result = dialog.exec()
+        if result == QMessageBox.StandardButton.Save:
+            return self._save_measure_session()
+        return result == QMessageBox.StandardButton.Discard
+
+    def _initialize_measure_recovery(self) -> None:
+        try:
+            candidates = self._measure_recovery.candidates()
+            if candidates:
+                dialog = MeasureRecoveryDialog(candidates, self)
+                dialog.exec()
+                candidate = dialog.selected_candidate()
+                if (
+                    dialog.action == MeasureRecoveryDialog.RESTORE
+                    and getattr(candidate, "unsupported", False)
+                ):
+                    # Intact, but written by a newer build. It is left in place
+                    # rather than quarantined so an update can read it.
+                    QMessageBox.warning(
+                        self,
+                        "Newer Measure Session",
+                        "That recovered session was saved by a newer Fastgraph "
+                        "and cannot be opened by this version. It was left in "
+                        "place so a newer Fastgraph can recover it.",
+                    )
+                elif dialog.action == MeasureRecoveryDialog.RESTORE:
+                    session = self._measure_recovery.restore(candidate)
+                    self._apply_measure_session(session)
+                    self._measure_session_path = None
+                    self._tabs.setCurrentWidget(self._measure_tab)
+                    self._measure_dirty = not session.is_empty()
+                    self._refresh_window_title()
+                    self._restored_measure_candidate = (
+                        candidate if candidate.kind == "deferred" else None
+                    )
+                elif dialog.action == MeasureRecoveryDialog.DISCARD:
+                    self._measure_recovery.discard(candidate)
+                else:
+                    self._measure_recovery.keep_for_later(candidate)
+        except Exception as exc:
+            self._on_measure_recovery_failed(str(exc))
+        finally:
+            # Scheduling starts only once the prompt has been answered, so a
+            # snapshot can never overwrite what the user is being offered.
+            self._measure_recovery.enable()
+            if self._measure_dirty:
+                self._mark_measure_dirty()
+            if self._restored_measure_candidate is not None:
+                self._measure_recovery.discard(self._restored_measure_candidate)
+                self._restored_measure_candidate = None
+
+    def _on_measure_recovery_failed(self, error: str) -> None:
+        self._statusbar.showMessage("Measure recovery save failed.")
+        self._log_event(
+            "ERROR", "measure", "Measure recovery save failed", error=error
+        )
+
+    # ------------------------------------------------------------------
+    # Target comparison
+    # ------------------------------------------------------------------
+
+    def _delta_view_enabled(self) -> bool:
+        action = getattr(self, "_delta_view_action", None)
+        return (
+            action is not None
+            and action.isChecked()
+            and self._measure_target is not None
+        )
+
+    def _delta_offset_mode(self) -> str:
+        mode = str(self._settings.get("measure_delta_offset_mode") or "1khz")
+        return mode if mode in OFFSET_MODES else "1khz"
+
+    def _restore_measure_comparison_state(self) -> None:
+        """Reload the remembered target, dropping it if the file has gone."""
+        stored = str(self._settings.get("measure_target_path") or "").strip()
+        if stored:
+            path = Path(stored).expanduser()
+            if path.is_file():
+                try:
+                    freqs, mag_db, _warnings = load_target_curve(path)
+                except Exception:
+                    self._settings.set("measure_target_path", "")
+                else:
+                    self._measure_target = (freqs, mag_db)
+                    self._measure_target_path = path
+            else:
+                self._settings.set("measure_target_path", "")
+        self._sync_compare_layers()
+
+    def _load_measure_target(self, requested_path: Optional[str] = None) -> bool:
+        path_str = requested_path
+        if path_str is None:
+            path_str, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Target Curve",
+                str(self._measure_default_dir()),
+                "Measurement TXT (*.txt);;All Files (*)",
+            )
+            if not path_str:
+                return False
+        try:
+            freqs, mag_db, warnings = load_target_curve(Path(path_str))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Target Load Failed",
+                f"Could not read the target curve.\n\n{exc}",
+            )
+            return False
+        self._measure_target = (freqs, mag_db)
+        self._measure_target_path = Path(path_str)
+        self._settings.set("measure_target_path", str(path_str))
+        for warning in warnings[:4]:
+            self._log_event("WARNING", "measure", warning)
+        self._sync_compare_layers()
+        self._update_plots()
+        self._statusbar.showMessage(f"Target loaded: {Path(path_str).name}")
+        self._log_event("INFO", "measure", "Target loaded", path=str(path_str))
+        return True
+
+    def _clear_measure_target(self) -> None:
+        self._measure_target = None
+        self._measure_target_path = None
+        self._settings.set("measure_target_path", "")
+        if getattr(self, "_delta_view_action", None) is not None:
+            self._delta_view_action.setChecked(False)
+        self._sync_compare_layers()
+        self._update_plots()
+        self._statusbar.showMessage("Target cleared.")
+
+    def _on_delta_view_toggled(self, checked: bool) -> None:
+        if checked and self._measure_target is None:
+            self._delta_view_action.setChecked(False)
+            QMessageBox.information(
+                self,
+                "No Target",
+                "Load a target curve before switching to delta view.",
+            )
+            return
+        self._settings.set("measure_delta_view", bool(checked))
+        self._sync_compare_layers()
+        self._update_plots()
+        self._statusbar.showMessage(
+            "Delta view on." if checked else "Delta view off."
+        )
+
+    def _load_measure_reference(self, requested_path: Optional[str] = None) -> bool:
+        if len(self._measure_reference_layers) >= _MAX_REFERENCE_LAYERS:
+            QMessageBox.information(
+                self,
+                "Reference Limit",
+                f"At most {_MAX_REFERENCE_LAYERS} reference layers can be shown. "
+                "Clear them before loading another.",
+            )
+            return False
+        path_str = requested_path
+        if path_str is None:
+            path_str, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Reference Curve",
+                str(self._measure_default_dir()),
+                "Reference Curves "
+                "(*.txt *.fastgraph-measure.json *.json);;All Files (*)",
+            )
+            if not path_str:
+                return False
+        path = Path(path_str)
+        try:
+            if path.name.lower().endswith(".json"):
+                layer = load_reference_from_measure_session(path)
+            else:
+                layer = load_reference_from_txt(path)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Reference Load Failed",
+                f"Could not read the reference curve.\n\n{exc}",
+            )
+            return False
+        self._measure_reference_layers.append(layer)
+        self._sync_compare_layers()
+        self._statusbar.showMessage(f"Reference added: {layer.name}")
+        self._log_event("INFO", "measure", "Reference layer added", path=str(path))
+        return True
+
+    def _clear_measure_references(self) -> None:
+        self._measure_reference_layers.clear()
+        self._sync_compare_layers()
+        self._statusbar.showMessage("Reference layers cleared.")
+
+    def _reference_colors(self) -> list[str]:
+        """Trace colours for reference layers, never the average's own colour."""
+        palette = theme_trace_palette(
+            self._theme_controller.theme,
+            brand_mode=self._theme_controller.brand_mode,
+        )
+        remaining = palette[1:] or palette
+        return [
+            remaining[index % len(remaining)]
+            for index in range(_MAX_REFERENCE_LAYERS)
+        ]
+
+    def _sync_compare_actions(self) -> None:
+        has_target = self._measure_target is not None
+        if getattr(self, "_clear_target_action", None) is not None:
+            self._clear_target_action.setEnabled(has_target)
+        if getattr(self, "_delta_view_action", None) is not None:
+            self._delta_view_action.setEnabled(has_target)
+            if not has_target and self._delta_view_action.isChecked():
+                # Signals are blocked: this is bookkeeping after the target
+                # went away, not the user turning delta view off.
+                self._delta_view_action.blockSignals(True)
+                self._delta_view_action.setChecked(False)
+                self._delta_view_action.blockSignals(False)
+        if getattr(self, "_clear_references_action", None) is not None:
+            self._clear_references_action.setEnabled(
+                bool(self._measure_reference_layers)
+            )
+        if getattr(self, "_eq_suggestion_action", None) is not None:
+            can_fit = (
+                has_target
+                and self._bottom_curve_for_display_and_export() is not None
+            )
+            self._eq_suggestion_action.setEnabled(bool(can_fit))
+            self._eq_suggestion_action.setToolTip(
+                ""
+                if can_fit
+                else "Needs a loaded target and at least one kept measurement."
+            )
+
+    def _sync_compare_layers(self) -> None:
+        """Push the target, the reference layers and delta view to the plots."""
+        plots = getattr(self, "_plots", None)
+        if plots is None:
+            return
+        self._sync_compare_actions()
+        single = plots.single
+        delta_on = self._delta_view_enabled()
+        single.set_delta_mode(delta_on)
+        if self._measure_target is not None:
+            single.set_target_curve(*self._measure_target)
+        else:
+            single.set_target_curve(None)
+        colors = self._reference_colors()
+        single.set_reference_layers([
+            (layer.name, layer.freqs, layer.mag_db, colors[index % len(colors)])
+            for index, layer in enumerate(
+                self._measure_reference_layers[:_MAX_REFERENCE_LAYERS]
+            )
+        ])
+
+    def _measure_delta_result(
+        self,
+        curve: Optional[tuple[np.ndarray, np.ndarray]],
+    ):
+        """``curve - target`` on the shared grid, or ``None`` without either."""
+        if curve is None or self._measure_target is None:
+            return None
+        try:
+            return delta_curve(
+                curve[0],
+                curve[1],
+                self._measure_target[0],
+                self._measure_target[1],
+                offset_mode=self._delta_offset_mode(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log_event(
+                "ERROR", "measure", "Delta computation failed", error=str(exc)
+            )
+            return None
+
+    def _pending_deviation_summary(self) -> Optional[str]:
+        """Band-by-band deviation of the sweep awaiting review, if any."""
+        if self._measure_target is None or self._two_channel_enabled:
+            return None
+        delta = self._measure_delta_result(self._pending_curve)
+        if delta is None:
+            return None
+        return format_deviation_summary(deviation_score(delta))
+
+    def _target_match_message(self) -> Optional[str]:
+        delta = self._measure_delta_result(
+            self._bottom_curve_for_display_and_export()
+        )
+        if delta is None:
+            return None
+        return f"Match: {deviation_score(delta).match_percent:.0f} %"
+
+    def _open_eq_suggestion(self) -> None:
+        average = self._bottom_curve_for_display_and_export()
+        if self._measure_target is None:
+            self._statusbar.showMessage(
+                "Load a target curve before asking for an EQ suggestion."
+            )
+            return
+        if average is None:
+            self._statusbar.showMessage(
+                "No averaged measurement is available to fit an EQ against."
+            )
+            return
+        dialog = EqSuggestionDialog(
+            average,
+            self._measure_target,
+            offset_mode=self._delta_offset_mode(),
+            parent=self,
+        )
+        dialog.exec()
+        self._settings.set("measure_delta_offset_mode", dialog.offset_mode())
+        dialog.deleteLater()
+        self._update_plots()
 
     @staticmethod
     def _safe_filename(value: str) -> str:
@@ -7365,13 +8278,26 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
 
+        try:
+            self._measure_recovery.shutdown_clean()
+        except Exception as exc:
+            self._log_event(
+                "ERROR", "measure", "Measure recovery cleanup failed", error=str(exc)
+            )
+
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
         super().closeEvent(event)
 
     def _confirm_measure_close(self) -> bool:
-        """Ask before closing with kept Measure curves that were never exported."""
+        """Offer to save the Measure session before Fastgraph closes.
+
+        A workspace with no unsaved changes closes silently: everything on
+        screen is already in a file, so there is nothing to lose.
+        """
+        if not self._measure_dirty:
+            return True
         if not bool(self._settings.get("confirm_discard_measurements")):
             return True
         kept = (
@@ -7379,22 +8305,28 @@ class MainWindow(QMainWindow):
             if self._two_channel_enabled
             else len(self._kept_curves)
         )
-        if kept == 0:
-            return True
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Discard Measurements?")
+        dialog.setWindowTitle("Save Measure Session?")
         dialog.setText(
-            f"The Measure tab holds {kept} kept measurement{'s' if kept != 1 else ''}."
+            f"The Measure session has unsaved changes "
+            f"({kept} kept measurement{'s' if kept != 1 else ''})."
         )
-        dialog.setInformativeText(
-            "They are not saved anywhere. Close Fastgraph and discard them?"
-        )
+        dialog.setInformativeText("Save the Measure session before Fastgraph closes?")
         dialog.setStandardButtons(
-            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
         )
-        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        return dialog.exec() == QMessageBox.StandardButton.Discard
+        dialog.setDefaultButton(
+            QMessageBox.StandardButton.Save
+            if self._measure_session_path is not None
+            else QMessageBox.StandardButton.Cancel
+        )
+        result = dialog.exec()
+        if result == QMessageBox.StandardButton.Save:
+            return self._save_measure_session()
+        return result == QMessageBox.StandardButton.Discard
 
     def _confirm_rnd_close(self) -> bool:
         if self._rnd_widget.session.is_empty() or not self._rnd_dirty:
@@ -7430,6 +8362,19 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_window_title(self) -> None:
-        self.setWindowTitle(
+        title = (
             f"DMS fastgraph Beta — {self._session.display_name()} @ {self._session.rig}"
         )
+        path = getattr(self, "_measure_session_path", None)
+        if path is not None:
+            # ``.fastgraph-measure.json`` is a two-part suffix, so one ``stem``
+            # would leave ``.fastgraph-measure`` behind.
+            name = path.name
+            if name.lower().endswith(MEASURE_SESSION_EXTENSION):
+                name = name[: -len(MEASURE_SESSION_EXTENSION)]
+            else:
+                name = path.stem
+            title = f"{title} • {name}"
+        if getattr(self, "_measure_dirty", False):
+            title = f"{title}*"
+        self.setWindowTitle(title)

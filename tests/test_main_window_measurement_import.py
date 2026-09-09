@@ -17,6 +17,11 @@ def _make_fake_main_window(state: str = AppState.IDLE):
     fake = SimpleNamespace(
         _state=state,
         _kept_curves=[],
+        # Imported curves take a metadata slot each and dirty the session.
+        _kept_sweep_meta=[],
+        _mark_measure_dirty=lambda: calls.__setitem__(
+            "mark_measure_dirty", calls.get("mark_measure_dirty", 0) + 1
+        ),
         _recompute_average=lambda: calls.__setitem__("recompute_average", calls["recompute_average"] + 1),
         _recompute_variation=lambda: calls.__setitem__("recompute_variation", calls["recompute_variation"] + 1),
         _update_queue_progress=lambda: calls.__setitem__("update_queue_progress", calls["update_queue_progress"] + 1),

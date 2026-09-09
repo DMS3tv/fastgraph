@@ -250,6 +250,18 @@ class SettingsWidget(QWidget):
         rnd_layout.addLayout(rnd_row)
         layout.addWidget(self._rnd_group)
 
+        self._measure_group = QGroupBox("Measure Sessions")
+        measure_layout = QVBoxLayout(self._measure_group)
+        measure_row = QHBoxLayout()
+        self._measure_session_dir = QLineEdit()
+        self._measure_session_dir.setPlaceholderText("Default: Documents")
+        measure_row.addWidget(self._measure_session_dir, 1)
+        self._measure_session_browse = QPushButton("Browse...")
+        measure_row.addWidget(self._measure_session_browse)
+        measure_layout.addWidget(QLabel("Default save/load folder"))
+        measure_layout.addLayout(measure_row)
+        layout.addWidget(self._measure_group)
+
         self._automation_group = QGroupBox("Automations")
         automation_layout = QVBoxLayout(self._automation_group)
         automation_row = QHBoxLayout()
@@ -348,6 +360,12 @@ class SettingsWidget(QWidget):
             lambda: self._save("rnd_session_directory", self._rnd_session_dir.text().strip())
         )
         self._rnd_session_browse.clicked.connect(self._choose_rnd_session_dir)
+        self._measure_session_dir.editingFinished.connect(
+            lambda: self._save(
+                "measure_session_directory", self._measure_session_dir.text().strip()
+            )
+        )
+        self._measure_session_browse.clicked.connect(self._choose_measure_session_dir)
         self._automation_dir.editingFinished.connect(
             lambda: self._save("automation_directory", self._automation_dir.text().strip())
         )
@@ -418,6 +436,18 @@ class SettingsWidget(QWidget):
         self._rnd_session_dir.setText(chosen)
         self._save("rnd_session_directory", chosen)
 
+    def _choose_measure_session_dir(self) -> None:
+        current = self._measure_session_dir.text().strip()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Measure Session Folder",
+            current,
+        )
+        if not chosen:
+            return
+        self._measure_session_dir.setText(chosen)
+        self._save("measure_session_directory", chosen)
+
     def _choose_automation_dir(self) -> None:
         current = self._automation_dir.text().strip()
         chosen = QFileDialog.getExistingDirectory(
@@ -458,6 +488,7 @@ class SettingsWidget(QWidget):
             self._confirm_clear_metadata,
             self._save_failed_recordings,
             self._rnd_session_dir,
+            self._measure_session_dir,
             self._automation_dir,
             *self._shortcut_edits.values(),
         )
@@ -498,6 +529,9 @@ class SettingsWidget(QWidget):
                 bool(self._settings.get("save_failed_recordings"))
             )
             self._rnd_session_dir.setText(str(self._settings.get("rnd_session_directory") or ""))
+            self._measure_session_dir.setText(
+                str(self._settings.get("measure_session_directory") or "")
+            )
             self._automation_dir.setText(str(self._settings.get("automation_directory") or ""))
             bindings = shortcut_bindings_from_settings(self._settings.get("shortcut_bindings"))
             for action, edit in self._shortcut_edits.items():
@@ -513,5 +547,6 @@ class SettingsWidget(QWidget):
         self._audio_tools_group.setEnabled(enabled)
         self._safety_group.setEnabled(enabled)
         self._rnd_group.setEnabled(enabled)
+        self._measure_group.setEnabled(enabled)
         self._automation_group.setEnabled(enabled)
         self._shortcuts_group.setEnabled(enabled)

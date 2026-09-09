@@ -271,6 +271,9 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
     assert confirm() is True
 
     window._kept_curves.append(_curve())
+    # The prompt is about *unsaved* work now, so keeping a curve has to mark
+    # the Measure session dirty the way ``_on_keep`` does.
+    window._mark_measure_dirty()
     answers = []
 
     class _Dialog:

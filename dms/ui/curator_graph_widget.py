@@ -129,6 +129,7 @@ class GraphWidget(LockedPlotWidget):
         self.setLogMode(x=True, y=False)
         self.showGrid(x=True, y=True, alpha=0.18)
         self.getAxis("bottom").setLabel("Frequency", units="Hz")
+        self.getAxis("bottom").enableAutoSIPrefix(False)
         self.getAxis("left").setLabel("Magnitude", units="dB")
         self.getAxis("bottom").setTicks(
             [[(np.log10(freq), label) for freq, label in FREQUENCY_TICKS]]

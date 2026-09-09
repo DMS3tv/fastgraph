@@ -70,6 +70,18 @@ _Y_WINDOW_DB = 30.0
 _Y_DEFAULT_TOP_DB = 15.0
 _Y_TOP_HEADROOM_DB = 1.0
 
+#: Target comparison. The target is drawn thin and dashed behind the average so
+#: it never competes with the measurement; reference layers are thin but solid
+#: because they are measurements too.
+_TARGET_WIDTH = 1.2
+_REFERENCE_WIDTH = 1.3
+#: Delta view: a fixed +/-12 dB window. The aspect lock (25 dB per decade) is
+#: released while it is on, because a difference curve is not a response curve
+#: and forcing the response aspect on it would rescale the frequency axis.
+_DELTA_Y_LIMIT_DB = 12.0
+_DELTA_TITLE = "Delta vs Target (1/12 Oct)"
+_AVERAGE_TITLE = "Averaged Result (1/48 Oct RMS)"
+
 
 class _NoWheelPlotWidget(pg.PlotWidget):
     def wheelEvent(self, event) -> None:
@@ -120,6 +132,9 @@ class _DropPlotWidget(_NoWheelPlotWidget):
 def _configure_plot_widget(pw: pg.PlotWidget) -> None:
     ax = pw.getAxis("bottom")
     ax.setLabel("Frequency", units="Hz")
+    # The tick labels already read 20 … 20k; pyqtgraph would otherwise pick a
+    # prefix (kHz, even MHz) from the log10 view range and mislabel the axis.
+    ax.enableAutoSIPrefix(False)
     pw.getAxis("left").setLabel("Magnitude", units="dB")
     pw.setLogMode(x=True, y=False)
     pw.showGrid(x=True, y=True, alpha=0.15)
@@ -199,6 +214,15 @@ class DualPlotWidget(QWidget):
         self._distortion_vb: Optional[pg.ViewBox] = None
         self._distortion_items: list[object] = []
         self._last_distortion: Optional[tuple[np.ndarray, dict]] = None
+        # Target comparison. These live on the bottom PlotWidget but outside
+        # ``_bot_extra_items`` so a plain redraw of the average or the
+        # variation band does not take them down with it.
+        self._target_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._reference_layers: list[tuple[str, np.ndarray, np.ndarray, str]] = []
+        self._compare_items: list[object] = []
+        self._compare_legend: Optional[pg.LegendItem] = None
+        self._delta_mode = False
+        self._delta_zero_line: Optional[pg.InfiniteLine] = None
         self._reveal_item: Optional[pg.PlotDataItem] = None
         self._reveal_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
         self._reveal_progress = 0.0
@@ -300,6 +324,9 @@ class DualPlotWidget(QWidget):
             right.setTextPen(pg.mkPen(foreground))
             distortion_freqs, distortion_series = self._last_distortion
             self.set_distortion_overlay(distortion_freqs, distortion_series)
+        # Target and reference pens are contrast-corrected against the plot
+        # background, so they have to be rebuilt for the new theme.
+        self._redraw_compare_layers()
         self.update()
 
     def update_curves(
@@ -341,6 +368,147 @@ class DualPlotWidget(QWidget):
             self._bot_plot.removeItem(item)
         self._bot_extra_items.clear()
         self.set_distortion_overlay(None, None)
+        # A full reset takes the comparison layers down too. The window
+        # re-pushes whatever target and references are still loaded right
+        # after it clears, so nothing the user chose is silently lost.
+        self._target_curve = None
+        self._reference_layers = []
+        self.set_delta_mode(False)
+        self._redraw_compare_layers()
+
+    # ------------------------------------------------------------------
+    # Target comparison (target curve, A/B references, delta view)
+    # ------------------------------------------------------------------
+
+    def set_target_curve(
+        self,
+        freqs: Optional[np.ndarray],
+        mag_db: Optional[np.ndarray] = None,
+    ) -> None:
+        """Draw a target curve behind the average, or remove it with ``None``."""
+        if freqs is None or mag_db is None or len(np.asarray(freqs)) == 0:
+            self._target_curve = None
+        else:
+            self._target_curve = (
+                np.asarray(freqs, dtype=float),
+                np.asarray(mag_db, dtype=float),
+            )
+        self._redraw_compare_layers()
+
+    def set_reference_layers(
+        self,
+        layers: Optional[list[tuple[str, np.ndarray, np.ndarray, str]]],
+    ) -> None:
+        """Draw ``(name, freqs, mag_db, colour)`` A/B layers, or clear them."""
+        cleaned: list[tuple[str, np.ndarray, np.ndarray, str]] = []
+        for entry in layers or []:
+            name, freqs, mag_db, color = entry
+            freqs = np.asarray(freqs, dtype=float)
+            mag_db = np.asarray(mag_db, dtype=float)
+            if freqs.size == 0 or freqs.size != mag_db.size:
+                continue
+            cleaned.append((str(name), freqs, mag_db, str(color)))
+        self._reference_layers = cleaned
+        self._redraw_compare_layers()
+
+    def set_delta_mode(self, enabled: bool) -> None:
+        """Switch the bottom viewport between the response and a delta curve.
+
+        A delta is not a response curve, so the 25 dB-per-decade aspect lock is
+        released while it is on and the window is pinned to +/-12 dB around an
+        emphasized 0 dB line.
+        """
+        enabled = bool(enabled)
+        changed = enabled != self._delta_mode
+        self._delta_mode = enabled
+        plot_item = self._bot_plot.getPlotItem()
+        view_box = plot_item.getViewBox()
+        if enabled:
+            view_box.setAspectLocked(lock=False)
+            if self._delta_zero_line is None:
+                line = pg.InfiniteLine(
+                    pos=0.0,
+                    angle=0,
+                    pen=pg.mkPen(color=(150, 150, 150), width=1.0),
+                )
+                self._bot_plot.addItem(line)
+                self._delta_zero_line = line
+            self._bot_plot.setYRange(
+                -_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0
+            )
+        else:
+            view_box.setAspectLocked(lock=True, ratio=25.0)
+            if self._delta_zero_line is not None:
+                self._bot_plot.removeItem(self._delta_zero_line)
+                self._delta_zero_line = None
+        if changed:
+            self._redraw_bottom(
+                average=self._last_average,
+                variation=self._last_variation,
+                mode=self._last_bottom_mode,
+            )
+            self._redraw_compare_layers()
+
+    def _redraw_compare_layers(self) -> None:
+        for item in self._compare_items:
+            self._bot_plot.removeItem(item)
+        self._compare_items.clear()
+        # The legend is created once and reused: pyqtgraph re-anchors a
+        # LegendItem inside setParentItem(), so detaching it would raise.
+        legend = self._compare_legend
+        if legend is not None:
+            legend.clear()
+            legend.hide()
+
+        # In delta view the bottom curve is already measured *against* the
+        # target, so a target line (and any absolute reference) would sit on a
+        # scale it does not belong to. Nothing comparative is drawn there.
+        if self._delta_mode:
+            return
+
+        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        background = colors["plot_bg"]
+        entries: list[tuple[object, str]] = []
+
+        if self._target_curve is not None:
+            freqs, mag_db = self._target_curve
+            display_freqs, display_mag = self._display_curve(freqs, mag_db)
+            pen = pg.mkPen(
+                color=ensure_graph_color("#9aa0a6", background),
+                width=_TARGET_WIDTH,
+                style=Qt.PenStyle.DashLine,
+            )
+            item = self._bot_plot.plot(
+                display_freqs, display_mag, pen=pen, antialias=True
+            )
+            item.setZValue(-2)
+            self._compare_items.append(item)
+            entries.append((item, "Target"))
+
+        for name, freqs, mag_db, color in self._reference_layers:
+            display_freqs, display_mag = self._display_curve(freqs, mag_db)
+            pen = pg.mkPen(
+                color=ensure_graph_color(color, background),
+                width=_REFERENCE_WIDTH,
+            )
+            item = self._bot_plot.plot(
+                display_freqs, display_mag, pen=pen, antialias=True
+            )
+            item.setZValue(-1)
+            self._compare_items.append(item)
+            entries.append((item, name))
+
+        if not entries:
+            return
+        if legend is None:
+            legend = pg.LegendItem(offset=(12, 8), verSpacing=-4)
+            legend.setParentItem(self._bot_plot.getPlotItem().vb)
+            self._compare_legend = legend
+        legend.clear()
+        legend.setLabelTextColor(ensure_graph_color(colors["text"], background))
+        for item, name in entries:
+            legend.addItem(item, name)
+        legend.show()
 
     # ------------------------------------------------------------------
     # Distortion overlay (secondary right axis on the bottom viewport)
@@ -581,12 +749,33 @@ class DualPlotWidget(QWidget):
         mode: str,
     ) -> None:
         self._clear_bottom_items()
+        if self._delta_mode:
+            # The caller hands the delta curve in through ``average``; the
+            # variation band is meaningless against a target and is skipped.
+            self._bot_plot.setTitle(_DELTA_TITLE)
+            if average is not None and len(average[0]) > 0:
+                freqs, mag_db = average
+                display_freqs, display_mag = self._display_curve(freqs, mag_db)
+                pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
+                pen = stipple_trace_pen(
+                    pen,
+                    0,
+                    tokens_for(self._theme, brand_mode=self._brand_mode),
+                )
+                self._bot_item = self._bot_plot.plot(
+                    display_freqs, display_mag, pen=pen, antialias=True
+                )
+            self._bot_plot.setYRange(
+                -_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0
+            )
+            return
+
         if mode == "variation":
             self._bot_plot.setTitle("Variation Band (Confidence Style)")
             self._draw_variation_bottom(variation)
             return
 
-        self._bot_plot.setTitle("Averaged Result (1/48 Oct RMS)")
+        self._bot_plot.setTitle(_AVERAGE_TITLE)
         if average is not None and len(average[0]) > 0:
             freqs, mag_db = average
             display_freqs, display_mag = self._display_curve(freqs, mag_db)

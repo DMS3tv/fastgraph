@@ -120,6 +120,7 @@ def _configure_plot(plot: pg.PlotWidget) -> None:
     plot.setLogMode(x=True, y=False)
     plot.showGrid(x=True, y=True, alpha=0.15)
     plot.getAxis("bottom").setLabel("Frequency", units="Hz")
+    plot.getAxis("bottom").enableAutoSIPrefix(False)
     plot.getAxis("left").setLabel("Magnitude", units="dB")
     ticks = [
         (np.log10(20), "20"),

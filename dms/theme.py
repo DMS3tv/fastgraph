@@ -243,6 +243,16 @@ def _fastgraph95_stylesheet(
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['control']}; padding: 5px 9px 3px 11px; }}
     QPushButton:disabled {{ color: {c['disabled']}; background-color: {c['control']}; }}
+    QToolButton[menuButton="true"] {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: none;
+        border-radius: 0px;
+        padding: 4px 10px;
+        min-height: 24px;
+    }}
+    QToolButton[menuButton="true"]:hover {{ background-color: {c['control_hover']}; }}
+    QToolButton[menuButton="true"]:disabled {{ color: {c['disabled']}; background-color: {c['control']}; }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};
@@ -515,6 +525,22 @@ def _dither_stylesheet(c: dict[str, str]) -> str:
         color: {c['disabled']};
         border: 1px solid {c['border']};
     }}
+    QToolButton[menuButton="true"] {{
+        background-color: {c['control']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 0px;
+        padding: 6px 14px;
+    }}
+    QToolButton[menuButton="true"]:hover {{
+        background-color: {c['control_hover']};
+        border-color: {c['text']};
+    }}
+    QToolButton[menuButton="true"]:disabled {{
+        background-color: {c['alternate']};
+        color: {c['disabled']};
+        border: 1px solid {c['border']};
+    }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};
@@ -713,6 +739,9 @@ def _stylesheet_body(
     QPushButton:hover {{ background-color: {c['control_hover']}; }}
     QPushButton:pressed {{ background-color: {c['alternate']}; padding-top: 7px; }}
     QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
+    QToolButton[menuButton="true"] {{ background-color: {c['control']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_button}px; padding: 6px 14px; min-height: 28px; }}
+    QToolButton[menuButton="true"]:hover {{ background-color: {c['control_hover']}; }}
+    QToolButton[menuButton="true"]:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};

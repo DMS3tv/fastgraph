@@ -8362,9 +8362,10 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_window_title(self) -> None:
-        title = (
-            f"DMS fastgraph Beta — {self._session.display_name()} @ {self._session.rig}"
-        )
+        # A packaged build may carry a different name (see dms_fastgraph.spec);
+        # the source tree and the released bundle read "fastgraph Beta".
+        app_name = os.environ.get("FASTGRAPH_APP_NAME", "").strip() or "fastgraph Beta"
+        title = f"DMS {app_name} — {self._session.display_name()} @ {self._session.rig}"
         path = getattr(self, "_measure_session_path", None)
         if path is not None:
             # ``.fastgraph-measure.json`` is a two-part suffix, so one ``stem``

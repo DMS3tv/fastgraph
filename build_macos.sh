@@ -9,6 +9,39 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# --name "<App Name>" builds a differently named bundle with its own bundle
+# identifier (com.dms.fastgraph.<slug>), so a development build can live in
+# /Applications beside the released one and keeps its own permissions.
+APP_NAME="${FASTGRAPH_APP_NAME:-FastGraph Beta}"
+BUNDLE_ID="${FASTGRAPH_BUNDLE_ID:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)
+      APP_NAME="${2:?--name needs a value}"
+      shift 2
+      ;;
+    --bundle-id)
+      BUNDLE_ID="${2:?--bundle-id needs a value}"
+      shift 2
+      ;;
+    *)
+      echo "Usage: $0 [--name \"App Name\"] [--bundle-id com.example.id]"
+      exit 2
+      ;;
+  esac
+done
+if [[ -z "$BUNDLE_ID" ]]; then
+  if [[ "$APP_NAME" == "FastGraph Beta" ]]; then
+    BUNDLE_ID="com.dms.fastgraph"
+  else
+    slug="$(printf '%s' "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '.' | sed 's/^\.*//; s/\.*$//; s/\.\.*/./g')"
+    BUNDLE_ID="com.dms.fastgraph.${slug#fastgraph.}"
+  fi
+fi
+export FASTGRAPH_APP_NAME="$APP_NAME"
+export FASTGRAPH_BUNDLE_ID="$BUNDLE_ID"
+echo "Building \"$APP_NAME\" ($BUNDLE_ID)"
+
 if [[ ! -x ".venv/bin/python" ]]; then
   echo "Missing .venv. Create it first with:"
   echo "  python3 -m venv .venv"
@@ -52,4 +85,4 @@ iconutil -c icns "$ICONSET" -o "$MACOS_ICON"
 
 echo
 echo "Built app bundle:"
-echo "  $ROOT_DIR/dist/FastGraph Beta.app"
+echo "  $ROOT_DIR/dist/$APP_NAME.app"

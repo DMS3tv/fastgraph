@@ -89,14 +89,14 @@ def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
     # A blunt guard: it fails for any stylesheet edit at all, including a
     # purely additive one. Re-snapshot it only after confirming with
     # ``git diff dms/theme.py`` that nothing existing was changed.
-    # Last re-snapshotted for the QToolButton[menuButton] rules the Measure
-    # Session and Compare menu buttons need.
+    # Last re-snapshotted 2026-09-10 for the ::menu-indicator rule that stops
+    # the Session and Compare menu buttons from drawing a second arrow.
     expected = {
-        DARK: "a2f3bc82d8411c1ffa32df9c089cbc165f532b75be7fcc0bdfa2030ef977ade7",
-        LIGHT: "fcc8e9d7d1cf28a112744e25deee9d9439d93692ff4b59b7e08b8f23256f632c",
-        FASTGRAPH_95: "0decb425e62424ea54fb8489daf838fcceee294eae9885848cd40ba39605f7ba",
-        FASTGRAPH_95_DARK: "f53c5b92170d451d5be32b84879b69eff807afdf19b20313f9d23cd323acceb2",
-        HACKERMAN_95: "f628cdbd725d34847089772661963332d4a4ceac2173ca12e19e07ff6297df08",
+        DARK: "ad3eeca399558168b9791e20a9a3a1fbec9da1c65bfa78c23c0ea8a1f3c0ec92",
+        LIGHT: "745c3bcd340ad60d69266e4bb23a712fd71b7733d1ab7b3673c330b749163bc7",
+        FASTGRAPH_95: "b6c7fdc885853021c23320c9041080a3a16f38093a99abe91821705c258f7d0b",
+        FASTGRAPH_95_DARK: "3b111c2cd3bb06b33276913fd6be3581126917f352242eb7c7d8907fb7977d6e",
+        HACKERMAN_95: "99c5db59235f4393e83dda005f7c65fe00b180f41fc308bffb07267eba7ec0f1",
     }
 
     for theme, expected_digest in expected.items():
@@ -105,7 +105,7 @@ def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
 
     brand_stylesheet = brand_application_stylesheet()
     assert hashlib.sha256(brand_stylesheet.encode()).hexdigest() == (
-        "a82706dee736a6adecee1e7a8ff70c8967fe30cb231d671300921b524383bae2"
+        "0c5c06085bf0a6df156aa5cc469e9b63131bbbec4cd624e14e22cb23b2342d09"
     )
 
 

@@ -253,6 +253,7 @@ def _fastgraph95_stylesheet(
     }}
     QToolButton[menuButton="true"]:hover {{ background-color: {c['control_hover']}; }}
     QToolButton[menuButton="true"]:disabled {{ color: {c['disabled']}; background-color: {c['control']}; }}
+    QToolButton[menuButton="true"]::menu-indicator {{ image: none; width: 0px; }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};
@@ -541,6 +542,7 @@ def _dither_stylesheet(c: dict[str, str]) -> str:
         color: {c['disabled']};
         border: 1px solid {c['border']};
     }}
+    QToolButton[menuButton="true"]::menu-indicator {{ image: none; width: 0px; }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};
@@ -742,6 +744,7 @@ def _stylesheet_body(
     QToolButton[menuButton="true"] {{ background-color: {c['control']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {geometry.radius_button}px; padding: 6px 14px; min-height: 28px; }}
     QToolButton[menuButton="true"]:hover {{ background-color: {c['control_hover']}; }}
     QToolButton[menuButton="true"]:disabled {{ color: {c['disabled']}; border-color: {c['border']}; background-color: {c['alternate']}; }}
+    QToolButton[menuButton="true"]::menu-indicator {{ image: none; width: 0px; }}
     QPushButton[measureSegment="true"] {{
         background-color: {c['control']};
         color: {c['muted']};

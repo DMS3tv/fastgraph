@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Imports: every text import (Curator, Measure import, HRTF, R&D target, comparison target) now reads through one parser. REW files with a decimal-comma locale and a comma delimiter import correctly, the Measure/HRTF/R&D loader no longer misreads decimal commas, semicolons or UTF-16, and a six-column file that is not a variation band (a REW distortion export) imports as a plain response with a warning.
+
 ### Fixed
 
 - Standard-mode measurements now reject silent or unrelated recordings

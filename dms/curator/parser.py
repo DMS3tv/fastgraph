@@ -33,6 +33,16 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
     if len(kept) < 2:
         raise ValueError(f"{file_path.name} has fewer than 2 consistent data rows.")
 
+    declared_variation = "variation" in metadata.get("Export Type", "").lower()
+    if wide and not declared_variation and not _looks_like_percentiles(kept):
+        # Six or more columns that are not ordered percentiles: a REW
+        # distortion export, for example. Read it as a plain response.
+        wide = False
+        warnings.append(
+            f"{file_path.name}: extra columns are not a variation band; "
+            "imported the first two columns as a frequency response."
+        )
+
     if wide:
         data = np.asarray([row[:6] for row in kept], dtype=float)
         data = _positive_sorted(data, file_path)
@@ -93,7 +103,9 @@ def read_measurement_text(path: Path) -> str:
 
 def _split_numeric_fields(line: str) -> list[str]:
     """Split one data line, treating ``,`` as a decimal point when it is one."""
-    parts = [part for part in _FIELD_SPLIT.split(line) if part]
+    # REW with a decimal-comma locale and a comma delimiter writes
+    # "20,141602, 103,464": drop the delimiter left hanging on each token.
+    parts = [part.rstrip(",;") for part in _FIELD_SPLIT.split(line) if part.rstrip(",;")]
     # A single "100,0" is ambiguous; only read it as a decimal comma when the
     # line still yields at least two columns that way.
     if len(parts) >= 2 and all(_DECIMAL_COMMA.match(part) for part in parts):
@@ -143,6 +155,13 @@ def _classify_rows(rows: list[list[float]]) -> tuple[list[list[float]], int, boo
     kept = wide_rows if wide else narrow_rows
     dropped = len(rows) - len(kept)
     return kept, dropped, wide
+
+
+def _looks_like_percentiles(rows: list[list[float]]) -> bool:
+    """True when columns 1-5 rise left to right (p10..p90) on nearly every row."""
+    bands = np.asarray([row[1:6] for row in rows], dtype=float)
+    ordered = np.all(np.diff(bands, axis=1) >= -0.01, axis=1)
+    return float(np.mean(ordered)) >= 0.9
 
 
 def _average_duplicate_frequencies(data: np.ndarray) -> tuple[np.ndarray, int]:

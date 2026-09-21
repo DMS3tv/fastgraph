@@ -235,3 +235,32 @@ def test_a_two_column_csv_still_parses_when_a_row_looks_like_a_decimal_comma(
 
     assert np.allclose(curve.freqs, [20.0, 100.0, 1000.0])
     assert np.allclose(curve.mag_db, [-4.0, 0.0, 2.0])
+
+
+def test_rew_decimal_comma_with_comma_delimiter_and_phase(tmp_path) -> None:
+    path = tmp_path / "rew.txt"
+    path.write_text("* Freq(Hz), SPL(dB), Phase(degrees)\n20,5, 103,4, -12,0\n1000,0, 94,0, 3,5\n")
+    curve = parse_measurement_txt(path)
+    assert curve.kind == "fr"
+    assert curve.freqs.tolist() == [20.5, 1000.0]
+    assert curve.mag_db.tolist() == [103.4, 94.0]
+
+
+def test_wide_file_that_is_not_percentiles_imports_as_response(tmp_path) -> None:
+    path = tmp_path / "rew_distortion.txt"
+    rows = [f"{f}, 94.0, -40.0, -45.0, -60.0, -62.0, -70.0" for f in (100, 1000, 10000)]
+    path.write_text("* Freq(Hz), Fundamental, THD, H2, H3, H4, H5\n" + "\n".join(rows) + "\n")
+    curve = parse_measurement_txt(path)
+    assert curve.kind == "fr"
+    assert curve.mag_db.tolist() == [94.0, 94.0, 94.0]
+    assert any("not a variation band" in warning for warning in curve.warnings)
+
+
+def test_two_column_loader_shares_the_curator_parser(tmp_path) -> None:
+    from dms.measurement_txt import load_two_column_txt_curve
+
+    path = tmp_path / "rew_locale.txt"
+    path.write_bytes("20,5; 103,4; -12,0\n1000,0; 94,0; 3,5\n".encode("utf-16"))
+    freqs, mags = load_two_column_txt_curve(str(path))
+    assert freqs.tolist() == [20.5, 1000.0]
+    assert mags.tolist() == [103.4, 94.0]

@@ -6,6 +6,15 @@
 
 ### Fixed
 
+- Console logging: every console message now goes through Python's standard
+  logging (one handler feeds the console and its log file), including worker
+  threads, the Curator and Squiglink upload diagnostics. Any ERROR that reaches
+  the console, including Curator errors, can now fire the app_error automation
+  trigger.
+- Audio device, settings and calibration failures that used to be swallowed
+  are now logged: device enumeration, level-monitor and sweep errors log a
+  warning with the exception, and a settings or calibration file that cannot
+  be written logs an error.
 - Standard-mode measurements now reject silent or unrelated recordings
   instead of showing a flat 0 dB curve. Alignment confidence is measured as
   peak-to-background of the sweep correlation in every mode (default 6.0),
@@ -63,6 +72,11 @@
 
 ### Changed
 
+- Code conventions: the default 1/48-octave smoothing and the analysis grid
+  use named constants, measurement failure and warning reasons are string
+  enums (saved files and dumps keep the same text), module-only helpers are
+  private, long UI builders are split into sections, and ruff now enforces
+  function size and complexity limits. Internal only.
 - Frequency responses are now computed through an impulse-response window
   (deconvolution, circular window with tapers, transform back). The result
   matches the previous method within 0.07 dB on a linear system and keeps

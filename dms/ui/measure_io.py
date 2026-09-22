@@ -564,7 +564,7 @@ class MeasureIO(QObject):
             window._log_event(
                 "INFO", "export", "Average exported", path=str(path), compensated=compensated
             )
-            window._run_automation_trigger("export_complete")
+            window.commands.trigger("export_complete")
         except Exception as exc:
             window._log_event("ERROR", "export", f"Average export failed: {exc}")
             QMessageBox.warning(window, "Export Error", str(exc))
@@ -617,7 +617,7 @@ class MeasureIO(QObject):
             window._log_event(
                 "INFO", "export", "Variation exported", path=str(path), compensated=compensated
             )
-            window._run_automation_trigger("export_complete")
+            window.commands.trigger("export_complete")
         except Exception as exc:
             window._log_event("ERROR", "export", f"Variation export failed: {exc}")
             QMessageBox.warning(window, "Export Error", str(exc))
@@ -837,7 +837,7 @@ class MeasureIO(QObject):
             directory=str(directory),
             files=filenames,
         )
-        window._run_automation_trigger("export_complete")
+        window.commands.trigger("export_complete")
         QMessageBox.information(
             window,
             "Export All Complete",

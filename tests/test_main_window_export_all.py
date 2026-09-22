@@ -39,7 +39,7 @@ def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     window.measure_tab.export_dir_input.setText(str(tmp_path))
     window._statusbar.messageChanged.connect(statuses.append)
     window._log_event = lambda *args, **kwargs: events.append(("log", args, kwargs))
-    window._run_automation_trigger = triggers.append
+    window.commands.trigger = triggers.append
     window.measure_io._confirm_export_all_overwrite = lambda conflicts: True
     return window, events, triggers, statuses
 

@@ -174,7 +174,7 @@ def test_shortcut_and_console_start_are_blocked_in_channel_balance(
     assert "Channel Balance" in window._statusbar.currentMessage()
 
     with pytest.raises(ValueError, match="Channel Balance"):
-        window._run_measure_command(["start"])
+        window.commands._run_measure_command(["start"])
     assert window._state == QueueState.IDLE
 
 

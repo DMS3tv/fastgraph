@@ -112,7 +112,7 @@ def test_manual_automation_switches_tabs_and_runs_console_command(
         ],
     )
 
-    window._run_automation(automation)
+    window.commands.run_automation(automation)
 
     assert window._tabs.currentWidget() is window._curator_widget
     assert any("State:" in event.message for event in window._console_events.events())
@@ -138,7 +138,7 @@ def test_manual_automation_switches_input_device_and_channel(
         ],
     )
 
-    window._run_automation(automation)
+    window.commands.run_automation(automation)
 
     assert window.devices.current_input_device() == 5
     assert window.devices.current_input_channel() == 1
@@ -155,7 +155,7 @@ def test_automation_unavailable_channel_logs_failure(
         steps=[AutomationStep(action="switch_input_channel", target="9")],
     )
 
-    window._run_automation(automation)
+    window.commands.run_automation(automation)
 
     assert any("Automation failed" in event.message for event in window._console_events.events())
 
@@ -185,8 +185,8 @@ def test_console_command_steps_are_treated_as_risky(make_main_window, tmp_path: 
     ]
 
     window = _automation_window(make_main_window, tmp_path)
-    assert all(window._automation_step_is_risky(step) for step in risky)
-    assert not any(window._automation_step_is_risky(step) for step in safe)
+    assert all(window.commands._automation_step_is_risky(step) for step in risky)
+    assert not any(window.commands._automation_step_is_risky(step) for step in safe)
 
     asked: list[str] = []
     automation = AutomationDefinition(
@@ -202,7 +202,7 @@ def test_console_command_steps_are_treated_as_risky(make_main_window, tmp_path: 
         patch.object(main_window_module.QMessageBox, "question", refuse),
         patch.object(main_window_module.QMessageBox, "warning", lambda *a, **k: None),
     ):
-        window._run_automation(automation)
+        window.commands.run_automation(automation)
 
     assert asked and "console_command" in asked[0]
     assert any("Automation failed" in event.message for event in window._console_events.events())
@@ -223,21 +223,21 @@ def test_two_automations_on_one_trigger_both_run(make_main_window, tmp_path: Pat
     window = _automation_window(make_main_window, tmp_path)
     window._automation_widget.events.reload_library()
 
-    window._run_automation_trigger("queue_complete")
+    window.commands.trigger("queue_complete")
     assert _completed_names(window) == ["First", "Second"]
 
     # The same trigger raised while a step is still running: both automations
     # are queued and run afterwards instead of being dropped with a warning.
     window._console_events.clear()
-    window._automation_running = True
-    window._run_automation_trigger("queue_complete")
-    assert len(window._automation_pending()) == 2
+    window.commands.running = True
+    window.commands.trigger("queue_complete")
+    assert len(window.commands._automation_pending()) == 2
     assert _completed_names(window) == []
 
-    window._automation_running = False
-    window._drain_automation_queue()
+    window.commands.running = False
+    window.commands._drain_automation_queue()
     assert _completed_names(window) == ["First", "Second"]
-    assert window._automation_pending() == []
+    assert window.commands._automation_pending() == []
 
 
 def test_export_complete_trigger_keeps_its_re_entrancy_guard(
@@ -255,19 +255,19 @@ def test_export_complete_trigger_keeps_its_re_entrancy_guard(
     )
     window = _automation_window(make_main_window, tmp_path)
     window._automation_widget.events.reload_library()
-    window._automation_running = True
+    window.commands.running = True
 
-    window._run_automation_trigger("export_complete")
+    window.commands.trigger("export_complete")
 
-    assert window._automation_pending() == []
-    window._automation_running = False
+    assert window.commands._automation_pending() == []
+    window.commands.running = False
 
 
 def test_variable_substitution_is_single_pass(make_main_window, tmp_path: Path) -> None:
     """C14: a value that contains a placeholder is not expanded again."""
     window = _automation_window(make_main_window, tmp_path)
 
-    expanded = window._expand_automation_text(
+    expanded = window.commands._expand_automation_text(
         "{first}/{second}/{missing}",
         {"first": "{second}", "second": "kept"},
     )
@@ -280,16 +280,16 @@ def test_increment_variable_keeps_integers_integral(make_main_window, tmp_path: 
     window = _automation_window(make_main_window, tmp_path)
     variables: dict[str, object] = {"count": 1, "ratio": 1.5}
 
-    window._execute_automation_step(
+    window.commands._execute_automation_step(
         AutomationStep(action="increment_variable", target="count"), variables
     )
-    window._execute_automation_step(
+    window.commands._execute_automation_step(
         AutomationStep(action="increment_variable", target="fresh", value="2"), variables
     )
-    window._execute_automation_step(
+    window.commands._execute_automation_step(
         AutomationStep(action="decrement_variable", target="count"), variables
     )
-    window._execute_automation_step(
+    window.commands._execute_automation_step(
         AutomationStep(action="increment_variable", target="ratio"), variables
     )
 

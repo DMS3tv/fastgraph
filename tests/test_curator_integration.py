@@ -451,12 +451,12 @@ def test_curator_console_commands_update_workspace_and_log(
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
 
-    window._run_console_command(f'curator import "{source}"')
-    window._run_console_command("curator layer 1 offset -3")
-    window._run_console_command("curator layer 1 hide")
-    window._run_console_command("curator view limits -30 10")
-    window._run_console_command("curator view background #ffffff")
-    window._run_console_command("curator text title Demo Graph")
+    window.commands.run_console_command(f'curator import "{source}"')
+    window.commands.run_console_command("curator layer 1 offset -3")
+    window.commands.run_console_command("curator layer 1 hide")
+    window.commands.run_console_command("curator view limits -30 10")
+    window.commands.run_console_command("curator view background #ffffff")
+    window.commands.run_console_command("curator text title Demo Graph")
 
     state = window._curator_widget.graph_state
     assert len(state.layers) == 1
@@ -466,9 +466,9 @@ def test_curator_console_commands_update_workspace_and_log(
     assert state.background == "#ffffff"
     assert state.export_text.title == "Demo Graph"
     assert any(event.source == "curator" for event in window._console_events.events())
-    assert "curator help" in window._console_help()
+    assert "curator help" in window.commands._console_help()
     before = list(state.layers)
-    window._run_console_command("curator layer 99 hide")
+    window.commands.run_console_command("curator layer 99 hide")
     assert state.layers == before
     assert any(
         event.source == "curator" and event.severity == "ERROR"
@@ -483,16 +483,16 @@ def test_curator_console_full_command_surface(make_main_window, tmp_path: Path) 
     first.write_text("100 0 1 2 3 4\n1000 1 2 3 4 5\n", encoding="utf-8")
     second.write_text("100 5 6 7 8 9\n1000 6 7 8 9 10\n", encoding="utf-8")
 
-    window._run_console_command(f'curator import "{first}" "{second}"')
-    window._run_console_command("curator layer 1 color #ff0000")
-    window._run_console_command("curator layer 1 hrtf none")
-    window._run_console_command("curator combine 1 2")
-    window._run_console_command("curator bounds on")
-    window._run_console_command("curator view aspect off")
-    window._run_console_command("curator text fixture Console Fixture")
-    window._run_console_command("curator text footer Console Footer")
+    window.commands.run_console_command(f'curator import "{first}" "{second}"')
+    window.commands.run_console_command("curator layer 1 color #ff0000")
+    window.commands.run_console_command("curator layer 1 hrtf none")
+    window.commands.run_console_command("curator combine 1 2")
+    window.commands.run_console_command("curator bounds on")
+    window.commands.run_console_command("curator view aspect off")
+    window.commands.run_console_command("curator text fixture Console Fixture")
+    window.commands.run_console_command("curator text footer Console Footer")
     output = tmp_path / "console export.png"
-    window._run_console_command(f'curator export "{output}"')
+    window.commands.run_console_command(f'curator export "{output}"')
 
     state = window._curator_widget.graph_state
     assert len(state.layers) == 3
@@ -504,6 +504,6 @@ def test_curator_console_full_command_surface(make_main_window, tmp_path: Path) 
     assert state.export_text.hrtf_note == "Console Footer"
     assert output.exists()
 
-    window._run_console_command("curator reset")
-    window._run_console_command("curator clear")
+    window.commands.run_console_command("curator reset")
+    window.commands.run_console_command("curator clear")
     assert window._curator_widget.graph_state.layers == []

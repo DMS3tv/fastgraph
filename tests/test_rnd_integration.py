@@ -335,8 +335,8 @@ def test_startup_recovery_restores_before_app_start_automation(
     )
     events: list[tuple[str, int]] = []
     monkeypatch.setattr(
-        window,
-        "_run_automation_trigger",
+        window.commands,
+        "trigger",
         lambda trigger: events.append((trigger, len(window._rnd_widget.session.measurements))),
     )
 

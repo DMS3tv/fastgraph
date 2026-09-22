@@ -307,11 +307,11 @@ def test_console_session_commands_save_and_load(tmp_path, make_main_window) -> N
     window._kept_sweep_meta.append({})
     path = tmp_path / "console.fastgraph-measure.json"
 
-    window._run_measure_command(["session", "save", str(path)])
+    window.commands._run_measure_command(["session", "save", str(path)])
     assert path.is_file()
     assert window.measure_io.dirty is False
 
     window._kept_curves.clear()
     window._kept_sweep_meta.clear()
-    window._run_measure_command(["session", "load", str(path)])
+    window.commands._run_measure_command(["session", "load", str(path)])
     assert len(window._kept_curves) == 1

@@ -4367,9 +4367,7 @@ class MainWindow(QMainWindow):
         self._sync_export_button()
 
     def _bottom_view_mode(self) -> str:
-        if getattr(self, "_is_hrtf_active", lambda: False)() and getattr(
-            getattr(self, "_hrtf", None), "is_variation", False
-        ):
+        if self._is_hrtf_active() and self._hrtf.is_variation:
             return "variation"
         return "variation" if self._variation_toggle.isChecked() else "average"
 
@@ -6277,7 +6275,7 @@ class MainWindow(QMainWindow):
             return
 
         compensated = self._is_hrtf_active()
-        two_channel = bool(getattr(self, "_two_channel_enabled", False))
+        two_channel = self._two_channel_enabled
         channel_label = self._active_measure_label() if two_channel else ""
         export_session = self._active_measure_session() if two_channel else self._session
         active_count = self._active_measure_count() if two_channel else len(self._kept_curves)
@@ -6286,7 +6284,7 @@ class MainWindow(QMainWindow):
             compensated=compensated,
             channel_label=channel_label,
         )
-        path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Average")
+        path = self._resolve_export_path(requested_path, filename, "Export Average")
         if path is None:
             return
         export_dir = str(path.parent)
@@ -6307,19 +6305,16 @@ class MainWindow(QMainWindow):
                 level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
             )
             self._statusbar.showMessage(f"Exported average: {path}")
-            if hasattr(self, "_log_event"):
-                self._log_event(
-                    "INFO", "export", "Average exported", path=str(path), compensated=compensated
-                )
-            if hasattr(self, "_run_automation_trigger"):
-                self._run_automation_trigger("export_complete")
+            self._log_event(
+                "INFO", "export", "Average exported", path=str(path), compensated=compensated
+            )
+            self._run_automation_trigger("export_complete")
         except Exception as exc:
-            if hasattr(self, "_log_event"):
-                self._log_event("ERROR", "export", f"Average export failed: {exc}")
+            self._log_event("ERROR", "export", f"Average export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
 
     def _export_variation(self, requested_path: str | None = None) -> None:
-        two_channel = bool(getattr(self, "_two_channel_enabled", False))
+        two_channel = self._two_channel_enabled
         active_variation = self._active_measure_variation() if two_channel else self._variation
         if active_variation is None:
             QMessageBox.information(self, "Nothing to Export", "No variation band available yet.")
@@ -6334,7 +6329,7 @@ class MainWindow(QMainWindow):
             compensated=compensated,
             channel_label=channel_label,
         )
-        path = MainWindow._resolve_export_path(self, requested_path, filename, "Export Variation")
+        path = self._resolve_export_path(requested_path, filename, "Export Variation")
         if path is None:
             return
         export_dir = str(path.parent)
@@ -6358,15 +6353,12 @@ class MainWindow(QMainWindow):
                 level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
             )
             self._statusbar.showMessage(f"Exported variation: {path}")
-            if hasattr(self, "_log_event"):
-                self._log_event(
-                    "INFO", "export", "Variation exported", path=str(path), compensated=compensated
-                )
-            if hasattr(self, "_run_automation_trigger"):
-                self._run_automation_trigger("export_complete")
+            self._log_event(
+                "INFO", "export", "Variation exported", path=str(path), compensated=compensated
+            )
+            self._run_automation_trigger("export_complete")
         except Exception as exc:
-            if hasattr(self, "_log_event"):
-                self._log_event("ERROR", "export", f"Variation export failed: {exc}")
+            self._log_event("ERROR", "export", f"Variation export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
 
     def _run_measure_upload_action(self) -> None:
@@ -6600,8 +6592,7 @@ class MainWindow(QMainWindow):
             return
         self._console_events.export(path)
         self._log_event("INFO", "export", "Console log exported", path=str(path))
-        if hasattr(self, "_run_automation_trigger"):
-            self._run_automation_trigger("export_complete")
+        self._run_automation_trigger("export_complete")
 
     def _sync_export_button(self) -> None:
         idle = self._state == QueueState.IDLE

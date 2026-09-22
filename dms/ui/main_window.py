@@ -6347,6 +6347,8 @@ class MainWindow(QMainWindow):
             compensated=compensated,
             hrtf=hrtf,
             n_sweeps=1,
+            smoothing_fraction=int(self._rnd_widget.session.smoothing_fraction or 48),
+            offset_db=self._rnd_widget.displayed_offset_db(measurement),
         )
         self._settings.set("export_directory", str(path.parent))
         self._export_dir_input.setText(str(path.parent))

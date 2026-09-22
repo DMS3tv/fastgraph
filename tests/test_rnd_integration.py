@@ -615,6 +615,20 @@ def test_rnd_export_uses_selected_smoothing(tmp_path, monkeypatch, make_main_win
     assert np.allclose(captured["mag_db"], [7.0, 6.0])
 
 
+def test_rnd_export_header_records_smoothing_and_offset(tmp_path, make_main_window) -> None:
+    window = make_main_window()
+    measurement = _measurement("m1", "Export Offset")
+    measurement.vertical_offset_db = -3.5
+    window._rnd_widget.session.smoothing_fraction = 12
+    output = tmp_path / "offset.txt"
+
+    window._export_rnd_measurement(measurement, str(output))
+
+    text = output.read_text(encoding="utf-8")
+    assert "* Smoothing: 1/12 octave" in text
+    assert "* Offset: -3.5 dB" in text
+
+
 def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(make_main_window) -> None:
     window = make_main_window()
     first = _measurement("m1", "Reference")

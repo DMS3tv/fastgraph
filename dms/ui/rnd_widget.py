@@ -2172,13 +2172,19 @@ class RnDWidget(QWidget):
             self._missing_hrtf_names.add(
                 self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name)
             )
+        return mag + self.displayed_offset_db(measurement, group)
+
+    def displayed_offset_db(
+        self, measurement: RnDMeasurement, group: RnDGroup | None = None
+    ) -> float:
+        """Vertical offset applied to the displayed curve: measurement plus group."""
         offset = float(measurement.vertical_offset_db)
         if group is None:
             parent_id = self.session.parent_group_id(measurement.id)
             group = self.session.group_by_id(parent_id) if parent_id is not None else None
         if group is not None:
             offset += float(group.vertical_offset_db)
-        return mag + offset
+        return offset
 
     @staticmethod
     def _with_mag(measurement: RnDMeasurement, mag_db: np.ndarray) -> RnDMeasurement:

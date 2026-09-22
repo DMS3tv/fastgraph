@@ -129,3 +129,23 @@ def test_export_curve_writes_spl_level_header(tmp_path: Path) -> None:
     assert "* Level: dB SPL (calibrated)" in text
     assert "* Normalization: 1 kHz" not in text
     assert "* Smoothing:" not in text
+
+
+def test_export_curve_writes_offset_header_only_when_nonzero(tmp_path: Path) -> None:
+    session = SessionData(rig="GRAS", brand="DMS", model="Example")
+    texts = []
+    for offset in (2.5, 0.0, None):
+        output = tmp_path / f"offset_{offset}.txt"
+        export_curve(
+            freqs=np.array([100.0, 1000.0]),
+            mag_db=np.array([-1.0, 0.0]),
+            session=session,
+            output_path=output,
+            compensated=False,
+            offset_db=offset,
+        )
+        texts.append(output.read_text(encoding="utf-8"))
+
+    assert "* Offset: 2.5 dB" in texts[0]
+    assert "* Offset:" not in texts[1]
+    assert "* Offset:" not in texts[2]

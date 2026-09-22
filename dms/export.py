@@ -59,13 +59,15 @@ def export_curve(
     n_sweeps: int | None = None,
     smoothing_fraction: int | None = None,
     level_mode: str = "ref_1khz",
+    offset_db: float | None = None,
 ) -> None:
     """Write REW-compatible TXT file.
 
     ``smoothing_fraction`` records the fractional-octave smoothing that was
     applied to the exported curve, so the file states what was displayed.
     ``level_mode="dbspl"`` means the magnitudes are absolute calibrated SPL
-    rather than a 1 kHz-referenced shape.
+    rather than a 1 kHz-referenced shape. ``offset_db`` records a vertical
+    offset already applied to the magnitudes.
     """
     header = session.to_rew_header()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -81,6 +83,8 @@ def export_curve(
         lines.append(f"* HRTF File: {hrtf.name}")
     if smoothing_fraction is not None and smoothing_fraction > 0:
         lines.append(f"* Smoothing: 1/{int(smoothing_fraction)} octave")
+    if offset_db:
+        lines.append(f"* Offset: {float(offset_db):g} dB")
 
     lines.append(
         "* Level: dB SPL (calibrated)"

@@ -304,7 +304,7 @@ def _rgba_image(rgba: np.ndarray) -> QImage:
     return image.copy()
 
 
-def aperiodic_dither_band_item(
+def _aperiodic_dither_band_item(
     x_values: Sequence[float],
     upper_values: Sequence[float],
     lower_values: Sequence[float],
@@ -417,7 +417,7 @@ def add_bounds_band(
     """
     if tokens.dither_chrome:
         items = []
-        fill = aperiodic_dither_band_item(
+        fill = _aperiodic_dither_band_item(
             np.log10(freqs),
             upper,
             lower,

@@ -211,7 +211,7 @@ class TestLevelDialog(QDialog):
             self._hint_label.setText("Noise ping sent. Confirm input level responds in dBFS.")
 
 
-def thd_band_summary(
+def _thd_band_summary(
     analysis: HarmonicAnalysis | None,
 ) -> tuple[float, float, float] | None:
     """(median THD %, max THD %, frequency of the max) over 100 Hz - 10 kHz.
@@ -309,7 +309,7 @@ class PassFailDialog(QDialog):
                 warning.setWordWrap(True)
                 warning.setProperty("tone", "warning")
                 timing_box_layout.addWidget(warning)
-            summary = thd_band_summary(distortion)
+            summary = _thd_band_summary(distortion)
             if summary is not None:
                 median_pct, max_pct, max_freq = summary
                 thd_label = QLabel(

@@ -96,7 +96,7 @@ def load_two_column_txt_curve(path: str, *, label: str = "Curve") -> tuple[np.nd
     return data[:, 0], data[:, 1]
 
 
-def read_measurement_text(path: Path) -> str:
+def _read_measurement_text(path: Path) -> str:
     """Decode a measurement file, honouring UTF-8 and UTF-16 byte-order marks."""
     raw = path.read_bytes()
     if raw[:2] in _UTF16_BOMS:
@@ -123,7 +123,7 @@ def _numeric_rows(path: Path) -> tuple[list[list[float]], dict[str, str], list[s
     rows: list[list[float]] = []
     metadata: dict[str, str] = {}
     warnings: list[str] = []
-    for raw_line in read_measurement_text(path).splitlines():
+    for raw_line in _read_measurement_text(path).splitlines():
         line = raw_line.strip()
         if not line:
             continue

@@ -414,7 +414,7 @@ def is_device_failure(
     return any(token in msg for token in _DEVICE_FAILURE_TOKENS)
 
 
-def normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
+def _normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
     """Return valid cross-correlation sequence between signal and pattern."""
     sig = np.asarray(signal).astype(np.float64, copy=False)
     pat = np.asarray(pattern).astype(np.float64, copy=False)
@@ -429,13 +429,13 @@ def normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray
     return corr_full[len(pat) - 1 : len(sig)]
 
 
-def normalized_corrcoef_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
+def _normalized_corrcoef_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
     """
     Return valid normalized cross-correlation coefficient sequence.
 
     Each lag is normalized by local signal-window energy and pattern energy.
     """
-    corr = normalized_corr_valid(signal, pattern).astype(np.float64, copy=False)
+    corr = _normalized_corr_valid(signal, pattern).astype(np.float64, copy=False)
     sig = np.asarray(signal).astype(np.float64, copy=False)
     pat = np.asarray(pattern).astype(np.float64, copy=False)
     m = len(pat)
@@ -455,7 +455,7 @@ def normalized_corrcoef_valid(signal: np.ndarray, pattern: np.ndarray) -> np.nda
     return corr / denom
 
 
-def peak_to_rms_confidence(values: np.ndarray) -> float:
+def _peak_to_rms_confidence(values: np.ndarray) -> float:
     if len(values) == 0:
         return 0.0
     peak = float(np.max(np.abs(values)))
@@ -463,7 +463,7 @@ def peak_to_rms_confidence(values: np.ndarray) -> float:
     return peak / max(rms, 1e-12)
 
 
-def peak_to_background_confidence(
+def _peak_to_background_confidence(
     values: np.ndarray,
     peak_idx: int,
     exclusion_radius: int,
@@ -492,7 +492,7 @@ def peak_to_background_confidence(
     return peak / max(floor, 1e-12)
 
 
-def peak_to_nextbest_confidence(
+def _peak_to_nextbest_confidence(
     values: np.ndarray,
     peak_idx: int,
     exclusion_radius: int,
@@ -699,7 +699,7 @@ def find_start_alignment(
     sweep_f32 = np.asarray(sweep).astype(np.float32, copy=False)
     sweep_n = layout.sweep_samples
 
-    corr_valid = normalized_corrcoef_valid(rec, sweep_f32)
+    corr_valid = _normalized_corrcoef_valid(rec, sweep_f32)
     if len(corr_valid) == 0:
         _raise_alignment_error(
             "Unable to align recording to sweep.",
@@ -721,8 +721,8 @@ def find_start_alignment(
     start_idx = sweep_start_candidate
 
     exclusion = max(int(round(0.025 * layout.fs)), int(round(0.01 * sweep_n)))
-    conf_bg = peak_to_background_confidence(corr_valid, start_idx, exclusion)
-    conf_next = peak_to_nextbest_confidence(corr_valid, start_idx, exclusion)
+    conf_bg = _peak_to_background_confidence(corr_valid, start_idx, exclusion)
+    conf_next = _peak_to_nextbest_confidence(corr_valid, start_idx, exclusion)
     peak_corr = float(abs(corr_valid[start_idx]))
     # Peak-to-background is the gating confidence. Peak-to-next-best is
     # reported only: a valid sweep with a strong secondary arrival (an echo,
@@ -747,11 +747,11 @@ def find_start_alignment(
             None,
             True,
         ):
-            sm_corr = normalized_corr_valid(sm_region, marker_template)
+            sm_corr = _normalized_corr_valid(sm_region, marker_template)
             if len(sm_corr) == 0:
                 continue
             sm_offset = int(np.argmax(np.abs(sm_corr)))
-            candidate_conf = peak_to_rms_confidence(sm_corr)
+            candidate_conf = _peak_to_rms_confidence(sm_corr)
             if start_marker_match is None or candidate_conf > start_marker_match[0]:
                 start_marker_match = (
                     float(candidate_conf),
@@ -1103,7 +1103,7 @@ def find_end_markers(
         marker_region_1 = rec[search_start_1:search_stop_1]
         peaks_1 = []
         for marker_template, alternate_template, marker_stretch in marker_1_variants:
-            marker_corr_1 = normalized_corr_valid(marker_region_1, marker_template)
+            marker_corr_1 = _normalized_corr_valid(marker_region_1, marker_template)
             if len(marker_corr_1) == 0:
                 continue
             peaks_1.extend(
@@ -1126,7 +1126,7 @@ def find_end_markers(
         marker_region_2 = rec[search_start_2:search_stop_2]
         peaks_2 = []
         for marker_template, alternate_template, marker_stretch in marker_2_variants:
-            marker_corr_2 = normalized_corr_valid(marker_region_2, marker_template)
+            marker_corr_2 = _normalized_corr_valid(marker_region_2, marker_template)
             peaks_2.extend(
                 _marker_peak_candidates(
                     marker_corr_2,
@@ -1281,7 +1281,7 @@ def _ratio_db(signal_rms: float, noise_rms: float) -> float:
     return 0.0
 
 
-def noise_floor_rms(
+def _noise_floor_rms(
     rec_mono: np.ndarray,
     post_noise_start: int,
     start_idx: int,
@@ -1463,7 +1463,7 @@ def align_recording_to_layout(
             rec, layout, settings, start_result, end_result
         )
         sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
-        noise_rms = noise_floor_rms(rec, end_idx, start_idx, layout.fs)
+        noise_rms = _noise_floor_rms(rec, end_idx, start_idx, layout.fs)
         snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
         integrity = compute_sweep_integrity(sweep_rec, noise_rms)
         _enforce_sweep_integrity(layout, settings, start_result, integrity, snr_db)
@@ -1507,7 +1507,7 @@ def align_recording_to_layout(
     sweep_rec = rec[start_idx:end_idx].astype(np.float32, copy=False)
     # Level evidence is computed before any marker decision so that every
     # failure below carries SNR and integrity metrics in its diagnostics.
-    noise_rms = noise_floor_rms(
+    noise_rms = _noise_floor_rms(
         rec,
         end_result.marker_2_start + len(getattr(layout, "end_marker_2", layout.end_marker)),
         end_result.selected_sweep_start,

@@ -48,7 +48,7 @@ def snapshot_measurement_profile(settings: Mapping[str, Any]) -> dict[str, Any]:
     return {key: settings[key] for key in MEASUREMENT_PROFILE_KEYS if key in settings}
 
 
-def is_complete_measurement_profile(profile: object) -> bool:
+def _is_complete_measurement_profile(profile: object) -> bool:
     if not isinstance(profile, Mapping):
         return False
     return all(key in profile for key in MEASUREMENT_PROFILE_KEYS)
@@ -58,7 +58,7 @@ def restore_standard_profile_updates(
     snapshot: object,
 ) -> tuple[dict[str, Any], bool]:
     """Return standard-profile updates and whether fallback defaults were used."""
-    if is_complete_measurement_profile(snapshot):
+    if _is_complete_measurement_profile(snapshot):
         assert isinstance(snapshot, Mapping)
         return {key: snapshot[key] for key in MEASUREMENT_PROFILE_KEYS}, False
     return dict(STANDARD_PROFILE_DEFAULTS), True

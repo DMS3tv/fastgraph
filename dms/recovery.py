@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 CLEAN_EXIT_MARKER = "clean-exit.marker"
 
 
-def copy_session_file(source: Path, destination: Path) -> None:
+def _copy_session_file(source: Path, destination: Path) -> None:
     """Copy one valid session file to another location, atomically."""
     source = Path(source)
     destination = Path(destination)
@@ -463,7 +463,7 @@ def measure_recovery_manager(
         suffix=MEASURE_SESSION_EXTENSION,
         content_keys=("sweeps", "pairs"),
         save=lambda snapshot, _sources, path: save_measure_snapshot(snapshot, path),
-        copy=copy_session_file,
+        copy=_copy_session_file,
         load=load_measure_session,
         validate=_measure_summary,
         unsupported=UnsupportedMeasureSessionVersion,

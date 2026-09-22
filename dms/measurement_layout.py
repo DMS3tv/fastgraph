@@ -97,28 +97,28 @@ def build_coded_timing_marker(fs: int, code_id: str) -> np.ndarray:
     return (gain * marker).astype(np.float32)
 
 
-def build_end_marker(fs: int) -> np.ndarray:
+def _build_end_marker(fs: int) -> np.ndarray:
     """
     Build coded end marker A used to validate timing.
     """
     return build_coded_timing_marker(fs, "end_a")
 
 
-def build_end_marker_2(fs: int) -> np.ndarray:
+def _build_end_marker_2(fs: int) -> np.ndarray:
     """
     Build coded end marker B used to verify ordered marker identity.
     """
     return build_coded_timing_marker(fs, "end_b")
 
 
-def build_start_marker(fs: int) -> np.ndarray:
+def _build_start_marker(fs: int) -> np.ndarray:
     """
     Build a coded marker used to lock sweep start timing robustly.
     """
     return build_coded_timing_marker(fs, "start")
 
 
-def build_wake_primer(fs: int) -> np.ndarray:
+def _build_wake_primer(fs: int) -> np.ndarray:
     """
     Build a short non-measurement primer to wake DACs/headphones before sweep start.
     """
@@ -164,14 +164,14 @@ def build_measurement_layout(
     post_n = int(post_silence_s * fs)
     bluetooth_mode = bool(bluetooth_headphone_mode)
     primer_gap_n = int(round(0.24 * fs))
-    wake_primer = build_wake_primer(fs)
+    wake_primer = _build_wake_primer(fs)
     primer_n = len(wake_primer) if wake_primer is not None else 0
     sweep_n = len(sweep_f32)
     if bluetooth_mode:
-        start_marker = build_start_marker(fs)
+        start_marker = _build_start_marker(fs)
         start_marker_gap_n = int(round(0.025 * fs))
-        marker = build_end_marker(fs)
-        marker_2 = build_end_marker_2(fs)
+        marker = _build_end_marker(fs)
+        marker_2 = _build_end_marker_2(fs)
         marker_gap_n = int(round(0.12 * fs))
         marker_pair_gap_n = int(round(0.12 * fs))
         excitation = np.concatenate(

@@ -713,9 +713,7 @@ class MainWindow(QMainWindow):
     def _channel_balance_mode_active(self) -> bool:
         balance_button = getattr(self, "_measure_balance_button", None)
         return bool(
-            getattr(self, "_two_channel_enabled", False)
-            and balance_button is not None
-            and balance_button.isChecked()
+            self._two_channel_enabled and balance_button is not None and balance_button.isChecked()
         )
 
     def _on_measure_submode_toggled(self, _checked: bool) -> None:
@@ -2545,10 +2543,7 @@ class MainWindow(QMainWindow):
         return device_setting(device, "input") if device is not None else None
 
     def _use_advanced_windows_drivers(self) -> bool:
-        toggle = getattr(self, "_advanced_windows_drivers_toggle", None)
-        if toggle is not None:
-            return bool(toggle.isChecked())
-        return bool(self._settings.get("windows_advanced_audio_drivers"))
+        return bool(self._advanced_windows_drivers_toggle.isChecked())
 
     def _selected_audio_pair_is_compatible(self) -> bool:
         return is_compatible_device_pair(
@@ -2786,17 +2781,16 @@ class MainWindow(QMainWindow):
 
         self._last_output_devices = out_signature
         self._last_input_devices = in_signature
-        if hasattr(self, "_log_event"):
-            self._log_event(
-                "INFO",
-                "devices",
-                "Audio devices refreshed",
-                output_count=len(out_devices),
-                input_count=len(in_devices),
-                selected_output=self._current_output_device_label(),
-                selected_input=self._current_input_device_label(),
-                input_channel=self._current_input_channel() + 1,
-            )
+        self._log_event(
+            "INFO",
+            "devices",
+            "Audio devices refreshed",
+            output_count=len(out_devices),
+            input_count=len(in_devices),
+            selected_output=self._current_output_device_label(),
+            selected_input=self._current_input_device_label(),
+            input_channel=self._current_input_channel() + 1,
+        )
 
         if out_ambiguous or in_ambiguous:
             self._statusbar.showMessage(
@@ -2809,19 +2803,16 @@ class MainWindow(QMainWindow):
 
         self._apply_state_ui()
         self._start_level_monitor()
-        if hasattr(self, "_refresh_session_labels"):
-            self._refresh_session_labels()
+        self._refresh_session_labels()
 
     def _manual_refresh_devices(self) -> None:
         previous_out = self._current_output_device()
         previous_in = self._current_input_device()
         previous_ch = self._current_input_channel()
 
-        getattr(self, "_stop_channel_balance", lambda: None)()
+        self._stop_channel_balance()
         self._level_monitor.stop()
-        dual_monitor = getattr(self, "_dual_level_monitor", None)
-        if dual_monitor is not None:
-            dual_monitor.stop()
+        self._dual_level_monitor.stop()
         refresh_audio_backend()
         self._refresh_devices()
 
@@ -2854,21 +2845,20 @@ class MainWindow(QMainWindow):
             self._active_ch_label.setText(f"Active input channel: Ch {want_ch + 1}")
         else:
             self._active_ch_label.setText("Active input channel: —")
-        if hasattr(self, "_rnd_widget"):
-            self._rnd_widget.set_input_channels(
-                [
-                    (self._ch_combo.itemText(index), int(self._ch_combo.itemData(index)))
-                    for index in range(self._ch_combo.count())
-                ],
-                self._current_input_channel(),
-            )
+        self._rnd_widget.set_input_channels(
+            [
+                (self._ch_combo.itemText(index), int(self._ch_combo.itemData(index)))
+                for index in range(self._ch_combo.count())
+            ],
+            self._current_input_channel(),
+        )
 
     def _sync_device_poller(self) -> None:
         """Pause polling whenever PortAudio must not be re-enumerated."""
         poller = getattr(self, "_device_poller", None)
         if poller is None:
             return
-        busy = not self._queue.allows_device_reselect() or getattr(self, "_rnd_sweep_active", False)
+        busy = not self._queue.allows_device_reselect() or self._rnd_sweep_active
         poller.pause(busy)
 
     def _check_devices(
@@ -2895,7 +2885,7 @@ class MainWindow(QMainWindow):
         if current_out == self._last_output_devices and current_in == (self._last_input_devices):
             return
 
-        getattr(self, "_stop_channel_balance", lambda: None)()
+        self._stop_channel_balance()
 
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
@@ -3197,9 +3187,7 @@ class MainWindow(QMainWindow):
         # The Measure button is disabled in Channel Balance mode, but the
         # keyboard shortcut, the console and automations reach this method
         # directly; the guard must live here.
-        if MainWindow._channel_balance_mode_active(self) or getattr(
-            self, "_channel_balance_active", False
-        ):
+        if self._channel_balance_mode_active() or self._channel_balance_active:
             self._statusbar.showMessage(
                 "Start blocked: switch to Frequency Response and stop Channel Balance first."
             )

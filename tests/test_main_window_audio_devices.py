@@ -1,105 +1,31 @@
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
-
 from dms import audio_engine
-from dms.measure_queue import QueueState
-from dms.ui.main_window import MainWindow
 
 
-class _Settings:
-    def __init__(self, initial: dict | None = None) -> None:
-        self.data = dict(initial or {})
+def _window(make_main_window, settings: dict, *, stub_devices: bool = False):
+    """A real window built on whatever device functions the test patched.
 
-    def get(self, key: str):
-        return self.data.get(key)
+    Patch ``get_*_devices`` and friends before calling this: the window
+    enumerates once while it is built, exactly as it does at startup.
+    """
+    window = make_main_window(settings=settings, stub_devices=stub_devices)
+    window.monitor_count = 0
+    window.start_next_sweep_count = 0
 
-    def set(self, key: str, value) -> None:
-        self.data[key] = value
+    def _count_monitor() -> None:
+        window.monitor_count += 1
 
+    def _count_sweep() -> None:
+        window.start_next_sweep_count += 1
 
-class _Status:
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    def showMessage(self, message: str) -> None:
-        self.messages.append(message)
-
-
-class _LevelMonitor:
-    def __init__(self) -> None:
-        self.stop_count = 0
-
-    def stop(self) -> None:
-        self.stop_count += 1
+    window._start_level_monitor = _count_monitor
+    window._start_next_sweep = _count_sweep
+    return window
 
 
-class _Queue:
-    """The slice of ``MeasureQueue`` that ``_check_devices`` consults."""
-
-    def __init__(self, allows_reselect: bool = True) -> None:
-        self.allows_reselect = allows_reselect
-
-    def allows_device_reselect(self) -> bool:
-        return self.allows_reselect
-
-
-class _Harness:
-    _current_output_device = MainWindow._current_output_device
-    _current_input_device = MainWindow._current_input_device
-    _current_output_device_info = MainWindow._current_output_device_info
-    _current_input_device_info = MainWindow._current_input_device_info
-    _current_output_device_label = MainWindow._current_output_device_label
-    _current_input_device_label = MainWindow._current_input_device_label
-    _current_output_device_setting = MainWindow._current_output_device_setting
-    _current_input_device_setting = MainWindow._current_input_device_setting
-    _current_input_channel = MainWindow._current_input_channel
-    _use_advanced_windows_drivers = MainWindow._use_advanced_windows_drivers
-    _selected_audio_pair_is_compatible = MainWindow._selected_audio_pair_is_compatible
-    _windows_audio_pair_message = MainWindow._windows_audio_pair_message
-    _matching_output_for_input = MainWindow._matching_output_for_input
-    _sync_windows_output_to_input = MainWindow._sync_windows_output_to_input
-    _sweep_latency_mode = MainWindow._sweep_latency_mode
-    _refresh_devices = MainWindow._refresh_devices
-    _manual_refresh_devices = MainWindow._manual_refresh_devices
-    _refresh_channels = MainWindow._refresh_channels
-    _start_queue = MainWindow._start_queue
-    _check_devices = MainWindow._check_devices
-    _sync_device_poller = MainWindow._sync_device_poller
-
-    def __init__(self, settings: _Settings) -> None:
-        self._settings = settings
-        self._state = QueueState.IDLE
-        self._out_dev_combo = QComboBox()
-        self._in_dev_combo = QComboBox()
-        self._ch_combo = QComboBox()
-        self._advanced_windows_drivers_toggle = QCheckBox()
-        self._advanced_windows_drivers_toggle.setChecked(
-            bool(settings.get("windows_advanced_audio_drivers"))
-        )
-        self._active_ch_label = QLabel()
-        self._statusbar = _Status()
-        self._input_devices_by_index = {}
-        self._output_devices_by_index = {}
-        self._input_device_labels_by_index = {}
-        self._output_device_labels_by_index = {}
-        self._last_output_devices = []
-        self._last_input_devices = []
-        self._level_monitor = _LevelMonitor()
-        self._queue = _Queue()
-        self._rnd_sweep_active = False
-        self._devices_dirty = False
-        self.apply_count = 0
-        self.monitor_count = 0
-        self.start_next_sweep_count = 0
-        self._last_level_dbfs = -120.0
-
-    def _apply_state_ui(self) -> None:
-        self.apply_count += 1
-
-    def _start_level_monitor(self) -> None:
-        self.monitor_count += 1
-
-    def _start_next_sweep(self) -> None:
-        self.start_next_sweep_count += 1
+def _count_level_monitor_stops(window) -> list[bool]:
+    stops: list[bool] = []
+    window._level_monitor.stop = lambda: stops.append(True)
+    return stops
 
 
 def _devices():
@@ -166,129 +92,122 @@ def _devices():
     return outputs, inputs
 
 
-def test_windows_normal_mode_shows_only_preferred_wasapi_devices(qapp, monkeypatch) -> None:
+def test_windows_normal_mode_shows_only_preferred_wasapi_devices(
+    make_main_window, monkeypatch
+) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": {
-                "index": 43,
-                "name": "in 1-2 (motu m series)",
-                "hostapi": 2,
-                "hostapi_name": "Windows WASAPI",
-                "kind": "input",
-            },
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": False,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": {
+            "index": 43,
+            "name": "in 1-2 (motu m series)",
+            "hostapi": 2,
+            "hostapi_name": "Windows WASAPI",
+            "kind": "input",
+        },
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": False,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
-    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr(audio_engine, "is_windows_audio_host", lambda: True)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
 
-    assert harness._in_dev_combo.count() == 1
-    assert harness._out_dev_combo.count() == 1
-    assert harness._in_dev_combo.currentData() == 43
-    assert harness._out_dev_combo.currentData() == 5
-    assert settings.data["input_device"]["index"] == 43
-    assert settings.data["input_device"]["kind"] == "input"
-    assert settings.data["output_device"]["index"] == 5
+    assert window._in_dev_combo.count() == 1
+    assert window._out_dev_combo.count() == 1
+    assert window._in_dev_combo.currentData() == 43
+    assert window._out_dev_combo.currentData() == 5
+    assert window._settings.get("input_device")["index"] == 43
+    assert window._settings.get("input_device")["kind"] == "input"
+    assert window._settings.get("output_device")["index"] == 5
 
 
-def test_windows_advanced_mode_shows_all_backends(qapp, monkeypatch) -> None:
+def test_windows_advanced_mode_shows_all_backends(make_main_window, monkeypatch) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
-    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr(audio_engine, "is_windows_audio_host", lambda: True)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
 
-    assert harness._in_dev_combo.count() == 4
-    assert harness._out_dev_combo.count() == 3
+    assert window._in_dev_combo.count() == 4
+    assert window._out_dev_combo.count() == 3
     assert any(
-        "Windows DirectSound" in harness._in_dev_combo.itemText(i)
-        for i in range(harness._in_dev_combo.count())
+        "Windows DirectSound" in window._in_dev_combo.itemText(i)
+        for i in range(window._in_dev_combo.count())
     )
 
 
-def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(qapp, monkeypatch) -> None:
+def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(
+    make_main_window, monkeypatch
+) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": "in 1-2 (motu m series)",
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": False,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": "in 1-2 (motu m series)",
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": False,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
-    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr(audio_engine, "is_windows_audio_host", lambda: True)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
 
-    assert harness._in_dev_combo.currentData() == 43
-    assert settings.data["input_device"]["hostapi_name"] == "Windows WASAPI"
+    assert window._in_dev_combo.currentData() == 43
+    assert window._settings.get("input_device")["hostapi_name"] == "Windows WASAPI"
 
 
-def test_windows_input_selection_auto_matches_output_backend(qapp, monkeypatch) -> None:
+def test_windows_input_selection_auto_matches_output_backend(make_main_window, monkeypatch) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
-    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr(audio_engine, "is_windows_audio_host", lambda: True)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
 
-    harness._refresh_devices()
-    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
-    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(43))
-    harness._sync_windows_output_to_input(show_status=False)
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
+    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
+    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(43))
+    window._sync_windows_output_to_input(show_status=False)
 
-    assert harness._out_dev_combo.currentData() == 5
+    assert window._out_dev_combo.currentData() == 5
 
 
-def test_windows_mismatched_backends_block_queue_start(qapp, monkeypatch) -> None:
+def test_windows_mismatched_backends_block_queue_start(make_main_window, monkeypatch) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
-    monkeypatch.setattr(audio_engine.os, "name", "nt")
+    monkeypatch.setattr(audio_engine, "is_windows_audio_host", lambda: True)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
@@ -297,51 +216,52 @@ def test_windows_mismatched_backends_block_queue_start(qapp, monkeypatch) -> Non
         lambda _parent, title, message: warnings.append((title, message)),
     )
 
-    harness._refresh_devices()
-    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
-    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(43))
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
+    # Input first: choosing an input re-matches the output, so the mismatch
+    # only survives when the output is changed afterwards.
+    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(43))
+    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
 
-    harness._start_queue()
+    window._start_queue()
 
     assert warnings
     assert "mismatch" in warnings[0][0].lower()
-    assert harness.start_next_sweep_count == 0
+    assert window.start_next_sweep_count == 0
 
 
 def test_windows_default_non_bluetooth_latency_is_high_until_user_override(
-    qapp, monkeypatch
+    make_main_window, monkeypatch
 ) -> None:
-    settings = _Settings(
-        {
-            "latency": "low",
-            "latency_user_override": False,
-            "bluetooth_headphone_mode": False,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "latency": "low",
+        "latency_user_override": False,
+        "bluetooth_headphone_mode": False,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: True)
 
-    assert harness._sweep_latency_mode() == "high"
+    window = _window(make_main_window, settings, stub_devices=True)
+    assert window._sweep_latency_mode() == "high"
 
-    settings.set("latency_user_override", True)
-    assert harness._sweep_latency_mode() == "low"
+    window._settings.set("latency_user_override", True)
+    assert window._sweep_latency_mode() == "low"
 
 
-def test_non_windows_latency_behavior_is_unchanged(qapp, monkeypatch) -> None:
-    settings = _Settings(
-        {
-            "latency": "low",
-            "latency_user_override": False,
-            "bluetooth_headphone_mode": False,
-        }
-    )
-    harness = _Harness(settings)
+def test_non_windows_latency_behavior_is_unchanged(make_main_window, monkeypatch) -> None:
+    settings = {
+        "latency": "low",
+        "latency_user_override": False,
+        "bluetooth_headphone_mode": False,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
 
-    assert harness._sweep_latency_mode() == "low"
+    window = _window(make_main_window, settings, stub_devices=True)
+    assert window._sweep_latency_mode() == "low"
 
 
-def test_manual_refresh_reinitializes_backend_before_enumerating(qapp, monkeypatch) -> None:
+def test_manual_refresh_reinitializes_backend_before_enumerating(
+    make_main_window, monkeypatch
+) -> None:
     outputs, inputs = _devices()
     refreshed_outputs = [
         {
@@ -364,15 +284,12 @@ def test_manual_refresh_reinitializes_backend_before_enumerating(qapp, monkeypat
         }
     ]
     current = {"outputs": outputs, "inputs": inputs}
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": False,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": False,
+    }
     calls: list[str] = []
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
     monkeypatch.setattr(
@@ -393,63 +310,63 @@ def test_manual_refresh_reinitializes_backend_before_enumerating(qapp, monkeypat
 
     monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", refresh_backend)
 
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    stops = _count_level_monitor_stops(window)
+    window._refresh_devices()
     calls.clear()
-    harness._manual_refresh_devices()
+    window._manual_refresh_devices()
 
     assert calls[:3] == ["backend", "outputs", "inputs"]
-    assert harness._out_dev_combo.currentData() == 9
-    assert harness._in_dev_combo.currentData() == 10
-    assert harness._level_monitor.stop_count == 1
-    assert harness.monitor_count == 2
-    assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."
+    assert window._out_dev_combo.currentData() == 9
+    assert window._in_dev_combo.currentData() == 10
+    assert len(stops) == 1
+    assert window.monitor_count == 2
+    assert window._statusbar.currentMessage() == "Audio devices refreshed; selection changed."
 
 
-def test_manual_refresh_preserves_valid_device_selection(qapp, monkeypatch) -> None:
+def test_manual_refresh_preserves_valid_device_selection(make_main_window, monkeypatch) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 1,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 1,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
     monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", lambda: True)
 
-    harness._refresh_devices()
-    harness._ch_combo.setCurrentIndex(1)
-    settings.set("input_channel", 1)
-    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
-    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(17))
-    settings.set("output_device", harness._current_output_device_setting())
-    settings.set("input_device", harness._current_input_device_setting())
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
+    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
+    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(17))
+    # Channel last: choosing an input device rebuilds the channel list.
+    window._ch_combo.setCurrentIndex(1)
+    window._settings.set("input_channel", 1)
+    window._settings.set("output_device", window._current_output_device_setting())
+    window._settings.set("input_device", window._current_input_device_setting())
 
-    harness._manual_refresh_devices()
+    window._manual_refresh_devices()
 
-    assert harness._out_dev_combo.currentData() == 6
-    assert harness._in_dev_combo.currentData() == 17
-    assert harness._current_input_channel() == 1
-    assert harness._statusbar.messages[-1] == "Audio devices refreshed."
+    assert window._out_dev_combo.currentData() == 6
+    assert window._in_dev_combo.currentData() == 17
+    assert window._current_input_channel() == 1
+    assert window._statusbar.currentMessage() == "Audio devices refreshed."
 
 
-def test_manual_refresh_falls_back_when_selected_device_disappears(qapp, monkeypatch) -> None:
+def test_manual_refresh_falls_back_when_selected_device_disappears(
+    make_main_window, monkeypatch
+) -> None:
     outputs, inputs = _devices()
     current = {"outputs": outputs, "inputs": inputs}
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: current["outputs"])
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: current["inputs"])
@@ -462,19 +379,20 @@ def test_manual_refresh_falls_back_when_selected_device_disappears(qapp, monkeyp
 
     monkeypatch.setattr("dms.ui.main_window.refresh_audio_backend", refresh_backend)
 
-    harness._refresh_devices()
-    harness._out_dev_combo.setCurrentIndex(harness._out_dev_combo.findData(6))
-    harness._in_dev_combo.setCurrentIndex(harness._in_dev_combo.findData(17))
-    settings.set("output_device", harness._current_output_device_setting())
-    settings.set("input_device", harness._current_input_device_setting())
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
+    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
+    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(17))
+    window._settings.set("output_device", window._current_output_device_setting())
+    window._settings.set("input_device", window._current_input_device_setting())
 
-    harness._manual_refresh_devices()
+    window._manual_refresh_devices()
 
-    assert harness._out_dev_combo.currentData() == 5
-    assert harness._in_dev_combo.currentData() == 43
-    assert settings.data["output_device"]["index"] == 5
-    assert settings.data["input_device"]["index"] == 43
-    assert harness._statusbar.messages[-1] == "Audio devices refreshed; selection changed."
+    assert window._out_dev_combo.currentData() == 5
+    assert window._in_dev_combo.currentData() == 43
+    assert window._settings.get("output_device")["index"] == 5
+    assert window._settings.get("input_device")["index"] == 43
+    assert window._statusbar.currentMessage() == "Audio devices refreshed; selection changed."
 
 
 def _forbid_enumeration(monkeypatch) -> None:
@@ -485,69 +403,66 @@ def _forbid_enumeration(monkeypatch) -> None:
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", _fail)
 
 
-def test_check_devices_uses_the_lists_the_poller_hands_it(qapp, monkeypatch) -> None:
+def test_check_devices_uses_the_lists_the_poller_hands_it(make_main_window, monkeypatch) -> None:
     """E5: the poller thread enumerates; the GUI slot only compares."""
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
 
     refreshed: list[bool] = []
-    harness._refresh_devices = lambda: refreshed.append(True)
+    window._refresh_devices = lambda: refreshed.append(True)
     _forbid_enumeration(monkeypatch)
 
     # Same device set as the last refresh: nothing to do, nothing enumerated.
-    harness._check_devices(outputs, inputs)
+    window._check_devices(outputs, inputs)
     assert refreshed == []
 
     # One output gone: the window re-selects because it is idle.
-    harness._check_devices(outputs[1:], inputs)
+    window._check_devices(outputs[1:], inputs)
     assert refreshed == [True]
-    assert harness._devices_dirty is False
+    assert window._devices_dirty is False
 
 
-def test_check_devices_defers_while_the_queue_holds_the_devices(qapp, monkeypatch) -> None:
+def test_check_devices_defers_while_the_queue_holds_the_devices(
+    make_main_window, monkeypatch
+) -> None:
     outputs, inputs = _devices()
-    settings = _Settings(
-        {
-            "input_device": None,
-            "output_device": None,
-            "input_channel": 0,
-            "windows_advanced_audio_drivers": True,
-        }
-    )
-    harness = _Harness(settings)
+    settings = {
+        "input_device": None,
+        "output_device": None,
+        "input_channel": 0,
+        "windows_advanced_audio_drivers": True,
+    }
     monkeypatch.setattr("dms.ui.main_window.is_windows_audio_host", lambda: False)
     monkeypatch.setattr("dms.ui.main_window.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.main_window.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.main_window.device_channel_count", lambda _device, _kind: 2)
-    harness._refresh_devices()
+    window = _window(make_main_window, settings)
+    window._refresh_devices()
 
     refreshed: list[bool] = []
-    harness._refresh_devices = lambda: refreshed.append(True)
-    harness._queue.allows_reselect = False
+    window._refresh_devices = lambda: refreshed.append(True)
+    window._queue_target = 1
     _forbid_enumeration(monkeypatch)
 
-    harness._check_devices(outputs[1:], inputs)
+    window._check_devices(outputs[1:], inputs)
 
     assert refreshed == []
-    assert harness._devices_dirty is True
+    assert window._devices_dirty is True
 
 
-def test_sync_device_poller_pauses_while_busy(qapp) -> None:
-    settings = _Settings({"input_channel": 0, "windows_advanced_audio_drivers": True})
-    harness = _Harness(settings)
+def test_sync_device_poller_pauses_while_busy(make_main_window) -> None:
+    settings = {"input_channel": 0, "windows_advanced_audio_drivers": True}
 
     class _Poller:
         def __init__(self) -> None:
@@ -558,17 +473,21 @@ def test_sync_device_poller_pauses_while_busy(qapp) -> None:
 
     poller = _Poller()
 
-    # No poller yet: the guard must not raise during window construction.
-    harness._sync_device_poller()
+    window = _window(make_main_window, settings, stub_devices=True)
+    window._device_poller.stop()
+    del window._device_poller
 
-    harness._device_poller = poller
-    harness._sync_device_poller()
-    harness._queue.allows_reselect = False
-    harness._sync_device_poller()
-    harness._queue.allows_reselect = True
-    harness._rnd_sweep_active = True
-    harness._sync_device_poller()
-    harness._rnd_sweep_active = False
-    harness._sync_device_poller()
+    # No poller yet: the guard must not raise during window construction.
+    window._sync_device_poller()
+
+    window._device_poller = poller
+    window._sync_device_poller()
+    window._queue_target = 1
+    window._sync_device_poller()
+    window._queue_target = 0
+    window._rnd_sweep_active = True
+    window._sync_device_poller()
+    window._rnd_sweep_active = False
+    window._sync_device_poller()
 
     assert poller.paused == [False, True, True, False]

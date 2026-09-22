@@ -168,7 +168,9 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
 
     counts = [layer_sweep_count(layer) for layer in layers]
     if all(count is not None for count in counts):
-        base_weights = np.asarray([float(count) for count in counts], dtype=float)
+        base_weights = np.asarray(
+            [float(count) for count in counts if count is not None], dtype=float
+        )
     else:
         base_weights = np.ones(len(layers), dtype=float)
 

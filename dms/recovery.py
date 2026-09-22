@@ -123,7 +123,7 @@ class RecoveryManager(QObject):
         name: str,
         suffix: str,
         content_keys: tuple[str, ...],
-        save: Callable[[Mapping[str, Any], Mapping[str, Path], Path], None],
+        save: Callable[[Mapping[str, Any], Mapping[str, Path], Path], object],
         copy: Callable[[Path, Path], None],
         load: Callable[..., Any],
         validate: Callable[[dict[str, Any]], str | None],
@@ -297,7 +297,7 @@ class RecoveryManager(QObject):
         sources: dict[str, Path] = {}
         if snapshot is _PULL:
             try:
-                snapshot, sources = self._snapshot_provider()
+                snapshot, sources = self._snapshot_provider()  # type: ignore[misc]
             except Exception as exc:
                 self.save_failed.emit(str(exc))
                 return

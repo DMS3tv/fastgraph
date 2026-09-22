@@ -27,3 +27,21 @@ filterwarnings = ["default::pytest.PytestWarning"]
 
 [tool.ruff.lint.per-file-ignores]
 "tools/render_tabs.py" = ["E402"]  # environment and config patches must precede the Qt imports
+
+[tool.mypy]
+files = [
+  "dms/processing.py",
+  "dms/measurement_alignment.py",
+  "dms/measurement_layout.py",
+  "dms/hrtf.py",
+  "dms/file_io.py",
+  "dms/recovery.py",
+  "dms/curator/",
+  "dms/comparison.py",
+  "dms/two_channel.py",
+]
+ignore_missing_imports = true
+# Type-check imported dms modules, but report errors only in the files above.
+follow_imports = "silent"
+check_untyped_defs = false
+warn_unused_ignores = true

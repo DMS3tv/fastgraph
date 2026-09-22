@@ -802,7 +802,9 @@ def load_reference_from_measure_session(
         raise ValueError(f"{file_path.name} holds no usable curves.")
 
     freqs, mag_db = compute_rms_average(curves)
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
     default_name = " ".join(
         str(metadata.get(key, "")).strip()
         for key in ("brand", "model")

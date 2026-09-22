@@ -931,7 +931,7 @@ def _bluetooth_sweep_fallback_result(
         peak_correlation=float(start_result.peak_correlation),
     )
     fallback_end_result = end_result
-    if fallback_end_result is None:
+    if end_result is None:
         fallback_end_result = EndMarkerResult(
             selected_sweep_start=fallback_start,
             marker_1_start=-1,

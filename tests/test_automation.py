@@ -18,7 +18,6 @@ from dms.automation import (
 )
 from dms.measure_queue import QueueState
 from dms.ui.automation_widget import AutomationWidget
-from dms.ui.main_window import MainWindow
 
 
 def _automation_window(make_main_window, tmp_path: Path):
@@ -185,10 +184,10 @@ def test_console_command_steps_are_treated_as_risky(make_main_window, tmp_path: 
         AutomationStep(action="console_command", target="settings show"),
     ]
 
-    assert all(MainWindow._automation_step_is_risky(step) for step in risky)
-    assert not any(MainWindow._automation_step_is_risky(step) for step in safe)
-
     window = _automation_window(make_main_window, tmp_path)
+    assert all(window._automation_step_is_risky(step) for step in risky)
+    assert not any(window._automation_step_is_risky(step) for step in safe)
+
     asked: list[str] = []
     automation = AutomationDefinition(
         name="Console",

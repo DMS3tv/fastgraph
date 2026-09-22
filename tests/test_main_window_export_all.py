@@ -4,6 +4,7 @@ from types import MethodType, SimpleNamespace
 import numpy as np
 
 import dms.ui.main_window as main_window_module
+from dms.export import build_filename
 from dms.hrtf import HRTFCurve
 from dms.session import SessionData
 from dms.ui.main_window import AppState, MainWindow
@@ -103,6 +104,8 @@ def _batch_window(tmp_path: Path, hrtf: HRTFCurve):
         "_export_all_unavailable_reason",
         "_average_curve_with_hrtf",
         "_variation_from_kept_curves",
+        "_level_mode",
+        "_spl_offset_db",
     )
     return fake, events, triggers, statuses
 
@@ -141,6 +144,10 @@ def test_export_all_writes_four_named_files_with_selected_inactive_hrtf(
     comp_avg = _data_rows(tmp_path / "DMS Example GRAS COMP AVG.txt")
     assert np.allclose(raw_avg[:, 1], [12.0, 22.0])
     assert np.allclose(comp_avg[:, 1], [11.0, 20.0])
+    for name in ("RAW AVG", "COMP AVG"):
+        text = (tmp_path / f"DMS Example GRAS {name}.txt").read_text()
+        assert "* Smoothing: 1/48 octave" in text
+        assert "* Normalization: 1 kHz reference offset only" in text
     assert "* Compensated: No" in (tmp_path / "DMS Example GRAS RAW VAR.txt").read_text()
     assert "* Compensated: Yes" in (tmp_path / "DMS Example GRAS COMP VAR.txt").read_text()
     assert triggers == ["export_complete"]
@@ -278,3 +285,38 @@ def test_export_average_equals_displayed_curve(make_main_window, tmp_path: Path)
     # The file rounds frequencies to 4 and magnitudes to 6 decimal places.
     np.testing.assert_allclose(rows[:, 0], displayed[0], atol=1e-3)
     np.testing.assert_allclose(rows[:, 1], displayed[1], atol=1e-5)
+
+
+def test_export_all_comp_average_matches_export_average(
+    make_main_window, monkeypatch, tmp_path: Path
+) -> None:
+    """Export All's COMP AVG file is byte-identical to Export Average's."""
+
+    class _FixedDatetime:
+        @staticmethod
+        def now():
+            return SimpleNamespace(strftime=lambda _fmt: "2026-01-01 00:00:00")
+
+    monkeypatch.setattr("dms.export.datetime", _FixedDatetime)
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args: None)
+    window = make_main_window()
+    freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 400)
+    rng = np.random.default_rng(11)
+    window._kept_curves = [
+        (freqs, rng.normal(0.0, 3.0, freqs.size)),
+        (freqs, rng.normal(0.0, 3.0, freqs.size)),
+    ]
+    window._recompute_average()
+    window._hrtf = _standard_hrtf(tmp_path)
+    window._is_hrtf_active = lambda: True
+
+    single_dir = tmp_path / "single"
+    all_dir = tmp_path / "all"
+    single_dir.mkdir()
+    all_dir.mkdir()
+    window._export_average(str(single_dir / "average.txt"))
+    window._export_dir_input.setText(str(all_dir))
+    window._export_all_measure_outputs()
+
+    comp_name = build_filename(window._session, compensated=True)
+    assert (all_dir / comp_name).read_bytes() == (single_dir / "average.txt").read_bytes()

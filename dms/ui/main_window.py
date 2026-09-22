@@ -7507,8 +7507,14 @@ class MainWindow(QMainWindow):
                 dir=directory,
             ) as temp_name:
                 temp_dir = Path(temp_name)
-                raw_freqs, raw_mag = raw_average
-                comp_freqs, comp_mag = comp_average
+                # Same smoothed curves and header as Export Average.
+                raw_freqs, raw_mag = smooth_fractional_octave(
+                    *raw_average, fraction=_DISPLAY_AVG_SMOOTHING
+                )
+                comp_freqs, comp_mag = smooth_fractional_octave(
+                    *comp_average, fraction=_DISPLAY_AVG_SMOOTHING
+                )
+                level_mode = self._level_mode() if self._spl_offset_db() is not None else "ref_1khz"
                 export_curve(
                     freqs=raw_freqs,
                     mag_db=raw_mag,
@@ -7517,6 +7523,8 @@ class MainWindow(QMainWindow):
                     compensated=False,
                     hrtf=None,
                     n_sweeps=active_count,
+                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                    level_mode=level_mode,
                 )
                 export_curve(
                     freqs=comp_freqs,
@@ -7526,6 +7534,8 @@ class MainWindow(QMainWindow):
                     compensated=True,
                     hrtf=hrtf,
                     n_sweeps=active_count,
+                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                    level_mode=level_mode,
                 )
                 for index, variation, compensated in (
                     (2, raw_variation, False),

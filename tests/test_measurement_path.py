@@ -6,9 +6,9 @@ the stated amount and nothing else:
 1. ``normalize_at_1khz``: subtracts the linearly interpolated 1 kHz value.
 2. ``compute_rms_average``: power (not dB) mean, re-zeroed at 1 kHz only when
    ``normalize_ref`` is set.
-3. ``MainWindow._on_sweep_finished`` (1 kHz reference mode): the pending curve is
+3. The window's ``_on_sweep_finished`` (1 kHz reference mode): the pending curve is
    ``downsample_to_log_points(normalize_at_1khz(response))`` on 600 points.
-4. ``MainWindow._on_sweep_finished`` (dB SPL mode): adds exactly
+4. The window's ``_on_sweep_finished`` (dB SPL mode): adds exactly
    ``absolute_spl_offset_db(...)`` and skips the 1 kHz re-zero; an uncalibrated
    input falls back to the reference path.
 5. ``SweepWorker``: emits the aligned recording plus its tail, and the sweep

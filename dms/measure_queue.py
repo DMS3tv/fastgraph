@@ -10,9 +10,8 @@ milliseconds without a GUI or audio hardware.
 
 Design rules:
 
-- ``QueueState`` values are byte-identical to the ``AppState`` strings used by
-  the window (``dms/ui/main_window.py``), so a window field can be swapped for
-  this state with no comparison changes.
+- ``QueueState`` is a ``str`` enum, so the window (``dms/ui/main_window.py``)
+  can compare it with plain state strings.
 - :meth:`MeasurementQueue.reset` is the single place that clears sweep-scoped
   state (stage, pending curves, last diagnostics) and the counters. Every other
   method delegates to it, so no future transition can leave half of the state
@@ -47,10 +46,7 @@ from typing import Any
 
 
 class QueueState(str, Enum):
-    """Queue state names.
-
-    The values must stay equal to ``dms.ui.main_window.AppState`` strings.
-    """
+    """Queue state names."""
 
     IDLE = "idle"
     SWEEPING = "sweeping"
@@ -59,7 +55,6 @@ class QueueState(str, Enum):
 
 
 #: Total sweep attempts allowed for one queue index, including the first one.
-#: Mirrors ``_MAX_SWEEP_ATTEMPTS`` in ``dms/ui/main_window.py``.
 MAX_SWEEP_ATTEMPTS = 3
 
 
@@ -316,7 +311,7 @@ class MeasurementQueue:
         counted the attempt that just failed, so the operator is being offered
         the *next* one. That reproduces today's dialog text exactly —
         ``f"Retry attempt {self._current_sweep_attempts + 1} of
-        {_MAX_SWEEP_ATTEMPTS}?"`` in ``_on_sweep_error``.
+        {MAX_SWEEP_ATTEMPTS}?"`` in ``_on_sweep_error``.
         """
         retryable = bool(timing_failure) or (self.two_channel and not bool(device_failure))
         if self.is_active() and retryable and self.attempts < self.max_attempts:

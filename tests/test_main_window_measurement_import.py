@@ -3,10 +3,11 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from dms.ui.main_window import AppState, MainWindow
+from dms.measure_queue import QueueState
+from dms.ui.main_window import MainWindow
 
 
-def _make_fake_main_window(state: str = AppState.IDLE):
+def _make_fake_main_window(state: str = QueueState.IDLE):
     calls: dict[str, int] = {
         "recompute_average": 0,
         "recompute_variation": 0,
@@ -79,7 +80,7 @@ def test_import_dropped_measurement_files_blocked_when_busy(monkeypatch, tmp_pat
         lambda *_args, **_kwargs: None,
     )
 
-    fake, calls, status_messages = _make_fake_main_window(state=AppState.QUEUE_RUNNING)
+    fake, calls, status_messages = _make_fake_main_window(state=QueueState.QUEUE_RUNNING)
     path = tmp_path / "curve.txt"
     path.write_text("100 1\n200 2\n")
     MainWindow._import_dropped_measurement_files(fake, [str(path)])

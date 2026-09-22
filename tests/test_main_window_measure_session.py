@@ -8,11 +8,12 @@ import pytest
 from PyQt6.QtWidgets import QMessageBox
 
 import dms.ui.main_window as main_window_module
+from dms.measure_queue import QueueState
 from dms.measure_recovery import MeasureRecoveryCandidate
 from dms.measure_session import MeasureSession
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
-from dms.ui.main_window import AppState, MeasureRecoveryDialog
+from dms.ui.main_window import MeasureRecoveryDialog
 
 
 def _curve(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
@@ -239,7 +240,7 @@ def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -
     scheduled: list[dict] = []
     window._measure_recovery.schedule = lambda snapshot: scheduled.append(snapshot)
 
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._queue_target = 1
     window._queue_index = 0
     window._pending_curve = _curve()

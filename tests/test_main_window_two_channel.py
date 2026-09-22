@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 import dms.dither_fonts as dither_fonts
 import dms.ui.main_window as main_window_module
+from dms.measure_queue import QueueState
 from dms.theme import (
     DARK,
     DITHER,
@@ -20,7 +21,7 @@ from dms.theme import (
     LIGHT,
 )
 from dms.two_channel import TwoChannelCurvePair
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import MainWindow
 from dms.ui.modern_button import (
     _FLAT_LABEL_HORIZONTAL_INSET,
     _FLAT_PAINT_RECT_WIDTH_LOSS,
@@ -170,7 +171,7 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
 def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> None:
     window = _window(make_main_window)
     window._measure_balance_button.setChecked(True)
-    window._state = AppState.QUEUE_RUNNING
+    window._state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
 
     assert window._measure_submode_control.isEnabled() is False
@@ -320,7 +321,7 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
     )
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args: None)
     window._queue_target = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._two_channel_stage = 1
 
     window._on_sweep_finished(np.zeros(8), np.zeros(8))
@@ -328,7 +329,7 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
     assert window._start_second_pair_stage is True
 
     window._two_channel_stage = 2
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._on_sweep_finished(np.zeros(8), np.zeros(8))
 
     assert window._pending_pair is not None
@@ -349,7 +350,7 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     window._queue_target = 1
     window._queue_index = 0
     window._current_sweep_attempts = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._two_channel_stage = 2
     window._pending_pair_first_raw = _curve(1.0)
     window._pending_pair_first_diagnostics = object()
@@ -370,6 +371,6 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     assert window._pending_pair_first_raw is None
     assert window._pending_pair_first_diagnostics is None
     assert window._two_channel_stage == 0
-    assert window._state == AppState.QUEUE_RUNNING
+    assert window._state == QueueState.QUEUE_RUNNING
     assert window._start_next_sweep in scheduled
     window._queue_target = 0

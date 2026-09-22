@@ -340,7 +340,7 @@ def test_row22_allows_device_reselect_is_false_while_busy():
 
 
 def test_queue_state_values_match_app_state_strings():
-    # The window compares these as plain strings (AppState in main_window.py).
+    # The window compares these as plain strings.
     assert QueueState.IDLE.value == "idle"
     assert QueueState.SWEEPING.value == "sweeping"
     assert QueueState.PASS_FAIL.value == "pass_fail"

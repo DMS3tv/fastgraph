@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from dms.measure_queue import QueueState
 from dms.session import SessionData
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import MainWindow
 
 
 class _FakeButton:
@@ -55,7 +56,7 @@ class _FakeSettings:
 
 def _fake_window(*, variation_mode: bool = False):
     fake = SimpleNamespace(
-        _state=AppState.IDLE,
+        _state=QueueState.IDLE,
         _average=(np.array([100.0]), np.array([1.0])),
         _variation=(
             np.array([100.0]),

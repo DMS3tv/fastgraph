@@ -16,8 +16,9 @@ from dms.automation import (
     save_automation,
     scan_automation_directory,
 )
+from dms.measure_queue import QueueState
 from dms.ui.automation_widget import AutomationWidget
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import MainWindow
 
 
 def _automation_window(make_main_window, tmp_path: Path):
@@ -122,7 +123,7 @@ def test_manual_automation_switches_input_device_and_channel(
     make_main_window, tmp_path: Path
 ) -> None:
     window = _automation_window(make_main_window, tmp_path)
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
     window._input_devices_by_index = {
         5: {"index": 5, "name": "Input A", "hostapi": 0, "max_input_channels": 2}
     }
@@ -148,7 +149,7 @@ def test_automation_unavailable_channel_logs_failure(
     make_main_window, monkeypatch, tmp_path: Path
 ) -> None:
     window = _automation_window(make_main_window, tmp_path)
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
     monkeypatch.setattr("dms.ui.main_window.QMessageBox.warning", lambda *args, **kwargs: None)
     automation = AutomationDefinition(
         name="Bad Channel",

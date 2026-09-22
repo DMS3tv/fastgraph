@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import QGroupBox, QToolButton
 
 from dms.curator.transforms import apply_layer_transform
 from dms.hrtf import HRTFCurve
+from dms.measure_queue import QueueState
 from dms.session import SessionData
-from dms.ui.main_window import AppState
 
 
 def _window(make_main_window):
@@ -116,7 +116,7 @@ def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_m
     assert window._inputs_btn.role() == "primary"
     assert window._inputs_btn._has_persistent_outline()
 
-    window._state = AppState.QUEUE_RUNNING
+    window._state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
     assert window._inputs_btn.isEnabled()
     assert not window._out_dev_combo.isEnabled()

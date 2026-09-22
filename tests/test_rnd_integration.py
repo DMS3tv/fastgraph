@@ -18,11 +18,12 @@ from PyQt6.QtWidgets import (
 import dms.ui.main_window as main_window_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.hrtf import HRTFCurve
+from dms.measure_queue import QueueState
 from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
 from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95
-from dms.ui.main_window import AppState, MainWindow, RnDReviewDialog
+from dms.ui.main_window import MainWindow, RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 
 
@@ -119,7 +120,7 @@ def test_rnd_toolbar_uses_compact_stacked_rows(qapp, make_main_window) -> None:
 
 def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
     window = make_main_window()
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._input_device_labels_by_index = {1: "Input A"}
     window._output_device_labels_by_index = {2: "Output A"}
@@ -175,7 +176,7 @@ def test_rnd_selected_item_photo_panel_tracks_measurement_photos(make_main_windo
 
 def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
     window = make_main_window()
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._rnd_widget.set_review_curve(window._pending_curve)
     window._start_rnd_measurement = lambda: None
@@ -892,11 +893,11 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
     window._sync_export_button()
     assert window._send_to_rnd_btn.isEnabled()
 
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._sync_export_button()
     assert not window._send_to_rnd_btn.isEnabled()
     assert "idle" in window._send_to_rnd_btn.toolTip().lower()
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
 
 
 def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(

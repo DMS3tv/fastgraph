@@ -6,9 +6,9 @@ import numpy as np
 from PyQt6.QtWidgets import QLabel
 
 import dms.ui.main_window as main_window_module
+from dms.measure_queue import QueueState
 from dms.ui.dual_plot_widget import _AVERAGE_TITLE, _DELTA_TITLE
 from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
-from dms.ui.main_window import AppState
 
 
 def _curve() -> tuple[np.ndarray, np.ndarray]:
@@ -129,7 +129,7 @@ def test_delta_view_needs_a_target(make_main_window) -> None:
 
 def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._queue_target = 1
     window._queue_index = 0
     window._pending_curve = _curve()
@@ -147,12 +147,12 @@ def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -
         assert summary in texts
     finally:
         window._close_pass_fail_dialog()
-        window._state = AppState.IDLE
+        window._state = QueueState.IDLE
 
 
 def test_keeping_appends_a_match_percentage(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._queue_target = 2
     window._queue_index = 0
     window._pending_curve = _curve()

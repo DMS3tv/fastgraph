@@ -31,6 +31,7 @@ from dms.console import ConsoleEventStore
 from dms.curator.models import CurveData
 from dms.curator.transforms import apply_layer_transform
 from dms.export import export_curve
+from dms.measure_queue import QueueState
 from dms.measurement_alignment import MeasurementDiagnostics
 from dms.processing import (
     absolute_spl_offset_db,
@@ -41,7 +42,6 @@ from dms.processing import (
 )
 from dms.session import SessionData
 from dms.ui.curator_widget import CuratorWidget
-from dms.ui.main_window import AppState
 
 _FREQS = np.logspace(np.log10(20.0), np.log10(20000.0), 4000)
 # Arbitrary shape with a non-zero 1 kHz level, so any re-zero is visible.
@@ -58,7 +58,7 @@ def _sweep_ready_window(make_main_window, monkeypatch, settings=None):
     monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args: None)
     window._distortion_analysis_allowed = lambda: False
     window._queue_target = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     return window
 
 

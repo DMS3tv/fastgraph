@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
 
 from dms import audio_engine
-from dms.ui.main_window import AppState, MainWindow
+from dms.measure_queue import QueueState
+from dms.ui.main_window import MainWindow
 
 
 class _Settings:
@@ -66,7 +67,7 @@ class _Harness:
 
     def __init__(self, settings: _Settings) -> None:
         self._settings = settings
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._out_dev_combo = QComboBox()
         self._in_dev_combo = QComboBox()
         self._ch_combo = QComboBox()

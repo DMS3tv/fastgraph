@@ -6,8 +6,9 @@ import numpy as np
 import dms.ui.main_window as main_window_module
 from dms.export import build_filename
 from dms.hrtf import HRTFCurve
+from dms.measure_queue import QueueState
 from dms.session import SessionData
-from dms.ui.main_window import AppState, MainWindow
+from dms.ui.main_window import MainWindow
 
 
 class _Button:
@@ -86,7 +87,7 @@ def _batch_window(tmp_path: Path, hrtf: HRTFCurve):
     triggers: list[str] = []
     statuses: list[str] = []
     fake = SimpleNamespace(
-        _state=AppState.IDLE,
+        _state=QueueState.IDLE,
         _average=(freqs, np.array([12.0, 22.0])),
         _kept_curves=kept,
         _hrtf=hrtf,
@@ -239,7 +240,7 @@ def test_measure_action_switches_between_squiglink_and_export_all() -> None:
 def test_brand_export_all_button_reports_missing_requirements() -> None:
     fake = SimpleNamespace(
         _theme_controller=SimpleNamespace(brand_mode=True),
-        _state=AppState.IDLE,
+        _state=QueueState.IDLE,
         _average=None,
         _variation=None,
         _kept_curves=[],

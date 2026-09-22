@@ -116,7 +116,7 @@ from dms.measure_persistence import (
 from dms.measure_persistence import (
     same_session_file as same_measure_session_file,
 )
-from dms.measure_queue import MeasurementQueue, QueueState
+from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
 from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
 from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
 from dms.measurement_alignment import (
@@ -212,14 +212,6 @@ from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
 from dms.version import __version__
-
-
-class AppState:
-    IDLE = "idle"
-    SWEEPING = "sweeping"
-    PASS_FAIL = "pass_fail"
-    QUEUE_RUNNING = "queue_running"
-
 
 _MEASUREMENT_F_MIN = 20.0
 _MEASUREMENT_F_MAX = 20000.0
@@ -335,7 +327,6 @@ class MeasureRecoveryDialog(QDialog):
         self.accept()
 
 
-_MAX_SWEEP_ATTEMPTS = 3
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 HRTF_DIR = ROOT_DIR / "HRTFs"
@@ -1260,7 +1251,7 @@ class MainWindow(QMainWindow):
         theme_controller: ThemeController | None = None,
     ) -> None:
         super().__init__()
-        self._queue = MeasurementQueue(max_attempts=_MAX_SWEEP_ATTEMPTS)
+        self._queue = MeasurementQueue(max_attempts=MAX_SWEEP_ATTEMPTS)
         self._session = session
         self._settings = settings
         if theme_controller is None:
@@ -1276,7 +1267,7 @@ class MainWindow(QMainWindow):
         # is shown once rather than after every sweep.
         self._spl_uncalibrated_warned = False
 
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
         self._average: tuple[np.ndarray, np.ndarray] | None = None
         self._variation: (
@@ -1538,7 +1529,7 @@ class MainWindow(QMainWindow):
             self._settings_widget.refresh_from_settings()
 
     def _on_two_channel_toggled(self, _state: int) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             self._two_channel_toggle.blockSignals(True)
             self._two_channel_toggle.setChecked(self._two_channel_enabled)
             self._two_channel_toggle.blockSignals(False)
@@ -1627,7 +1618,7 @@ class MainWindow(QMainWindow):
     def _start_channel_balance(self) -> None:
         if self._channel_balance_active:
             return
-        if self._state != AppState.IDLE or not self._channel_balance_mode_active():
+        if self._state != QueueState.IDLE or not self._channel_balance_mode_active():
             return
         if not self._two_channel_devices_ready():
             QMessageBox.warning(
@@ -1955,7 +1946,7 @@ class MainWindow(QMainWindow):
         )
 
     def _shortcut_fail_review(self) -> None:
-        if self._state != AppState.PASS_FAIL:
+        if self._state != QueueState.PASS_FAIL:
             return
         if self._rnd_review_dialog is not None:
             self._rnd_review_dialog._accept_fail()
@@ -2404,7 +2395,7 @@ class MainWindow(QMainWindow):
         raise ValueError(f"Automation tab target not found: {target}")
 
     def _automation_switch_input_device(self, requested: str) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             raise ValueError("Input device can only be changed while idle.")
         text = requested.strip()
         for index in range(self._in_dev_combo.count()):
@@ -2416,7 +2407,7 @@ class MainWindow(QMainWindow):
         raise ValueError(f"Input device unavailable: {requested}")
 
     def _automation_switch_input_channel(self, requested: str) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             raise ValueError("Input channel can only be changed while idle.")
         raw = requested.strip().lower()
         text = raw.removeprefix("ch").strip()
@@ -2566,7 +2557,7 @@ class MainWindow(QMainWindow):
             self._command_reply(f"{name} = {value}{session}")
             return
         if len(args) == 3 and args[0] == "set":
-            if self._state != AppState.IDLE:
+            if self._state != QueueState.IDLE:
                 raise ValueError("Settings can only be changed while idle.")
             name = args[1].lower()
             value = self._parse_console_setting(name, args[2])
@@ -2673,7 +2664,7 @@ class MainWindow(QMainWindow):
 
     def _run_measure_command(self, args: list[str]) -> None:
         if args and args[0] == "start" and len(args) <= 3:
-            if self._state != AppState.IDLE:
+            if self._state != QueueState.IDLE:
                 raise ValueError("A measurement can only be started while idle.")
             if self._channel_balance_mode_active() or self._channel_balance_active:
                 raise ValueError(
@@ -2695,19 +2686,19 @@ class MainWindow(QMainWindow):
             self._start_queue()
             return
         if args == ["pass"]:
-            if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+            if self._state != QueueState.PASS_FAIL or self._pending_curve is None:
                 raise ValueError("There is no measurement awaiting review.")
             self._log_event("INFO", "review", "Measurement passed from console")
             self._on_keep()
             return
         if args == ["fail"]:
-            if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+            if self._state != QueueState.PASS_FAIL or self._pending_curve is None:
                 raise ValueError("There is no measurement awaiting review.")
             self._log_event("WARNING", "review", "Measurement failed from console")
             self._on_fail()
             return
         if args == ["cancel"]:
-            if self._state == AppState.IDLE and not self._queue_active():
+            if self._state == QueueState.IDLE and not self._queue_active():
                 raise ValueError("There is no active measurement queue to cancel.")
             self._cancel_queue()
             return
@@ -2762,19 +2753,19 @@ class MainWindow(QMainWindow):
         if len(args) > 2:
             raise ValueError("Export paths containing spaces must be quoted.")
         if kind == "average":
-            if self._state != AppState.IDLE:
+            if self._state != QueueState.IDLE:
                 raise ValueError("Average export is only available while idle.")
             if self._bottom_curve_for_display_and_export() is None:
                 raise ValueError("No averaged curve is available yet.")
             self._export_average(path)
         elif kind == "variation":
-            if self._state != AppState.IDLE:
+            if self._state != QueueState.IDLE:
                 raise ValueError("Variation export is only available while idle.")
             if self._variation is None:
                 raise ValueError("No variation band is available yet.")
             self._export_variation(path)
         elif kind == "squiglink" and path is None:
-            if self._state != AppState.IDLE:
+            if self._state != QueueState.IDLE:
                 raise ValueError("Squiglink upload is only available while idle.")
             self._upload_to_squiglink()
         elif kind == "log":
@@ -3761,13 +3752,13 @@ class MainWindow(QMainWindow):
             idx for idx, _name, _hostapi in current_out
         } or selected_in not in {idx for idx, _name, _hostapi in current_in}
 
-        if selected_vanished and self._state != AppState.IDLE:
+        if selected_vanished and self._state != QueueState.IDLE:
             # Whether a sweep is running, a pair is between channels, or a
             # review is open: the device is gone, so the queue is over.
             self._abort_active_sweep()
             self._close_pass_fail_dialog()
             self._queue.reset()
-            self._state = AppState.IDLE
+            self._state = QueueState.IDLE
             self._update_queue_progress()
             self._apply_state_ui()
             self._statusbar.showMessage(
@@ -3794,7 +3785,7 @@ class MainWindow(QMainWindow):
         self._level_monitor.stop()
         self._dual_level_monitor.stop()
 
-        if self._state == AppState.SWEEPING or self._channel_balance_active:
+        if self._state == QueueState.SWEEPING or self._channel_balance_active:
             return
 
         input_device = self._current_input_device()
@@ -3981,9 +3972,9 @@ class MainWindow(QMainWindow):
             self._devices_dirty = False
             self._refresh_devices()
         self._sync_device_poller()
-        idle = self._state == AppState.IDLE
-        pass_fail = self._state == AppState.PASS_FAIL
-        busy = self._state in {AppState.SWEEPING, AppState.QUEUE_RUNNING}
+        idle = self._state == QueueState.IDLE
+        pass_fail = self._state == QueueState.PASS_FAIL
+        busy = self._state in {QueueState.SWEEPING, QueueState.QUEUE_RUNNING}
         balance_mode = self._channel_balance_mode_active()
 
         single_device_ok = (
@@ -4049,7 +4040,7 @@ class MainWindow(QMainWindow):
         self._sync_export_button()
 
     def _start_queue(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return
 
         # The Measure button is disabled in Channel Balance mode, but the
@@ -4132,14 +4123,14 @@ class MainWindow(QMainWindow):
         )
         self._queue_progress_label.setText(f"Kept: {kept_count}")
 
-        self._state = AppState.QUEUE_RUNNING
+        self._state = QueueState.QUEUE_RUNNING
         self._apply_state_ui()
         self._statusbar.showMessage("Queue started.")
         self._start_next_sweep()
 
     def _start_next_sweep(self, *, second_stage: bool = False) -> None:
         if not self._queue_active():
-            self._state = AppState.IDLE
+            self._state = QueueState.IDLE
             self._apply_state_ui()
             return
 
@@ -4157,7 +4148,7 @@ class MainWindow(QMainWindow):
                 self._pending_pair_first_raw = None
                 self._pending_pair_first_diagnostics = None
         self._stop_channel_balance()
-        self._state = AppState.SWEEPING
+        self._state = QueueState.SWEEPING
         self._apply_state_ui()
         self._sweep_progress.setValue(0)
 
@@ -4292,7 +4283,7 @@ class MainWindow(QMainWindow):
                     self._pending_pair_first_raw = (freqs, mag_db)
                     self._pending_pair_first_diagnostics = self._last_measurement_diagnostics
                     self._start_second_pair_stage = True
-                    self._state = AppState.QUEUE_RUNNING
+                    self._state = QueueState.QUEUE_RUNNING
                     self._apply_state_ui()
                     self._statusbar.showMessage("Channel 1/L complete. Starting channel 2/R.")
                     return
@@ -4332,7 +4323,7 @@ class MainWindow(QMainWindow):
                     channel_1_diagnostics=self._pending_pair_first_diagnostics,
                     channel_2_diagnostics=self._last_measurement_diagnostics,
                 )
-                self._state = AppState.PASS_FAIL
+                self._state = QueueState.PASS_FAIL
                 self._apply_state_ui()
                 self._update_plots(show_pending=True)
                 self._statusbar.showMessage("Two-channel pair complete. Waiting for review.")
@@ -4357,7 +4348,7 @@ class MainWindow(QMainWindow):
                 input_points=len(freqs),
                 output_points=len(freqs_ds),
             )
-            self._state = AppState.PASS_FAIL
+            self._state = QueueState.PASS_FAIL
             self._apply_state_ui()
             self._update_plots(show_pending=True)
             timing_msg = ""
@@ -4431,7 +4422,7 @@ class MainWindow(QMainWindow):
         if (
             self._queue_active()
             and (is_timing_quality_error or retry_complete_pair)
-            and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS
+            and self._current_sweep_attempts < MAX_SWEEP_ATTEMPTS
         ):
             diagnostics_text = ""
             if (
@@ -4441,7 +4432,7 @@ class MainWindow(QMainWindow):
                 diagnostics_text = "\n\n" + format_diagnostics_summary(
                     self._last_measurement_diagnostics
                 )
-            self._state = AppState.QUEUE_RUNNING
+            self._state = QueueState.QUEUE_RUNNING
             self._apply_state_ui()
             self._start_level_monitor()
             retry_subject = (
@@ -4451,7 +4442,7 @@ class MainWindow(QMainWindow):
             )
             retry_msg = (
                 f"{message}\n\n{retry_subject}\n"
-                f"Retry attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?"
+                f"Retry attempt {self._current_sweep_attempts + 1} of {MAX_SWEEP_ATTEMPTS}?"
                 f"{diagnostics_text}"
             )
             choice = QMessageBox.question(
@@ -4464,7 +4455,7 @@ class MainWindow(QMainWindow):
             if choice == QMessageBox.StandardButton.Yes:
                 self._statusbar.showMessage(
                     f"{message} Retrying measurement {self._queue_index + 1} "
-                    f"({self._current_sweep_attempts}/{_MAX_SWEEP_ATTEMPTS})..."
+                    f"({self._current_sweep_attempts}/{MAX_SWEEP_ATTEMPTS})..."
                 )
                 QTimer.singleShot(150, self._start_next_sweep)
                 return
@@ -4486,7 +4477,7 @@ class MainWindow(QMainWindow):
         # Terminal: the queue is over. A full reset clears the counters too, so
         # no phantom queue survives in the progress bar or the console.
         self._queue.reset()
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._update_queue_progress()
         self._apply_state_ui()
         self._start_level_monitor()
@@ -4498,11 +4489,11 @@ class MainWindow(QMainWindow):
             self._start_second_pair_stage = False
             QTimer.singleShot(0, self._start_second_two_channel_sweep)
             return
-        if self._state != AppState.PASS_FAIL:
+        if self._state != QueueState.PASS_FAIL:
             self._start_level_monitor()
 
     def _on_keep(self) -> None:
-        if self._state != AppState.PASS_FAIL:
+        if self._state != QueueState.PASS_FAIL:
             return
 
         if self._two_channel_enabled:
@@ -4526,7 +4517,7 @@ class MainWindow(QMainWindow):
             if self._queue_index >= self._queue_target:
                 self._finish_queue()
                 return
-            self._state = AppState.QUEUE_RUNNING
+            self._state = QueueState.QUEUE_RUNNING
             self._apply_state_ui()
             self._start_next_sweep()
             return
@@ -4573,12 +4564,12 @@ class MainWindow(QMainWindow):
             self._finish_queue()
             return
 
-        self._state = AppState.QUEUE_RUNNING
+        self._state = QueueState.QUEUE_RUNNING
         self._apply_state_ui()
         self._start_next_sweep()
 
     def _on_fail(self) -> None:
-        if self._state != AppState.PASS_FAIL:
+        if self._state != QueueState.PASS_FAIL:
             return
 
         self._close_pass_fail_dialog()
@@ -4587,7 +4578,7 @@ class MainWindow(QMainWindow):
         # attempts that produced the rejected sweep were not timing failures.
         self._queue.reset(keep_counters=True)
         self._current_sweep_attempts = 0
-        self._state = AppState.QUEUE_RUNNING
+        self._state = QueueState.QUEUE_RUNNING
         self._apply_state_ui()
         self._update_plots()
         self._statusbar.showMessage(
@@ -4600,7 +4591,7 @@ class MainWindow(QMainWindow):
         self._close_pass_fail_dialog()
         # One reset clears the counters and every pending curve or pair.
         self._queue.reset()
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._sweep_progress.setValue(0)
         self._update_queue_progress()
         self._update_plots()
@@ -4610,7 +4601,7 @@ class MainWindow(QMainWindow):
 
     def _finish_queue(self) -> None:
         self._queue.reset()
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
         self._start_level_monitor()
@@ -4633,7 +4624,7 @@ class MainWindow(QMainWindow):
             if self._two_channel_enabled
             else self._pending_curve is not None
         )
-        if self._state != AppState.PASS_FAIL or not pending_available:
+        if self._state != QueueState.PASS_FAIL or not pending_available:
             return
 
         if self._pass_fail_dialog is not None:
@@ -4684,7 +4675,7 @@ class MainWindow(QMainWindow):
         dlg.close()
 
     def _start_rnd_measurement(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return
         if self._current_output_device() is None:
             QMessageBox.warning(self, "No Output Device", "Select an output device.")
@@ -4729,7 +4720,7 @@ class MainWindow(QMainWindow):
     def _start_rnd_sweep(self) -> None:
         self._stop_channel_balance()
         self._current_sweep_attempts += 1
-        self._state = AppState.SWEEPING
+        self._state = QueueState.SWEEPING
         self._apply_state_ui()
         self._rnd_widget.set_status(f"Sweeping attempt {self._current_sweep_attempts}...")
         self._sweep_progress.setValue(0)
@@ -4821,7 +4812,7 @@ class MainWindow(QMainWindow):
             )
             self._pending_curve = (freqs_ds, mag_ds)
             self._rnd_widget.set_review_curve(self._pending_curve)
-            self._state = AppState.PASS_FAIL
+            self._state = QueueState.PASS_FAIL
             self._apply_state_ui()
             self._rnd_widget.set_status("Sweep complete. Waiting for review.")
             self._statusbar.showMessage("R&D sweep complete. Waiting for review.")
@@ -4841,22 +4832,22 @@ class MainWindow(QMainWindow):
             message=message,
             failure_reason=failure_reason,
         )
-        if is_timing_quality_error and self._current_sweep_attempts < _MAX_SWEEP_ATTEMPTS:
+        if is_timing_quality_error and self._current_sweep_attempts < MAX_SWEEP_ATTEMPTS:
             choice = QMessageBox.question(
                 self,
                 "Timing Quality Retry",
-                f"{message}\n\nRetry R&D measurement attempt {self._current_sweep_attempts + 1} of {_MAX_SWEEP_ATTEMPTS}?",
+                f"{message}\n\nRetry R&D measurement attempt {self._current_sweep_attempts + 1} of {MAX_SWEEP_ATTEMPTS}?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
             )
             if choice == QMessageBox.StandardButton.Yes:
-                self._state = AppState.IDLE
+                self._state = QueueState.IDLE
                 self._apply_state_ui()
                 QTimer.singleShot(150, self._start_rnd_sweep)
                 return
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
         self._start_level_monitor()
@@ -4865,7 +4856,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "R&D Sweep Error", message)
 
     def _show_rnd_review_dialog(self) -> None:
-        if self._state != AppState.PASS_FAIL or self._pending_curve is None:
+        if self._state != QueueState.PASS_FAIL or self._pending_curve is None:
             return
         if self._rnd_review_dialog is not None:
             self._rnd_review_dialog.raise_()
@@ -4896,7 +4887,7 @@ class MainWindow(QMainWindow):
         if choice == RnDReviewDialog.FAIL:
             self._rnd_widget.set_review_curve(None)
             self._pending_curve = None
-            self._state = AppState.IDLE
+            self._state = QueueState.IDLE
             self._apply_state_ui()
             self._statusbar.showMessage("R&D measurement rejected. Redoing...")
             QTimer.singleShot(100, self._start_rnd_measurement)
@@ -4942,7 +4933,7 @@ class MainWindow(QMainWindow):
         self._pending_curve = None
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
         self._start_level_monitor()
@@ -4960,7 +4951,7 @@ class MainWindow(QMainWindow):
         self._pending_curve = None
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
-        self._state = AppState.IDLE
+        self._state = QueueState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
         self._start_level_monitor()
@@ -5401,7 +5392,7 @@ class MainWindow(QMainWindow):
         chosen = "dbspl" if chosen == "dbspl" else "ref_1khz"
         if chosen == self._level_mode():
             return
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -5476,7 +5467,7 @@ class MainWindow(QMainWindow):
             )
             self._statusbar.showMessage("Measurement import blocked: Two Channel mode is active.")
             return
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -5528,7 +5519,7 @@ class MainWindow(QMainWindow):
         )
 
     def _clear_all(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -5603,7 +5594,7 @@ class MainWindow(QMainWindow):
         return dialog.clickedButton() is clear_button, dont_show.isChecked()
 
     def _undo_last_measurement(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -5853,7 +5844,7 @@ class MainWindow(QMainWindow):
         self._export_average()
 
     def _send_to_curator(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             raise ValueError("Measurements can only be sent to Curator while idle.")
 
         mode = self._bottom_view_mode()
@@ -5968,7 +5959,7 @@ class MainWindow(QMainWindow):
         return f"{base} ({suffix})"
 
     def _measure_to_rnd_unavailable_reason(self) -> str:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return "Measurements can only be sent to R&D while Measure is idle."
         if self._channel_balance_mode_active():
             return "Switch to Frequency Response before sending data to R&D."
@@ -6104,7 +6095,7 @@ class MainWindow(QMainWindow):
         )
 
     def _send_rnd_to_curator(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return
         measurement = self._rnd_widget.selected_measurement()
         group = self._rnd_widget.selected_group()
@@ -6199,7 +6190,7 @@ class MainWindow(QMainWindow):
         self._log_event("INFO", "rnd", "R&D item sent to Curator", name=layer.name, kind=curve.kind)
 
     def _export_rnd_selected(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return
         measurement = self._rnd_widget.selected_measurement()
         group = self._rnd_widget.selected_group()
@@ -6603,7 +6594,7 @@ class MainWindow(QMainWindow):
         self._refresh_window_title()
 
     def _new_measure_session(self) -> None:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -6672,7 +6663,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _load_measure_session(self, requested_path: str | None = None) -> bool:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             QMessageBox.information(
                 self,
                 "Busy",
@@ -7265,7 +7256,7 @@ class MainWindow(QMainWindow):
         return bool(controller is not None and controller.brand_mode)
 
     def _export_all_unavailable_reason(self) -> str:
-        if self._state != AppState.IDLE:
+        if self._state != QueueState.IDLE:
             return "Export All is available while Measure is idle."
         active_average = (
             self._active_two_channel_average()
@@ -7490,7 +7481,7 @@ class MainWindow(QMainWindow):
             self._run_automation_trigger("export_complete")
 
     def _sync_export_button(self) -> None:
-        idle = self._state == AppState.IDLE
+        idle = self._state == QueueState.IDLE
         two_channel = bool(getattr(self, "_two_channel_enabled", False))
         frequency_mode = not MainWindow._channel_balance_mode_active(self)
         active_average = self._active_two_channel_average() if two_channel else self._average

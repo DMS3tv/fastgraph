@@ -11,7 +11,6 @@ import pytest
 import dms.ui.main_window as main_window_module
 from dms.measure_queue import MeasurementQueue, QueueState
 from dms.two_channel import TwoChannelCurvePair
-from dms.ui.main_window import AppState
 
 
 def _curve(level: float = 0.0):
@@ -44,9 +43,9 @@ def test_state_shims_round_trip_through_the_queue(make_main_window) -> None:
     window = make_main_window()
     assert isinstance(window._queue, MeasurementQueue)
 
-    window._state = AppState.QUEUE_RUNNING
+    window._state = QueueState.QUEUE_RUNNING
     assert window._queue.state is QueueState.QUEUE_RUNNING
-    assert window._state == AppState.QUEUE_RUNNING
+    assert window._state == QueueState.QUEUE_RUNNING
 
     window._queue_target = 4
     window._queue_index = 2
@@ -58,7 +57,7 @@ def test_state_shims_round_trip_through_the_queue(make_main_window) -> None:
     window._queue.reset()
     assert window._queue_target == 0
     assert window._pending_curve is None
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
 
 
 def test_terminal_error_resets_queue_counters(make_main_window, monkeypatch) -> None:
@@ -68,11 +67,11 @@ def test_terminal_error_resets_queue_counters(make_main_window, monkeypatch) -> 
     window._queue_target = 3
     window._queue_index = 1
     window._current_sweep_attempts = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
 
     window._on_sweep_error("Selected device is unavailable.")
 
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert window._queue_active() is False
     assert (window._queue_target, window._queue_index, window._current_sweep_attempts) == (0, 0, 0)
     assert calls["question"] == 0
@@ -88,24 +87,24 @@ def test_manual_fail_restores_the_retry_budget(make_main_window, monkeypatch) ->
     window._queue_index = 0
     window._current_sweep_attempts = 2
     window._pending_curve = _curve()
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
 
     window._on_fail()
 
     assert window._current_sweep_attempts == 0
     assert window._queue_index == 0
     assert window._pending_curve is None
-    assert window._state == AppState.QUEUE_RUNNING
+    assert window._state == QueueState.QUEUE_RUNNING
     assert started == [True]
     window._queue.reset()
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
 
 
 def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
     """B6: Cancel Queue must drop the half-finished pair."""
     window = make_main_window(settings={"measure_two_channel_enabled": True})
     window._queue_target = 2
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
     window._two_channel_stage = 2
     window._pending_pair = _pair()
     window._pending_pair_first_raw = _curve()
@@ -113,7 +112,7 @@ def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
 
     window._cancel_queue()
 
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert window._pending_pair is None
     assert window._pending_pair_first_raw is None
     assert window._pending_pair_first_diagnostics is None
@@ -128,14 +127,14 @@ def test_device_error_is_terminal_in_two_channel_mode(make_main_window, monkeypa
     window._queue_target = 2
     window._queue_index = 0
     window._current_sweep_attempts = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._two_channel_stage = 1
 
     window._on_sweep_error("Input device unavailable: Scarlett 2i2")
 
     assert calls["question"] == 0
     assert calls["warning"] == 1
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert window._queue_active() is False
 
 
@@ -145,17 +144,17 @@ def test_stream_error_still_offers_pair_retry(make_main_window, monkeypatch) -> 
     window._queue_target = 2
     window._queue_index = 0
     window._current_sweep_attempts = 1
-    window._state = AppState.SWEEPING
+    window._state = QueueState.SWEEPING
     window._two_channel_stage = 2
     window._pending_pair_first_raw = _curve()
 
     window._on_sweep_error("Channel 2 stream failed.")
 
     assert calls["question"] == 1
-    assert window._state == AppState.QUEUE_RUNNING
+    assert window._state == QueueState.QUEUE_RUNNING
     assert window._pending_pair_first_raw is None
     window._queue.reset()
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
 
 
 def test_shortcut_and_console_start_are_blocked_in_channel_balance(
@@ -169,12 +168,12 @@ def test_shortcut_and_console_start_are_blocked_in_channel_balance(
     window._tabs.setCurrentIndex(0)
 
     window._shortcut_start_measurement()
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert "Channel Balance" in window._statusbar.currentMessage()
 
     with pytest.raises(ValueError, match="Channel Balance"):
         window._run_measure_command(["start"])
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
 
 
 def test_starting_a_sweep_stops_the_channel_balance_generator(
@@ -184,7 +183,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
     stopped = []
     monkeypatch.setattr(window, "_stop_channel_balance", lambda: stopped.append(True))
     window._queue_target = 0
-    window._state = AppState.QUEUE_RUNNING
+    window._state = QueueState.QUEUE_RUNNING
 
     # No active queue: returns to idle without starting hardware, but the
     # generator stop is unconditional on any sweep start path.
@@ -195,7 +194,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
     window._start_next_sweep()
 
     assert stopped == [True]
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert calls["warning"] == 1
 
 
@@ -217,7 +216,7 @@ def test_device_poll_is_deferred_while_the_queue_runs(make_main_window, monkeypa
     window._last_output_devices = []
     window._last_input_devices = []
     window._queue_target = 2
-    window._state = AppState.QUEUE_RUNNING
+    window._state = QueueState.QUEUE_RUNNING
 
     window._check_devices()
 
@@ -225,7 +224,7 @@ def test_device_poll_is_deferred_while_the_queue_runs(make_main_window, monkeypa
     assert window._devices_dirty is True
 
     window._queue.reset()
-    window._state = AppState.IDLE
+    window._state = QueueState.IDLE
     window._apply_state_ui()
 
     assert refreshed == [True]
@@ -243,11 +242,11 @@ def test_vanished_device_aborts_even_during_review(make_main_window, monkeypatch
     window._last_input_devices = [(2, "In", 0)]
     window._queue_target = 2
     window._pending_curve = _curve()
-    window._state = AppState.PASS_FAIL
+    window._state = QueueState.PASS_FAIL
 
     window._check_devices()
 
-    assert window._state == AppState.IDLE
+    assert window._state == QueueState.IDLE
     assert window._queue_active() is False
     assert window._pending_curve is None
 

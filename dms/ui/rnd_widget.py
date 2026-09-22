@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from collections.abc import Iterable
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 from uuid import uuid4
 
@@ -92,24 +92,20 @@ _LOG = logging.getLogger(__name__)
 #: Trailing " (3)" count suffix that group rows show after their name.
 _GROUP_COUNT_SUFFIX = re.compile(r"\s\(\d+\)$")
 
-#: Parsed HRTF files keyed by (path, mtime_ns, size). A redraw asks for the
-#: same handful of files once per measurement; without this every one of those
-#: reads and interpolates the file again.
-_HRTF_CACHE: dict[tuple[str, int, int], HRTFCurve] = {}
-_HRTF_CACHE_LIMIT = 24
-
 
 def cached_hrtf_curve(path: str) -> HRTFCurve:
-    """Return a parsed ``HRTFCurve``, reusing one while the file is unchanged."""
+    """Return a parsed ``HRTFCurve``, reusing one while the file is unchanged.
+
+    A redraw asks for the same handful of files once per measurement; without
+    the cache every one of those reads and interpolates the file again.
+    """
     stat = os.stat(path)
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    curve = _HRTF_CACHE.get(key)
-    if curve is None:
-        curve = HRTFCurve(path)
-        if len(_HRTF_CACHE) >= _HRTF_CACHE_LIMIT:
-            _HRTF_CACHE.clear()
-        _HRTF_CACHE[key] = curve
-    return curve
+    return _parsed_hrtf_curve(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=24)
+def _parsed_hrtf_curve(path: str, _mtime_ns: int, _size: int) -> HRTFCurve:
+    return HRTFCurve(path)
 
 
 def _configure_plot(plot: pg.PlotWidget) -> None:

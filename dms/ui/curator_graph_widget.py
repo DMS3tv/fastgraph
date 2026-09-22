@@ -16,6 +16,7 @@ from dms.graph_display import (
     FREQUENCY_TICKS,
     add_bounds_band,
     add_variation_band,
+    retro_step_band,
     retro_step_group,
     retro_step_series,
     stipple_trace_pen,
@@ -352,42 +353,29 @@ class GraphWidget(LockedPlotWidget):
             return
         if curve.kind != "variation":
             return
-        if not _has_variation(curve):
+        try:
+            bands = curve.bands()
+        except ValueError:
             return
         qcolor = self._display_color(color)
         outer = QColor(qcolor)
         outer.setAlpha(55)
         inner = QColor(qcolor)
         inner.setAlpha(95)
-        assert curve.p10_db is not None and curve.p25_db is not None
-        assert curve.p75_db is not None and curve.p90_db is not None and curve.median_db is not None
-        freqs, p10, p25, median_values, p75, p90 = _trim_series_group(
-            curve.freqs,
-            (curve.p10_db, curve.p25_db, curve.median_db, curve.p75_db, curve.p90_db),
-            progress,
-        )
-        if len(freqs) < 2:
+        band = VariationBand(*_trim_series_group(curve.freqs, bands, progress))
+        if len(band.freqs) < 2:
             return
         if self._uses_retro_steps():
-            freqs, p10, p25, median_values, p75, p90 = retro_step_group(
-                freqs, (p10, p25, median_values, p75, p90)
-            )
+            band = retro_step_band(band)
         self._items.extend(
             add_variation_band(
                 self,
-                VariationBand(freqs, p10, p25, median_values, p75, p90),
+                band,
                 outer_brush=outer,
                 inner_brush=inner,
                 median_pen=pg.mkPen(qcolor, width=2.2),
             )
         )
-
-
-def _has_variation(curve: CurveData) -> bool:
-    return all(
-        value is not None
-        for value in (curve.p10_db, curve.p25_db, curve.median_db, curve.p75_db, curve.p90_db)
-    )
 
 
 def _trim_series(

@@ -1375,7 +1375,7 @@ def test_rnd_hrtf_files_are_parsed_once_per_file_version(tmp_path, monkeypatch) 
     """C11: a redraw reuses one parsed HRTF instead of re-reading per row."""
     path = tmp_path / "hrtf.txt"
     path.write_text("100 1\n1000 2\n", encoding="utf-8")
-    rnd_widget_module._HRTF_CACHE.clear()
+    rnd_widget_module._parsed_hrtf_curve.cache_clear()
     reads: list[str] = []
 
     real_curve = rnd_widget_module.HRTFCurve
@@ -1397,7 +1397,7 @@ def test_rnd_hrtf_files_are_parsed_once_per_file_version(tmp_path, monkeypatch) 
     third = rnd_widget_module.cached_hrtf_curve(str(path))
     assert third is not first
     assert len(reads) == 2
-    rnd_widget_module._HRTF_CACHE.clear()
+    rnd_widget_module._parsed_hrtf_curve.cache_clear()
 
 
 def test_rnd_photo_caption_survives_removing_another_photo(

@@ -1,12 +1,10 @@
 import time
-from types import SimpleNamespace
 
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QMessageBox
 
 from dms.secure_store import decrypt_credentials
 from dms.session import SessionData
-from dms.ui.main_window import MainWindow
 from dms.ui.squiglink_worker import SquiglinkUploadWorker
 
 
@@ -28,20 +26,15 @@ class _FakeSFTP:
         pass
 
 
-def _fake_self(mode: str):
-    return SimpleNamespace(
-        _session=SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L"),
-        _ask_phone_book_fallback_mode=lambda _msg: mode,
-        _log_sftp_diagnostic=lambda *_args, **_kwargs: None,
-        _log_event=lambda *_args, **_kwargs: None,
-    )
+def _upload_session() -> SessionData:
+    return SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L")
 
 
 def _fake_connection(**_kwargs):
     return _FakeTransport(None), _FakeSFTP()
 
 
-def test_sync_remote_phone_book_missing_create_fresh(monkeypatch) -> None:
+def test_sync_remote_phone_book_missing_create_fresh(make_main_window, monkeypatch) -> None:
     monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
@@ -65,19 +58,19 @@ def test_sync_remote_phone_book_missing_create_fresh(monkeypatch) -> None:
         ValueError,
     )
 
-    result = MainWindow._sync_remote_phone_book(
-        _fake_self("create"),
+    result = make_main_window(session=_upload_session())._sync_remote_phone_book(
         host="sftp.squig.link",
         port=2022,
         username="u",
         password="p",
         phone_book_stem="Apple AirPods Pro 2 small tips",
+        ask_fallback=lambda _msg: "create",
     )
     assert "updated successfully" in result.lower()
     assert written["phone_book"] == [{"name": "Apple"}]
 
 
-def test_sync_remote_phone_book_missing_skip(monkeypatch) -> None:
+def test_sync_remote_phone_book_missing_skip(make_main_window, monkeypatch) -> None:
     monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
@@ -97,19 +90,19 @@ def test_sync_remote_phone_book_missing_skip(monkeypatch) -> None:
         lambda *_args, **_kwargs: called.__setitem__("write", called["write"] + 1),
     )
 
-    result = MainWindow._sync_remote_phone_book(
-        _fake_self("skip"),
+    result = make_main_window(session=_upload_session())._sync_remote_phone_book(
         host="sftp.squig.link",
         port=2022,
         username="u",
         password="p",
         phone_book_stem="Apple AirPods Pro 2 small tips",
+        ask_fallback=lambda _msg: "skip",
     )
     assert "skipped" in result.lower()
     assert called["write"] == 0
 
 
-def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
+def test_sync_remote_phone_book_invalid_fail(make_main_window, monkeypatch) -> None:
     monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
         "dms.ui.main_window.read_remote_phone_book",
@@ -125,28 +118,28 @@ def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
     )
 
     try:
-        MainWindow._sync_remote_phone_book(
-            _fake_self("fail"),
+        make_main_window(session=_upload_session())._sync_remote_phone_book(
             host="sftp.squig.link",
             port=2022,
             username="u",
             password="p",
             phone_book_stem="Apple AirPods Pro 2 small tips",
+            ask_fallback=lambda _msg: "fail",
         )
         raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
         assert "canceled" in str(exc).lower()
 
 
-def test_ensure_upload_metadata_returns_true_when_already_complete() -> None:
-    fake = SimpleNamespace(
-        _session=SessionData(rig="KB500X", brand="Apple", model="AirPods Pro 2", channel_side="L")
+def test_ensure_upload_metadata_returns_true_when_already_complete(make_main_window) -> None:
+    window = make_main_window(session=_upload_session())
+    assert window._ensure_upload_metadata() is True
+
+
+def test_ensure_upload_metadata_prompts_and_saves_fields(make_main_window, monkeypatch) -> None:
+    window = make_main_window(
+        session=SessionData(rig="KB500X", brand="", model="", channel_side="")
     )
-    assert MainWindow._ensure_upload_metadata(fake) is True
-
-
-def test_ensure_upload_metadata_prompts_and_saves_fields(monkeypatch) -> None:
-    fake = SimpleNamespace(_session=SessionData(rig="KB500X", brand="", model="", channel_side=""))
 
     class _DialogAccepted:
         def __init__(self, *_args, **_kwargs):
@@ -165,10 +158,10 @@ def test_ensure_upload_metadata_prompts_and_saves_fields(monkeypatch) -> None:
             return "R"
 
     monkeypatch.setattr("dms.ui.main_window.SquiglinkUploadMetadataDialog", _DialogAccepted)
-    assert MainWindow._ensure_upload_metadata(fake) is True
-    assert fake._session.brand == "Sennheiser"
-    assert fake._session.model == "HD 800 S"
-    assert fake._session.channel_side == "R"
+    assert window._ensure_upload_metadata() is True
+    assert window._session.brand == "Sennheiser"
+    assert window._session.model == "HD 800 S"
+    assert window._session.channel_side == "R"
 
 
 # --- threaded upload wiring in the window ----------------------------------

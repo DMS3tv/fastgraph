@@ -291,11 +291,11 @@ class MeasureIO(QObject):
         window._metadata_editor.set_session(window._session)
 
         if bool(session.two_channel) != bool(window._two_channel_enabled):
-            window._two_channel_toggle.setChecked(bool(session.two_channel))
+            window.measure_tab.two_channel_toggle.setChecked(bool(session.two_channel))
 
-        index = window._bottom_layout_combo.findData(session.bottom_mode)
-        if index >= 0 and index != window._bottom_layout_combo.currentIndex():
-            window._bottom_layout_combo.setCurrentIndex(index)
+        index = window.measure_tab.bottom_layout_combo.findData(session.bottom_mode)
+        if index >= 0 and index != window.measure_tab.bottom_layout_combo.currentIndex():
+            window.measure_tab.bottom_layout_combo.setCurrentIndex(index)
 
         self._apply_session_level_mode(session.level_mode)
         self._apply_session_hrtf(session)
@@ -332,9 +332,9 @@ class MeasureIO(QObject):
             return
         index = -1
         if session.hrtf_path:
-            index = window._hrtf_combo.findData(session.hrtf_path)
+            index = window.measure_tab.hrtf_combo.findData(session.hrtf_path)
         if index < 0 and session.hrtf_name:
-            index = window._hrtf_combo.findText(session.hrtf_name)
+            index = window.measure_tab.hrtf_combo.findText(session.hrtf_name)
         if index < 0:
             QMessageBox.warning(
                 window,
@@ -343,11 +343,11 @@ class MeasureIO(QObject):
                 "is not installed. It was left unset.",
             )
             return
-        window._hrtf_combo.blockSignals(True)
-        window._hrtf_combo.setCurrentIndex(index)
-        window._hrtf_combo.blockSignals(False)
+        window.measure_tab.hrtf_combo.blockSignals(True)
+        window.measure_tab.hrtf_combo.setCurrentIndex(index)
+        window.measure_tab.hrtf_combo.blockSignals(False)
         window._on_hrtf_selected()
-        window._hrtf_toggle.setChecked(bool(session.hrtf_enabled))
+        window.measure_tab.hrtf_toggle.setChecked(bool(session.hrtf_enabled))
 
     def _confirm_discard_measure_session(self) -> bool:
         """Offer to save before something replaces the Measure workspace."""
@@ -436,7 +436,7 @@ class MeasureIO(QObject):
                     session = self._measure_recovery.restore(candidate)
                     self._apply_measure_session(session)
                     self.session_path = None
-                    window._tabs.setCurrentWidget(window._measure_tab)
+                    window._tabs.setCurrentWidget(window.measure_tab)
                     self.dirty = not session.is_empty()
                     window._refresh_window_title()
                     self._restored_measure_candidate = (
@@ -468,7 +468,7 @@ class MeasureIO(QObject):
 
     def choose_export_directory(self) -> None:
         window = self._window
-        current = window._export_dir_input.text().strip()
+        current = window.measure_tab.export_dir_input.text().strip()
         chosen = QFileDialog.getExistingDirectory(
             window,
             "Choose Export Directory",
@@ -476,7 +476,7 @@ class MeasureIO(QObject):
         )
         if not chosen:
             return
-        window._export_dir_input.setText(chosen)
+        window.measure_tab.export_dir_input.setText(chosen)
         window._settings.set("export_directory", chosen)
 
     def resolve_export_path(
@@ -504,7 +504,7 @@ class MeasureIO(QObject):
                 if choice != QMessageBox.StandardButton.Yes:
                     return None
             return path
-        default_dir = window._export_dir_input.text().strip() or str(
+        default_dir = window.measure_tab.export_dir_input.text().strip() or str(
             window._settings.get("export_directory") or ""
         )
         default_path = str(Path(default_dir) / filename) if default_dir else filename
@@ -542,7 +542,7 @@ class MeasureIO(QObject):
         if path is None:
             return
         export_dir = str(path.parent)
-        window._export_dir_input.setText(export_dir)
+        window.measure_tab.export_dir_input.setText(export_dir)
         window._settings.set("export_directory", export_dir)
 
         freqs, mag_db = curve
@@ -592,7 +592,7 @@ class MeasureIO(QObject):
         if path is None:
             return
         export_dir = str(path.parent)
-        window._export_dir_input.setText(export_dir)
+        window.measure_tab.export_dir_input.setText(export_dir)
         window._settings.set("export_directory", export_dir)
 
         try:
@@ -653,7 +653,7 @@ class MeasureIO(QObject):
 
     def _measure_export_directory(self) -> Path | None:
         window = self._window
-        configured = window._export_dir_input.text().strip()
+        configured = window.measure_tab.export_dir_input.text().strip()
         if configured:
             path = Path(configured).expanduser()
             if path.is_dir():
@@ -670,7 +670,7 @@ class MeasureIO(QObject):
         if not selected:
             return None
         directory = Path(selected)
-        window._export_dir_input.setText(str(directory))
+        window.measure_tab.export_dir_input.setText(str(directory))
         window._settings.set("export_directory", str(directory))
         return directory
 
@@ -827,7 +827,7 @@ class MeasureIO(QObject):
             QMessageBox.warning(window, "Export All Failed", str(exc))
             return
 
-        window._export_dir_input.setText(str(directory))
+        window.measure_tab.export_dir_input.setText(str(directory))
         window._settings.set("export_directory", str(directory))
         window._statusbar.showMessage(f"Exported all Measure files: {directory}")
         window._log_event(
@@ -852,39 +852,41 @@ class MeasureIO(QObject):
         active_average = window._active_two_channel_average() if two_channel else window._average
         active_variation = window._active_measure_variation() if two_channel else window._variation
         if window._bottom_view_mode() == "variation":
-            window._export_btn.setText("Export Variation…")
-            window._export_btn.setToolTip(
+            window.measure_tab.export_btn.setText("Export Variation…")
+            window.measure_tab.export_btn.setToolTip(
                 "Export the displayed variation band as percentile columns in a tab-delimited TXT file."
             )
             export_enabled = idle and frequency_mode and active_variation is not None
         else:
-            window._export_btn.setText("Export Average…")
-            window._export_btn.setToolTip("Export averaged FR as a REW-style TXT file.")
+            window.measure_tab.export_btn.setText("Export Average…")
+            window.measure_tab.export_btn.setToolTip("Export averaged FR as a REW-style TXT file.")
             export_enabled = idle and frequency_mode and active_average is not None
-        window._export_btn.setEnabled(export_enabled)
-        window._send_to_curator_btn.setEnabled(export_enabled)
+        window.measure_tab.export_btn.setEnabled(export_enabled)
+        window.measure_tab.send_to_curator_btn.setEnabled(export_enabled)
         unavailable = window._measure_to_rnd_unavailable_reason()
-        window._send_to_rnd_btn.setEnabled(not unavailable)
-        window._send_to_rnd_btn.setToolTip(
+        window.measure_tab.send_to_rnd_btn.setEnabled(not unavailable)
+        window.measure_tab.send_to_rnd_btn.setToolTip(
             unavailable or "Send the current average or all kept Var measurements to R&D."
         )
         if self._brand_mode_active():
-            window._upload_btn.setText("Export All…")
-            window._upload_btn.setObjectName("btn_export")
-            window._upload_btn.setRole("primary")
+            window.measure_tab.upload_btn.setText("Export All…")
+            window.measure_tab.upload_btn.setObjectName("btn_export")
+            window.measure_tab.upload_btn.setRole("primary")
             unavailable = self._export_all_unavailable_reason()
-            window._upload_btn.setEnabled(not unavailable)
-            window._upload_btn.setToolTip(
+            window.measure_tab.upload_btn.setEnabled(not unavailable)
+            window.measure_tab.upload_btn.setToolTip(
                 unavailable or "Export RAW AVG, COMP AVG, RAW VAR, and COMP VAR to one directory."
             )
         else:
-            window._upload_btn.setText("Upload to Squiglink")
-            window._upload_btn.setObjectName("btn_upload")
-            window._upload_btn.setRole("positive")
-            window._upload_btn.setEnabled(idle and frequency_mode and active_average is not None)
-            window._upload_btn.setToolTip("Upload the current average to Squiglink.")
-        window._undo_btn.setEnabled(idle and window._active_measure_count() > 0)
-        window._clear_btn.setEnabled(
+            window.measure_tab.upload_btn.setText("Upload to Squiglink")
+            window.measure_tab.upload_btn.setObjectName("btn_upload")
+            window.measure_tab.upload_btn.setRole("positive")
+            window.measure_tab.upload_btn.setEnabled(
+                idle and frequency_mode and active_average is not None
+            )
+            window.measure_tab.upload_btn.setToolTip("Upload the current average to Squiglink.")
+        window.measure_tab.undo_btn.setEnabled(idle and window._active_measure_count() > 0)
+        window.measure_tab.clear_btn.setEnabled(
             idle
             and (
                 bool(window._two_channel_pairs) or window._pending_pair is not None

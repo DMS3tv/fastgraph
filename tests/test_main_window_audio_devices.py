@@ -117,10 +117,10 @@ def test_windows_normal_mode_shows_only_preferred_wasapi_devices(
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
 
-    assert window._in_dev_combo.count() == 1
-    assert window._out_dev_combo.count() == 1
-    assert window._in_dev_combo.currentData() == 43
-    assert window._out_dev_combo.currentData() == 5
+    assert window.measure_tab.in_dev_combo.count() == 1
+    assert window.measure_tab.out_dev_combo.count() == 1
+    assert window.measure_tab.in_dev_combo.currentData() == 43
+    assert window.measure_tab.out_dev_combo.currentData() == 5
     assert window._settings.get("input_device")["index"] == 43
     assert window._settings.get("input_device")["kind"] == "input"
     assert window._settings.get("output_device")["index"] == 5
@@ -143,11 +143,11 @@ def test_windows_advanced_mode_shows_all_backends(make_main_window, monkeypatch)
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
 
-    assert window._in_dev_combo.count() == 4
-    assert window._out_dev_combo.count() == 3
+    assert window.measure_tab.in_dev_combo.count() == 4
+    assert window.measure_tab.out_dev_combo.count() == 3
     assert any(
-        "Windows DirectSound" in window._in_dev_combo.itemText(i)
-        for i in range(window._in_dev_combo.count())
+        "Windows DirectSound" in window.measure_tab.in_dev_combo.itemText(i)
+        for i in range(window.measure_tab.in_dev_combo.count())
     )
 
 
@@ -170,7 +170,7 @@ def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
 
-    assert window._in_dev_combo.currentData() == 43
+    assert window.measure_tab.in_dev_combo.currentData() == 43
     assert window._settings.get("input_device")["hostapi_name"] == "Windows WASAPI"
 
 
@@ -190,11 +190,11 @@ def test_windows_input_selection_auto_matches_output_backend(make_main_window, m
 
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
-    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
-    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(43))
+    window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
+    window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(43))
     window.devices._sync_windows_output_to_input(show_status=False)
 
-    assert window._out_dev_combo.currentData() == 5
+    assert window.measure_tab.out_dev_combo.currentData() == 5
 
 
 def test_windows_mismatched_backends_block_queue_start(make_main_window, monkeypatch) -> None:
@@ -220,8 +220,8 @@ def test_windows_mismatched_backends_block_queue_start(make_main_window, monkeyp
     window.devices.refresh_devices()
     # Input first: choosing an input re-matches the output, so the mismatch
     # only survives when the output is changed afterwards.
-    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(43))
-    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
+    window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(43))
+    window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
 
     window._start_queue()
 
@@ -317,8 +317,8 @@ def test_manual_refresh_reinitializes_backend_before_enumerating(
     window.devices.manual_refresh_devices()
 
     assert calls[:3] == ["backend", "outputs", "inputs"]
-    assert window._out_dev_combo.currentData() == 9
-    assert window._in_dev_combo.currentData() == 10
+    assert window.measure_tab.out_dev_combo.currentData() == 9
+    assert window.measure_tab.in_dev_combo.currentData() == 10
     assert len(stops) == 1
     assert window.monitor_count == 2
     assert window._statusbar.currentMessage() == "Audio devices refreshed; selection changed."
@@ -340,18 +340,18 @@ def test_manual_refresh_preserves_valid_device_selection(make_main_window, monke
 
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
-    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
-    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(17))
+    window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
+    window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(17))
     # Channel last: choosing an input device rebuilds the channel list.
-    window._ch_combo.setCurrentIndex(1)
+    window.measure_tab.ch_combo.setCurrentIndex(1)
     window._settings.set("input_channel", 1)
     window._settings.set("output_device", window.devices.current_output_device_setting())
     window._settings.set("input_device", window.devices.current_input_device_setting())
 
     window.devices.manual_refresh_devices()
 
-    assert window._out_dev_combo.currentData() == 6
-    assert window._in_dev_combo.currentData() == 17
+    assert window.measure_tab.out_dev_combo.currentData() == 6
+    assert window.measure_tab.in_dev_combo.currentData() == 17
     assert window.devices.current_input_channel() == 1
     assert window._statusbar.currentMessage() == "Audio devices refreshed."
 
@@ -381,15 +381,15 @@ def test_manual_refresh_falls_back_when_selected_device_disappears(
 
     window = _window(make_main_window, settings)
     window.devices.refresh_devices()
-    window._out_dev_combo.setCurrentIndex(window._out_dev_combo.findData(6))
-    window._in_dev_combo.setCurrentIndex(window._in_dev_combo.findData(17))
+    window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
+    window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(17))
     window._settings.set("output_device", window.devices.current_output_device_setting())
     window._settings.set("input_device", window.devices.current_input_device_setting())
 
     window.devices.manual_refresh_devices()
 
-    assert window._out_dev_combo.currentData() == 5
-    assert window._in_dev_combo.currentData() == 43
+    assert window.measure_tab.out_dev_combo.currentData() == 5
+    assert window.measure_tab.in_dev_combo.currentData() == 43
     assert window._settings.get("output_device")["index"] == 5
     assert window._settings.get("input_device")["index"] == 43
     assert window._statusbar.currentMessage() == "Audio devices refreshed; selection changed."

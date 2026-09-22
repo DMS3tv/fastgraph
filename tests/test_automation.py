@@ -127,9 +127,9 @@ def test_manual_automation_switches_input_device_and_channel(
         5: {"index": 5, "name": "Input A", "hostapi": 0, "max_input_channels": 2}
     }
     window.devices._input_device_labels_by_index = {5: "Input A"}
-    window._in_dev_combo.addItem("Input A", 5)
-    window._ch_combo.addItem("Ch 1", 0)
-    window._ch_combo.addItem("Ch 2", 1)
+    window.measure_tab.in_dev_combo.addItem("Input A", 5)
+    window.measure_tab.ch_combo.addItem("Ch 1", 0)
+    window.measure_tab.ch_combo.addItem("Ch 2", 1)
     automation = AutomationDefinition(
         name="Device",
         steps=[

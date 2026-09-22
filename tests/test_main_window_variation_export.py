@@ -19,9 +19,9 @@ def _band() -> VariationBand:
 
 def _set_variation_mode(window, checked: bool) -> None:
     """Set the view without the redraw the toggle would trigger."""
-    window._variation_toggle.blockSignals(True)
-    window._variation_toggle.setChecked(checked)
-    window._variation_toggle.blockSignals(False)
+    window.measure_tab.variation_toggle.blockSignals(True)
+    window.measure_tab.variation_toggle.setChecked(checked)
+    window.measure_tab.variation_toggle.blockSignals(False)
 
 
 def _window(make_main_window, *, variation_mode: bool = False, **kwargs):
@@ -41,18 +41,18 @@ def test_sync_export_button_switches_label_and_keeps_upload_average_based(
 
     window.measure_io.sync_export_button()
 
-    assert window._export_btn.text() == "Export Variation…"
-    assert "percentile" in window._export_btn.toolTip().lower()
-    assert window._export_btn.isEnabled() is False
-    assert window._upload_btn.isEnabled() is True
+    assert window.measure_tab.export_btn.text() == "Export Variation…"
+    assert "percentile" in window.measure_tab.export_btn.toolTip().lower()
+    assert window.measure_tab.export_btn.isEnabled() is False
+    assert window.measure_tab.upload_btn.isEnabled() is True
 
     _set_variation_mode(window, False)
     window.measure_io.sync_export_button()
 
-    assert window._export_btn.text() == "Export Average…"
-    assert "rew-style" in window._export_btn.toolTip().lower()
-    assert window._export_btn.isEnabled() is True
-    assert window._upload_btn.isEnabled() is True
+    assert window.measure_tab.export_btn.text() == "Export Average…"
+    assert "rew-style" in window.measure_tab.export_btn.toolTip().lower()
+    assert window.measure_tab.export_btn.isEnabled() is True
+    assert window.measure_tab.upload_btn.isEnabled() is True
 
 
 def test_sync_export_button_disables_upload_without_average_even_with_variation(
@@ -63,8 +63,8 @@ def test_sync_export_button_disables_upload_without_average_even_with_variation(
 
     window.measure_io.sync_export_button()
 
-    assert window._export_btn.isEnabled() is True
-    assert window._upload_btn.isEnabled() is False
+    assert window.measure_tab.export_btn.isEnabled() is True
+    assert window.measure_tab.upload_btn.isEnabled() is False
 
 
 def test_export_variation_uses_current_variation_data(

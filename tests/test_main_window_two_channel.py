@@ -121,9 +121,9 @@ def _resolved_segment_width(button, state: QStyle.StateFlag) -> tuple[int, int]:
 def _settle_segment_width_refresh(qapp, window: MainWindow) -> None:
     for _ in range(4):
         qapp.processEvents()
-        if not window._measure_submode_control._width_refresh_pending:
+        if not window.measure_tab.measure_submode_control._width_refresh_pending:
             break
-    assert window._measure_submode_control._width_refresh_pending is False
+    assert window.measure_tab.measure_submode_control._width_refresh_pending is False
 
 
 def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_window) -> None:
@@ -132,10 +132,10 @@ def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_
     assert window._two_channel_enabled is True
     assert window._plots._stack.currentWidget() is window._plots.two
     assert window._two_channel_bottom_mode == "separate"
-    assert window._measure_frequency_button.isChecked() is True
-    assert window._measure_balance_button.isChecked() is False
-    assert window._measure_frequency_button.text() == "Frequency Response"
-    assert window._measure_balance_button.text() == "Channel Balance"
+    assert window.measure_tab.measure_frequency_button.isChecked() is True
+    assert window.measure_tab.measure_balance_button.isChecked() is False
+    assert window.measure_tab.measure_frequency_button.text() == "Frequency Response"
+    assert window.measure_tab.measure_balance_button.text() == "Channel Balance"
     assert window._channel_balance_active is False
 
 
@@ -150,34 +150,34 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
         lambda *_args: stop_calls.append(True),
     )
 
-    assert window._measure_submode_control.isHidden() is False
-    window._measure_balance_button.setChecked(True)
+    assert window.measure_tab.measure_submode_control.isHidden() is False
+    window.measure_tab.measure_balance_button.setChecked(True)
     assert window._channel_balance_mode_active() is True
-    assert window._measure_frequency_button.isChecked() is False
-    assert window._measure_balance_button.isChecked() is True
+    assert window.measure_tab.measure_frequency_button.isChecked() is False
+    assert window.measure_tab.measure_balance_button.isChecked() is True
 
-    window._measure_frequency_button.setChecked(True)
+    window.measure_tab.measure_frequency_button.setChecked(True)
     assert window._channel_balance_mode_active() is False
-    assert window._measure_frequency_button.isChecked() is True
-    assert window._measure_balance_button.isChecked() is False
+    assert window.measure_tab.measure_frequency_button.isChecked() is True
+    assert window.measure_tab.measure_balance_button.isChecked() is False
     assert stop_calls
 
-    window._two_channel_toggle.setChecked(False)
-    assert window._measure_submode_control.isHidden() is True
-    assert window._measure_frequency_button.isChecked() is True
-    assert window._measure_balance_button.isChecked() is False
+    window.measure_tab.two_channel_toggle.setChecked(False)
+    assert window.measure_tab.measure_submode_control.isHidden() is True
+    assert window.measure_tab.measure_frequency_button.isChecked() is True
+    assert window.measure_tab.measure_balance_button.isChecked() is False
 
 
 def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> None:
     window = _window(make_main_window)
-    window._measure_balance_button.setChecked(True)
+    window.measure_tab.measure_balance_button.setChecked(True)
     window._state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
 
-    assert window._measure_submode_control.isEnabled() is False
-    assert window._measure_frequency_button.isEnabled() is False
-    assert window._measure_balance_button.isEnabled() is False
-    assert window._measure_balance_button.isChecked() is True
+    assert window.measure_tab.measure_submode_control.isEnabled() is False
+    assert window.measure_tab.measure_frequency_button.isEnabled() is False
+    assert window.measure_tab.measure_balance_button.isEnabled() is False
+    assert window.measure_tab.measure_balance_button.isChecked() is True
 
 
 def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
@@ -203,8 +203,8 @@ def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
         _settle_segment_width_refresh(qapp, window)
 
         for button in (
-            window._measure_frequency_button,
-            window._measure_balance_button,
+            window.measure_tab.measure_frequency_button,
+            window.measure_tab.measure_balance_button,
         ):
             for state_name, state in _MEASURE_SEGMENT_STATES:
                 text_width, required_width = _resolved_segment_width(button, state)
@@ -216,7 +216,8 @@ def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
             assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
 
     assert (
-        window._measure_submode_control.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
+        window.measure_tab.measure_submode_control.sizePolicy().horizontalPolicy()
+        == QSizePolicy.Policy.Fixed
     )
 
 
@@ -227,7 +228,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
     startup_window = _window(make_main_window, theme=DITHER)
     startup_window.show()
     _process_theme_change(qapp)
-    startup_button = startup_window._start_queue_btn
+    startup_button = startup_window.measure_tab.start_queue_btn
     startup_image = startup_button.grab().toImage()
     startup_width = startup_image.width()
     startup_hint_width = startup_button.sizeHint().width()
@@ -242,7 +243,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
     switch_window = _window(make_main_window, theme=DARK)
     switch_window.show()
     _process_theme_change(qapp)
-    switch_button = switch_window._start_queue_btn
+    switch_button = switch_window.measure_tab.start_queue_btn
     dark_width = switch_button.grab().toImage().width()
     dark_hint_width = switch_button.sizeHint().width()
 
@@ -265,24 +266,27 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
 def test_measure_submode_accessibility_and_responsive_width(make_main_window) -> None:
     window = _window(make_main_window)
 
-    assert window._measure_submode_control.accessibleName() == "Measure mode"
-    assert window._measure_submode_control.toolTip()
-    assert window._measure_frequency_button.accessibleName()
-    assert window._measure_frequency_button.toolTip()
-    assert window._measure_balance_button.accessibleName()
-    assert window._measure_balance_button.toolTip()
-    assert window._queue_bar.compact_breakpoint == (
-        window._queue_bar._BASE_COMPACT_WIDTH
-        + window._measure_submode_control.minimum_control_width
+    assert window.measure_tab.measure_submode_control.accessibleName() == "Measure mode"
+    assert window.measure_tab.measure_submode_control.toolTip()
+    assert window.measure_tab.measure_frequency_button.accessibleName()
+    assert window.measure_tab.measure_frequency_button.toolTip()
+    assert window.measure_tab.measure_balance_button.accessibleName()
+    assert window.measure_tab.measure_balance_button.toolTip()
+    assert window.measure_tab.queue_bar.compact_breakpoint == (
+        window.measure_tab.queue_bar._BASE_COMPACT_WIDTH
+        + window.measure_tab.measure_submode_control.minimum_control_width
     )
-    expanded_breakpoint = window._queue_bar.compact_breakpoint
-    window._queue_bar._update_compact_state(expanded_breakpoint - 1)
-    assert window._queue_bar_compact is True
-    window._queue_bar._update_compact_state(expanded_breakpoint)
-    assert window._queue_bar_compact is False
+    expanded_breakpoint = window.measure_tab.queue_bar.compact_breakpoint
+    window.measure_tab.queue_bar._update_compact_state(expanded_breakpoint - 1)
+    assert window.measure_tab.queue_bar_compact is True
+    window.measure_tab.queue_bar._update_compact_state(expanded_breakpoint)
+    assert window.measure_tab.queue_bar_compact is False
 
-    window._two_channel_toggle.setChecked(False)
-    assert window._queue_bar.compact_breakpoint == window._queue_bar._BASE_COMPACT_WIDTH
+    window.measure_tab.two_channel_toggle.setChecked(False)
+    assert (
+        window.measure_tab.queue_bar.compact_breakpoint
+        == window.measure_tab.queue_bar._BASE_COMPACT_WIDTH
+    )
 
 
 def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window) -> None:
@@ -292,12 +296,12 @@ def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window
     window._two_channel_pairs = [TwoChannelCurvePair(_curve(1.0), _curve(-2.0))]
     window._recompute_two_channel_results()
 
-    window._two_channel_toggle.setChecked(False)
+    window.measure_tab.two_channel_toggle.setChecked(False)
     assert len(window._kept_curves) == 1
     assert len(window._two_channel_pairs) == 1
     np.testing.assert_allclose(window._bottom_curve_for_display_and_export()[1], 0.0)
 
-    window._two_channel_toggle.setChecked(True)
+    window.measure_tab.two_channel_toggle.setChecked(True)
     window._plots.two.set_selection("channel_2")
     assert window._active_measure_label() == "R"
     assert window._active_measure_session().channel_side == "R"

@@ -49,8 +49,8 @@ def test_session_menu_sits_at_the_start_of_the_export_row(make_main_window) -> N
     window = make_main_window()
     row = window._plots._footer_widget.layout()
 
-    assert row.itemAt(0).widget() is window._session_menu_btn
-    assert window._session_menu_btn.property("menuButton") is True
+    assert row.itemAt(0).widget() is window.measure_tab.session_menu_btn
+    assert window.measure_tab.session_menu_btn.property("menuButton") is True
     assert [action.text() for action in window.measure_io._session_menu.actions()] == [
         "New Session",
         "Save Session",
@@ -74,8 +74,8 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     )
     window._session = SessionData(rig="Rig 2", brand="Acme", model="Widget")
     window._recompute_average()
-    window._hrtf_combo.setCurrentIndex(window._hrtf_combo.findText(hrtf_name))
-    window._hrtf_toggle.setChecked(True)
+    window.measure_tab.hrtf_combo.setCurrentIndex(window.measure_tab.hrtf_combo.findText(hrtf_name))
+    window.measure_tab.hrtf_toggle.setChecked(True)
     window.measure_io.mark_dirty()
 
     path = tmp_path / "demo.fastgraph-measure.json"
@@ -98,7 +98,7 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     assert other._session.rig == "Rig 2"
     assert other._hrtf is not None
     assert Path(other._hrtf.path).stem == hrtf_name
-    assert other._hrtf_toggle.isChecked() is True
+    assert other.measure_tab.hrtf_toggle.isChecked() is True
     assert other._level_mode() == "ref_1khz"
     assert other._average is not None
     assert other._kept_sweep_meta[0]["timing_quality"] == (12.0, 11.0, 2.0, 40.0)

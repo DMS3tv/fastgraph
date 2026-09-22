@@ -36,7 +36,7 @@ def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     ]
     window._average = (freqs, np.array([12.0, 22.0]))
     window._hrtf = hrtf
-    window._export_dir_input.setText(str(tmp_path))
+    window.measure_tab.export_dir_input.setText(str(tmp_path))
     window._statusbar.messageChanged.connect(statuses.append)
     window._log_event = lambda *args, **kwargs: events.append(("log", args, kwargs))
     window._run_automation_trigger = triggers.append
@@ -187,16 +187,16 @@ def test_brand_export_all_button_reports_missing_requirements(make_main_window) 
     assert window._bottom_view_mode() == "average"
 
     window.measure_io.sync_export_button()
-    assert window._upload_btn.text() == "Export All…"
-    assert window._upload_btn.isEnabled() is False
-    assert "average" in window._upload_btn.toolTip().lower()
+    assert window.measure_tab.upload_btn.text() == "Export All…"
+    assert window.measure_tab.upload_btn.isEnabled() is False
+    assert "average" in window.measure_tab.upload_btn.toolTip().lower()
 
     window._average = (np.array([100.0]), np.array([0.0]))
     window._kept_curves = [window._average, window._average]
     window._hrtf = object()
     window.measure_io.sync_export_button()
-    assert window._upload_btn.isEnabled() is True
-    assert window._upload_btn.role() == "primary"
+    assert window.measure_tab.upload_btn.isEnabled() is True
+    assert window.measure_tab.upload_btn.role() == "primary"
 
 
 def test_export_average_equals_displayed_curve(make_main_window, tmp_path: Path) -> None:
@@ -251,7 +251,7 @@ def test_export_all_comp_average_matches_export_average(
     single_dir.mkdir()
     all_dir.mkdir()
     window.measure_io.export_average(str(single_dir / "average.txt"))
-    window._export_dir_input.setText(str(all_dir))
+    window.measure_tab.export_dir_input.setText(str(all_dir))
     window.measure_io.export_all()
 
     comp_name = build_filename(window._session, compensated=True)

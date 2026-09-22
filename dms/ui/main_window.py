@@ -38,7 +38,6 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QStatusBar,
@@ -48,10 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.audio_engine import (
-    SweepWorker,
-    is_windows_audio_host,
-)
+from dms.audio_engine import SweepWorker
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
 from dms.channel_balance import ChannelBalanceEngine, frequency_limit
@@ -126,15 +122,14 @@ from dms.ui.automation_widget import AutomationWidget
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.device_controller import DeviceController
-from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.measure_compare import MeasureCompare
-from dms.ui.measure_controls import _MeasureSubmodeControl, _ResponsiveQueueBar
 from dms.ui.measure_dialogs import (
     PassFailDialog,
     RnDRecoveryDialog,
     RnDReviewDialog,
 )
 from dms.ui.measure_io import MeasureIO
+from dms.ui.measure_tab import MeasureTab
 from dms.ui.measure_workspace import MeasureWorkspace
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import (
@@ -480,29 +475,18 @@ class MainWindow(QMainWindow):
             self._build_tab_header(),
             Qt.Corner.TopLeftCorner,
         )
-        self._build_inputs_overlay()
-        self._build_metadata_overlay()
-
-        central = QWidget()
-        self._measure_tab = central
-        self._tabs.addTab(central, "Measure")
-
-        root = QHBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
-
         self._plots = MeasureWorkspace()
         self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
         self._plots.selection_changed.connect(self._on_two_channel_selection_changed)
         self._plots.balance_start_requested.connect(self._start_channel_balance)
         self._plots.balance_stop_requested.connect(self._stop_channel_balance)
         self._plots.balance_parameters_changed.connect(self._on_balance_parameters_changed)
-        self._plots.set_header_widget(self._build_measure_queue_bar())
-        self._plots.set_between_plots_widget(self._build_measure_plot_controls())
-        self._plots.set_footer_widget(self._build_export_controls())
-        self._plots.set_two_channel_enabled(self._two_channel_enabled)
-        self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
-        root.addWidget(self._plots, 1)
+        self.measure_tab = MeasureTab(self)
+        self._inputs_overlay_open = False
+        QApplication.instance().installEventFilter(self)
+        self._refresh_hrtf_options()
+        self._build_metadata_overlay()
+        self._tabs.addTab(self.measure_tab, "Measure")
 
         self._rnd_widget = RnDWidget(
             parent=self,
@@ -579,32 +563,32 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         self._close_inputs_overlay()
         self._close_metadata_overlay()
-        if self._tabs.currentWidget() is not self._measure_tab:
+        if self._tabs.currentWidget() is not self.measure_tab:
             self._stop_channel_balance()
         if self._tabs.currentWidget() is self._settings_scroll:
             self._settings_widget.refresh_from_settings()
 
     def _on_two_channel_toggled(self, _state: int) -> None:
         if self._state != QueueState.IDLE:
-            self._two_channel_toggle.blockSignals(True)
-            self._two_channel_toggle.setChecked(self._two_channel_enabled)
-            self._two_channel_toggle.blockSignals(False)
+            self.measure_tab.two_channel_toggle.blockSignals(True)
+            self.measure_tab.two_channel_toggle.setChecked(self._two_channel_enabled)
+            self.measure_tab.two_channel_toggle.blockSignals(False)
             return
-        enabled = bool(self._two_channel_toggle.isChecked())
+        enabled = bool(self.measure_tab.two_channel_toggle.isChecked())
         if not enabled:
             self._stop_channel_balance()
-            self._measure_frequency_button.setChecked(True)
+            self.measure_tab.measure_frequency_button.setChecked(True)
         self._two_channel_enabled = enabled
         self._queue.two_channel = enabled
         self._settings.set("measure_two_channel_enabled", enabled)
         self._plots.set_two_channel_enabled(enabled)
-        self._measure_submode_control.setVisible(enabled)
-        self._sync_queue_bar_submode_width()
-        self._level_meter_2.setVisible(enabled)
-        self._level_status_label_2.setVisible(enabled)
-        self._bottom_layout_label.setVisible(enabled)
-        self._bottom_layout_combo.setVisible(enabled)
-        self._ch_combo.setEnabled(not enabled)
+        self.measure_tab.measure_submode_control.setVisible(enabled)
+        self.measure_tab.sync_queue_bar_submode_width()
+        self.measure_tab.level_meter_2.setVisible(enabled)
+        self.measure_tab.level_status_label_2.setVisible(enabled)
+        self.measure_tab.bottom_layout_label.setVisible(enabled)
+        self.measure_tab.bottom_layout_combo.setVisible(enabled)
+        self.measure_tab.ch_combo.setEnabled(not enabled)
         self._update_queue_progress()
         self._update_plots()
         self.devices.start_level_monitor()
@@ -613,7 +597,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(f"Measure mode: {mode}.")
 
     def _channel_balance_mode_active(self) -> bool:
-        balance_button = getattr(self, "_measure_balance_button", None)
+        balance_button = getattr(getattr(self, "measure_tab", None), "measure_balance_button", None)
         return bool(
             self._two_channel_enabled and balance_button is not None and balance_button.isChecked()
         )
@@ -623,20 +607,20 @@ class MainWindow(QMainWindow):
         if not balance:
             self._stop_channel_balance()
         self._plots.two.set_balance_mode(balance)
-        self._bottom_layout_label.setVisible(self._two_channel_enabled and not balance)
-        self._bottom_layout_combo.setVisible(self._two_channel_enabled and not balance)
-        self._variation_toggle.setVisible(not balance)
-        self._distortion_toggle.setVisible(not balance)
-        self._hrtf_toggle.setVisible(not balance)
-        self._hrtf_combo.setVisible(not balance)
-        self._hrtf_label.setVisible(not balance)
-        self._level_mode_label.setVisible(not balance)
-        self._level_mode_combo.setVisible(not balance)
-        self._level_meter.setVisible(not balance)
-        self._level_meter_2.setVisible(self._two_channel_enabled and not balance)
-        self._level_status_label.setVisible(not balance)
-        self._level_status_label_2.setVisible(self._two_channel_enabled and not balance)
-        self._plots.two.set_generator_level(float(self._queue_level_spin.value()))
+        self.measure_tab.bottom_layout_label.setVisible(self._two_channel_enabled and not balance)
+        self.measure_tab.bottom_layout_combo.setVisible(self._two_channel_enabled and not balance)
+        self.measure_tab.variation_toggle.setVisible(not balance)
+        self.measure_tab.distortion_toggle.setVisible(not balance)
+        self.measure_tab.hrtf_toggle.setVisible(not balance)
+        self.measure_tab.hrtf_combo.setVisible(not balance)
+        self.measure_tab.hrtf_label.setVisible(not balance)
+        self.measure_tab.level_mode_label.setVisible(not balance)
+        self.measure_tab.level_mode_combo.setVisible(not balance)
+        self.measure_tab.level_meter.setVisible(not balance)
+        self.measure_tab.level_meter_2.setVisible(self._two_channel_enabled and not balance)
+        self.measure_tab.level_status_label.setVisible(not balance)
+        self.measure_tab.level_status_label_2.setVisible(self._two_channel_enabled and not balance)
+        self._plots.two.set_generator_level(float(self.measure_tab.queue_level_spin.value()))
         self._plots.two.set_frequency_limit(frequency_limit(int(self._settings.get("sample_rate"))))
         if balance:
             self.devices.stop_level_monitor()
@@ -646,7 +630,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
 
     def _on_two_channel_bottom_mode_changed(self, _index: int) -> None:
-        mode = str(self._bottom_layout_combo.currentData() or "combined")
+        mode = str(self.measure_tab.bottom_layout_combo.currentData() or "combined")
         self._two_channel_bottom_mode = "separate" if mode == "separate" else "combined"
         self._settings.set("measure_two_channel_bottom_mode", self._two_channel_bottom_mode)
         self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
@@ -675,7 +659,7 @@ class MainWindow(QMainWindow):
             return
 
         self.devices.stop_level_monitor()
-        self._balance_level_db = float(self._queue_level_spin.value())
+        self._balance_level_db = float(self.measure_tab.queue_level_spin.value())
         engine = ChannelBalanceEngine()
         engine.set_parameters(
             self._balance_waveform,
@@ -743,8 +727,8 @@ class MainWindow(QMainWindow):
             ),
         )
         self._balance_level_db = max(-120.0, min(0.0, float(level_db)))
-        if abs(float(self._queue_level_spin.value()) - self._balance_level_db) > 1e-9:
-            self._queue_level_spin.setValue(self._balance_level_db)
+        if abs(float(self.measure_tab.queue_level_spin.value()) - self._balance_level_db) > 1e-9:
+            self.measure_tab.queue_level_spin.setValue(self._balance_level_db)
         if self._balance_engine is not None:
             self._balance_engine.set_parameters(
                 self._balance_waveform,
@@ -771,37 +755,41 @@ class MainWindow(QMainWindow):
     def _open_inputs_overlay(self) -> None:
         self._close_metadata_overlay()
         self._inputs_overlay_open = True
-        target = self._inputs_overlay_geometry(max(1, self._inputs_overlay.sizeHint().height()))
+        target = self._inputs_overlay_geometry(
+            max(1, self.measure_tab.inputs_overlay.sizeHint().height())
+        )
         start = QRect(target.x(), target.y(), target.width(), 0)
-        self._inputs_overlay.setGeometry(start)
-        self._inputs_overlay.show()
-        self._inputs_overlay.raise_()
-        self._inputs_overlay_animation.stop()
-        self._inputs_overlay_animation.setStartValue(start)
-        self._inputs_overlay_animation.setEndValue(target)
-        self._inputs_overlay_animation.start()
+        self.measure_tab.inputs_overlay.setGeometry(start)
+        self.measure_tab.inputs_overlay.show()
+        self.measure_tab.inputs_overlay.raise_()
+        self.measure_tab.inputs_overlay_animation.stop()
+        self.measure_tab.inputs_overlay_animation.setStartValue(start)
+        self.measure_tab.inputs_overlay_animation.setEndValue(target)
+        self.measure_tab.inputs_overlay_animation.start()
 
     def _close_inputs_overlay(self) -> None:
         if not getattr(self, "_inputs_overlay_open", False):
             return
         self._inputs_overlay_open = False
-        self._inputs_overlay_animation.stop()
-        start = self._inputs_overlay.geometry()
-        self._inputs_overlay_animation.setStartValue(start)
-        self._inputs_overlay_animation.setEndValue(QRect(start.x(), start.y(), start.width(), 0))
-        self._inputs_overlay_animation.start()
+        self.measure_tab.inputs_overlay_animation.stop()
+        start = self.measure_tab.inputs_overlay.geometry()
+        self.measure_tab.inputs_overlay_animation.setStartValue(start)
+        self.measure_tab.inputs_overlay_animation.setEndValue(
+            QRect(start.x(), start.y(), start.width(), 0)
+        )
+        self.measure_tab.inputs_overlay_animation.start()
 
     def _on_inputs_overlay_animation_finished(self) -> None:
         if not self._inputs_overlay_open:
-            self._inputs_overlay.hide()
+            self.measure_tab.inputs_overlay.hide()
 
     def _position_inputs_overlay(self) -> None:
-        if not hasattr(self, "_inputs_overlay"):
+        if not hasattr(self, "measure_tab"):
             return
-        self._inputs_overlay.setGeometry(
-            self._inputs_overlay_geometry(self._inputs_overlay.height())
+        self.measure_tab.inputs_overlay.setGeometry(
+            self._inputs_overlay_geometry(self.measure_tab.inputs_overlay.height())
         )
-        self._inputs_overlay.raise_()
+        self.measure_tab.inputs_overlay.raise_()
 
     def _inputs_overlay_geometry(self, height: int) -> QRect:
         anchor = self._inputs_btn.mapTo(
@@ -884,7 +872,7 @@ class MainWindow(QMainWindow):
                 point = event.globalPosition().toPoint()
                 if (
                     getattr(self, "_inputs_overlay_open", False)
-                    and not self._global_point_inside(self._inputs_overlay, point)
+                    and not self._global_point_inside(self.measure_tab.inputs_overlay, point)
                     and not self._global_point_inside(self._inputs_btn, point)
                 ):
                     self._close_inputs_overlay()
@@ -901,14 +889,14 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if hasattr(self, "_inputs_overlay"):
+        if hasattr(self, "measure_tab"):
             self._position_inputs_overlay()
         if hasattr(self, "_metadata_overlay"):
             self._position_metadata_overlay()
 
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
-        if hasattr(self, "_inputs_overlay"):
+        if hasattr(self, "measure_tab"):
             self._position_inputs_overlay()
         if hasattr(self, "_metadata_overlay"):
             self._position_metadata_overlay()
@@ -1053,9 +1041,9 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
         brand = self._theme_controller.brand_mode
-        submode_control = getattr(self, "_measure_submode_control", None)
-        if submode_control is not None:
-            submode_control.refresh_segment_widths()
+        measure_tab = getattr(self, "measure_tab", None)
+        if measure_tab is not None:
+            measure_tab.measure_submode_control.refresh_segment_widths()
         plots = getattr(self, "_plots", None)
         if plots is not None:
             plots.apply_theme(theme, brand_mode=brand)
@@ -1065,12 +1053,9 @@ class MainWindow(QMainWindow):
         curator = getattr(self, "_curator_widget", None)
         if curator is not None:
             curator.apply_theme(theme, brand_mode=brand)
-        meter = getattr(self, "_level_meter", None)
-        if meter is not None:
-            meter.update()
-        meter_2 = getattr(self, "_level_meter_2", None)
-        if meter_2 is not None:
-            meter_2.update()
+        if measure_tab is not None:
+            measure_tab.level_meter.update()
+            measure_tab.level_meter_2.update()
         if log and hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "Application theme changed", theme=theme)
 
@@ -1079,7 +1064,7 @@ class MainWindow(QMainWindow):
         if settings_widget is not None:
             settings_widget.refresh_from_settings()
         self._on_theme_changed(self._theme_controller.theme, log=False)
-        if hasattr(self, "_upload_btn"):
+        if hasattr(self, "measure_tab"):
             self.measure_io.sync_export_button()
         if hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "brand mode changed", brand_mode=enabled)
@@ -1526,7 +1511,7 @@ class MainWindow(QMainWindow):
                 key = _CONSOLE_SETTING_KEYS.get(name, name)
                 suffix = " (session)" if key in overrides else ""
                 value = (
-                    self._queue_level_spin.value()
+                    self.measure_tab.queue_level_spin.value()
                     if name == "output_level"
                     else self._settings.get(key)
                 )
@@ -1539,7 +1524,7 @@ class MainWindow(QMainWindow):
                 raise ValueError(f"Unknown editable setting: {name}")
             key = _CONSOLE_SETTING_KEYS.get(name, name)
             value = (
-                self._queue_level_spin.value()
+                self.measure_tab.queue_level_spin.value()
                 if name == "output_level"
                 else self._settings.get(key)
             )
@@ -1580,9 +1565,9 @@ class MainWindow(QMainWindow):
             else:
                 if "queue_output_level_db" in saved:
                     self._settings.set("queue_output_level_persist", True)
-                    self._queue_level_persist_toggle.blockSignals(True)
-                    self._queue_level_persist_toggle.setChecked(True)
-                    self._queue_level_persist_toggle.blockSignals(False)
+                    self.measure_tab.queue_level_persist_toggle.blockSignals(True)
+                    self.measure_tab.queue_level_persist_toggle.setChecked(True)
+                    self.measure_tab.queue_level_persist_toggle.blockSignals(False)
                 self._command_reply("Saved settings: " + ", ".join(saved))
                 self._log_event("INFO", "settings", "Session settings persisted", keys=saved)
             return
@@ -1617,13 +1602,13 @@ class MainWindow(QMainWindow):
             return
         self._settings.set_session(key, value)
         if name == "queue_count":
-            self._queue_n_spin.blockSignals(True)
-            self._queue_n_spin.setValue(int(value))
-            self._queue_n_spin.blockSignals(False)
+            self.measure_tab.queue_n_spin.blockSignals(True)
+            self.measure_tab.queue_n_spin.setValue(int(value))
+            self.measure_tab.queue_n_spin.blockSignals(False)
         elif name == "output_level":
-            self._queue_level_spin.blockSignals(True)
-            self._queue_level_spin.setValue(float(value))
-            self._queue_level_spin.blockSignals(False)
+            self.measure_tab.queue_level_spin.blockSignals(True)
+            self.measure_tab.queue_level_spin.setValue(float(value))
+            self.measure_tab.queue_level_spin.blockSignals(False)
         if name in {"sample_rate", "buffer_size"}:
             self.devices.start_level_monitor()
         self._settings_widget.refresh_from_settings()
@@ -1640,15 +1625,15 @@ class MainWindow(QMainWindow):
             if len(args) >= 2:
                 count = self._parse_console_setting("queue_count", args[1])
                 self._settings.set_session("queue_count", count)
-                self._queue_n_spin.blockSignals(True)
-                self._queue_n_spin.setValue(int(count))
-                self._queue_n_spin.blockSignals(False)
+                self.measure_tab.queue_n_spin.blockSignals(True)
+                self.measure_tab.queue_n_spin.setValue(int(count))
+                self.measure_tab.queue_n_spin.blockSignals(False)
             if len(args) == 3:
                 level = self._parse_console_setting("output_level", args[2])
                 self._settings.set_session("queue_output_level_db", level)
-                self._queue_level_spin.blockSignals(True)
-                self._queue_level_spin.setValue(float(level))
-                self._queue_level_spin.blockSignals(False)
+                self.measure_tab.queue_level_spin.blockSignals(True)
+                self.measure_tab.queue_level_spin.setValue(float(level))
+                self.measure_tab.queue_level_spin.blockSignals(False)
             self._start_queue()
             return
         if args == ["pass"]:
@@ -1870,210 +1855,6 @@ class MainWindow(QMainWindow):
             return
         raise ValueError("Unknown Curator command. Type 'curator help' for available commands.")
 
-    def _build_measure_plot_controls(self) -> QWidget:
-        row_widget = QWidget()
-        row_widget.setObjectName("measure_interplot_controls")
-        row_widget.setProperty("layoutRole", "transparent")
-        row = QHBoxLayout(row_widget)
-        row.setContentsMargins(6, 4, 6, 4)
-        row.setSpacing(8)
-
-        input_label = QLabel("Input")
-        input_label.setProperty("tone", "muted")
-        row.addWidget(input_label)
-        self._level_meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
-        self._level_meter.setMinimumWidth(160)
-        row.addWidget(self._level_meter, 1, Qt.AlignmentFlag.AlignVCenter)
-        self._level_status_label = QLabel("RMS")
-        self._level_status_label.setProperty("tone", "muted")
-        self._level_status_label.setMinimumWidth(30)
-        self._level_status_label.setToolTip("Live input RMS monitor")
-        row.addWidget(self._level_status_label)
-
-        self._level_meter_2 = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
-        self._level_meter_2.setMinimumWidth(120)
-        self._level_meter_2.setVisible(self._two_channel_enabled)
-        row.addWidget(self._level_meter_2, 1, Qt.AlignmentFlag.AlignVCenter)
-        self._level_status_label_2 = QLabel("R")
-        self._level_status_label_2.setProperty("tone", "muted")
-        self._level_status_label_2.setVisible(self._two_channel_enabled)
-        row.addWidget(self._level_status_label_2)
-
-        self._bottom_layout_label = QLabel("Bottom")
-        self._bottom_layout_label.setProperty("tone", "muted")
-        self._bottom_layout_label.setVisible(self._two_channel_enabled)
-        row.addWidget(self._bottom_layout_label)
-        self._bottom_layout_combo = QComboBox()
-        self._bottom_layout_combo.addItem("Combined", "combined")
-        self._bottom_layout_combo.addItem("Separate", "separate")
-        self._bottom_layout_combo.setCurrentIndex(
-            1 if self._two_channel_bottom_mode == "separate" else 0
-        )
-        self._bottom_layout_combo.setVisible(self._two_channel_enabled)
-        self._bottom_layout_combo.currentIndexChanged.connect(
-            self._on_two_channel_bottom_mode_changed
-        )
-        row.addWidget(self._bottom_layout_combo)
-
-        self._variation_toggle = ToggleSwitch("Variation")
-        self._variation_toggle.setToolTip(
-            "Show confidence-style spread of kept measurements in the bottom viewport."
-        )
-        self._variation_toggle.stateChanged.connect(self._on_bottom_view_changed)
-        row.addWidget(self._variation_toggle)
-
-        self._distortion_toggle = ToggleSwitch("Distortion")
-        self._distortion_toggle.setToolTip(
-            "Overlay THD and the 2nd/3rd harmonics of the last sweep on a "
-            "secondary axis in the bottom viewport. Needs at least "
-            f"{_DISTORTION_MIN_SNR_DB:.0f} dB SNR."
-        )
-        self._distortion_toggle.setChecked(bool(self._settings.get("measure_distortion_overlay")))
-        self._distortion_toggle.stateChanged.connect(self._on_distortion_overlay_changed)
-        row.addWidget(self._distortion_toggle)
-
-        self._hrtf_toggle = ToggleSwitch("HRTF")
-        self._hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
-        self._hrtf_toggle.stateChanged.connect(self._update_plots)
-        row.addWidget(self._hrtf_toggle)
-
-        self._hrtf_combo = QComboBox()
-        self._hrtf_combo.setMinimumWidth(120)
-        self._hrtf_combo.setToolTip("Select the HRTF used for compensation.")
-        self._hrtf_combo.currentIndexChanged.connect(self._on_hrtf_selected)
-        row.addWidget(self._hrtf_combo)
-        self._hrtf_label = QLabel("None")
-        self._hrtf_label.setProperty("tone", "muted")
-        self._hrtf_label.setMaximumWidth(90)
-        row.addWidget(self._hrtf_label)
-        self._refresh_hrtf_options()
-
-        self._level_mode_label = QLabel("Level")
-        self._level_mode_label.setProperty("tone", "muted")
-        row.addWidget(self._level_mode_label)
-        self._level_mode_combo = QComboBox()
-        self._level_mode_combo.addItem("1 kHz ref", "ref_1khz")
-        self._level_mode_combo.addItem("dB SPL", "dbspl")
-        self._level_mode_combo.setCurrentIndex(1 if self._level_mode() == "dbspl" else 0)
-        self._level_mode_combo.setToolTip(
-            "1 kHz ref normalizes every curve to 0 dB at 1 kHz. dB SPL keeps "
-            "the absolute level and needs a calibrated input device."
-        )
-        self._level_mode_combo.currentIndexChanged.connect(self._on_level_mode_changed)
-        row.addWidget(self._level_mode_combo)
-
-        self._compare_menu_btn = self.measure_compare.build_menu()
-        row.addWidget(self._compare_menu_btn)
-
-        self._undo_btn = QPushButton("Undo")
-        self._undo_btn.clicked.connect(self._undo_last_measurement)
-        row.addWidget(self._undo_btn)
-
-        self._clear_btn = QPushButton("Clear All")
-        self._clear_btn.setObjectName("btn_danger")
-        self._clear_btn.clicked.connect(self._clear_all)
-        row.addWidget(self._clear_btn)
-        return row_widget
-
-    def _build_export_controls(self) -> QWidget:
-        row_widget = QWidget()
-        row_widget.setObjectName("measure_export_controls")
-        row_widget.setProperty("layoutRole", "transparent")
-        row = QHBoxLayout(row_widget)
-        row.setContentsMargins(6, 4, 6, 4)
-        row.setSpacing(8)
-
-        self._session_menu_btn = self.measure_io.build_session_menu()
-        row.addWidget(self._session_menu_btn)
-
-        row.addWidget(QLabel("Export directory:"))
-        self._export_dir_input = QLineEdit()
-        self._export_dir_input.setPlaceholderText("Default: choose at export")
-        self._export_dir_input.setText(str(self._settings.get("export_directory") or ""))
-        self._export_dir_input.setMinimumWidth(140)
-        self._export_dir_input.setMaximumWidth(240)
-        row.addWidget(self._export_dir_input)
-        export_dir_btn = QPushButton("Browse…")
-        export_dir_btn.clicked.connect(self.measure_io.choose_export_directory)
-        row.addWidget(export_dir_btn)
-
-        self._send_to_rnd_btn = QPushButton("Send to R&D")
-        self._send_to_rnd_btn.clicked.connect(self._send_measure_to_rnd)
-        row.addWidget(self._send_to_rnd_btn)
-
-        self._export_btn = QPushButton("Export Average…")
-        self._export_btn.setObjectName("btn_export")
-        self._export_btn.clicked.connect(self.measure_io.export)
-        row.addWidget(self._export_btn)
-
-        self._send_to_curator_btn = QPushButton("Send to Curator")
-        self._send_to_curator_btn.clicked.connect(self._send_to_curator)
-        self._send_to_curator_btn.setToolTip(
-            "Add the current average or variation view to Curator."
-        )
-        row.addWidget(self._send_to_curator_btn)
-
-        self._upload_btn = QPushButton("Upload to Squiglink")
-        self._upload_btn.setObjectName("btn_upload")
-        self._upload_btn.clicked.connect(self.measure_io.run_upload_action)
-        row.addWidget(self._upload_btn)
-        return row_widget
-
-    def _build_inputs_overlay(self) -> None:
-        overlay = QFrame(self._tabs)
-        overlay.setObjectName("inputs_overlay")
-        overlay.setProperty("surfaceLevel", "raised")
-        overlay.setMinimumWidth(430)
-        overlay.hide()
-        layout = QVBoxLayout(overlay)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(6)
-
-        layout.addWidget(QLabel("Output Device"))
-        self._out_dev_combo = QComboBox()
-        self._out_dev_combo.currentIndexChanged.connect(self.devices.on_output_device_changed)
-        layout.addWidget(self._out_dev_combo)
-
-        layout.addWidget(QLabel("Input Device"))
-        self._in_dev_combo = QComboBox()
-        self._in_dev_combo.currentIndexChanged.connect(self.devices.on_input_device_changed)
-        layout.addWidget(self._in_dev_combo)
-
-        layout.addWidget(QLabel("Input Channel"))
-        self._ch_combo = QComboBox()
-        self._ch_combo.currentIndexChanged.connect(self.devices.on_channel_changed)
-        layout.addWidget(self._ch_combo)
-
-        self._active_ch_label = QLabel("Active input channel: —")
-        self._active_ch_label.setObjectName("label_channel_active")
-        layout.addWidget(self._active_ch_label)
-
-        self._advanced_windows_drivers_toggle = ToggleSwitch("Advanced Windows Drivers")
-        self._advanced_windows_drivers_toggle.setChecked(
-            bool(self._settings.get("windows_advanced_audio_drivers"))
-        )
-        self._advanced_windows_drivers_toggle.setVisible(is_windows_audio_host())
-        self._advanced_windows_drivers_toggle.stateChanged.connect(
-            self.devices.on_advanced_windows_drivers_changed
-        )
-        layout.addWidget(self._advanced_windows_drivers_toggle)
-
-        self._refresh_devices_btn = QPushButton("Refresh Devices")
-        self._refresh_devices_btn.clicked.connect(self.devices.manual_refresh_devices)
-        layout.addWidget(self._refresh_devices_btn)
-
-        self._inputs_overlay = overlay
-        self._inputs_overlay_open = False
-        self._inputs_overlay_animation = QPropertyAnimation(
-            overlay,
-            b"geometry",
-            self,
-        )
-        self._inputs_overlay_animation.setDuration(180)
-        self._inputs_overlay_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._inputs_overlay_animation.finished.connect(self._on_inputs_overlay_animation_finished)
-        QApplication.instance().installEventFilter(self)
-
     def _build_metadata_overlay(self) -> None:
         overlay = QFrame(self._tabs)
         overlay.setObjectName("metadata_overlay")
@@ -2112,164 +1893,11 @@ class MainWindow(QMainWindow):
             self._on_metadata_overlay_animation_finished
         )
 
-    def _build_measure_queue_bar(self) -> QWidget:
-        bar = _ResponsiveQueueBar()
-        self._queue_bar = bar
-        bar.setObjectName("measure_queue_bar")
-        bar.setProperty("surfaceLevel", "raised")
-        outer = QVBoxLayout(bar)
-        outer.setContentsMargins(6, 4, 6, 4)
-        outer.setSpacing(4)
-
-        primary_widget = QWidget()
-        primary_widget.setProperty("layoutRole", "transparent")
-        primary = QHBoxLayout(primary_widget)
-        primary.setContentsMargins(0, 0, 0, 0)
-        primary.setSpacing(8)
-        progress_widget = QWidget()
-        progress_widget.setProperty("layoutRole", "transparent")
-        progress = QHBoxLayout(progress_widget)
-        progress.setContentsMargins(0, 0, 0, 0)
-        progress.setSpacing(8)
-        outer.addWidget(primary_widget)
-        outer.addWidget(progress_widget)
-
-        self._start_queue_btn = QPushButton("Measure")
-        self._start_queue_btn.setObjectName("btn_start")
-        self._start_queue_btn.clicked.connect(self._start_queue)
-        primary.addWidget(self._start_queue_btn)
-
-        self._cancel_queue_btn = QPushButton("Cancel Queue")
-        self._cancel_queue_btn.setObjectName("btn_cancel")
-        self._cancel_queue_btn.clicked.connect(self._cancel_queue)
-        primary.addWidget(self._cancel_queue_btn)
-
-        self._two_channel_toggle = ToggleSwitch("Two Channel")
-        self._two_channel_toggle.setChecked(self._two_channel_enabled)
-        self._two_channel_toggle.setToolTip(
-            "Measure output/input channel 1 as L and channel 2 as R."
-        )
-        self._two_channel_toggle.stateChanged.connect(self._on_two_channel_toggled)
-        primary.addWidget(self._two_channel_toggle)
-
-        self._measure_submode_control = _MeasureSubmodeControl()
-        self._measure_frequency_button = self._measure_submode_control.frequency_button
-        self._measure_balance_button = self._measure_submode_control.balance_button
-        self._measure_submode_control.balance_toggled.connect(self._on_measure_submode_toggled)
-        self._measure_submode_control.minimum_width_changed.connect(
-            self._sync_queue_bar_submode_width
-        )
-        self._measure_submode_control.setVisible(self._two_channel_enabled)
-        primary.addWidget(self._measure_submode_control)
-
-        n_label = QLabel("Count")
-        n_label.setProperty("tone", "accent")
-        primary.addWidget(n_label)
-        self._queue_n_spin = QSpinBox()
-        self._queue_n_spin.setObjectName("queue_count_spin")
-        self._queue_n_spin.setRange(1, 100)
-        self._queue_n_spin.setValue(int(self._settings.get("queue_count") or 5))
-        self._queue_n_spin.setFixedWidth(110)
-        self._queue_n_spin.valueChanged.connect(self._on_queue_count_changed)
-        primary.addWidget(self._queue_n_spin)
-
-        level_label = QLabel("Output")
-        level_label.setProperty("tone", "accent")
-        primary.addWidget(level_label)
-        self._queue_level_spin = QDoubleSpinBox()
-        self._queue_level_spin.setRange(-120.0, 0.0)
-        self._queue_level_spin.setSingleStep(0.5)
-        self._queue_level_spin.setDecimals(1)
-        self._queue_level_spin.setSuffix(" dB")
-        self._queue_level_spin.setFixedWidth(110)
-        persist_output_level = bool(self._settings.get("queue_output_level_persist"))
-        initial_output_level = float(self._settings.get("queue_output_level_db") or -6.0)
-        if not persist_output_level:
-            initial_output_level = -6.0
-        self._queue_level_spin.setValue(max(-120.0, min(0.0, initial_output_level)))
-        self._queue_level_spin.valueChanged.connect(self._on_queue_level_changed)
-        primary.addWidget(self._queue_level_spin)
-        self._queue_level_persist_toggle = ToggleSwitch("")
-        self._queue_level_persist_toggle.setChecked(persist_output_level)
-        self._queue_level_persist_toggle.stateChanged.connect(self._on_queue_level_persist_changed)
-        primary.addWidget(
-            self._queue_level_persist_toggle,
-            0,
-            Qt.AlignmentFlag.AlignVCenter,
-        )
-        self._queue_level_persist_label = QLabel("Remember")
-        self._queue_level_persist_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        primary.addWidget(self._queue_level_persist_label)
-        primary.addStretch(1)
-
-        self._queue_progress_label = QLabel("Kept: 0")
-        progress.addWidget(self._queue_progress_label)
-
-        self._queue_progress_bar = QProgressBar()
-        self._queue_progress_bar.setRange(0, 1)
-        self._queue_progress_bar.setValue(0)
-        self._queue_progress_bar.setMinimumWidth(120)
-        progress.addWidget(self._queue_progress_bar, 1)
-
-        sweep_label = QLabel("Sweep")
-        self._queue_sweep_label = sweep_label
-        progress.addWidget(sweep_label)
-        self._sweep_progress = QProgressBar()
-        self._sweep_progress.setRange(0, 100)
-        self._sweep_progress.setValue(0)
-        self._sweep_progress.setMinimumWidth(120)
-        progress.addWidget(self._sweep_progress, 1)
-
-        self._queue_primary_widget = primary_widget
-        self._queue_primary_layout = primary
-        self._queue_progress_widget = progress_widget
-        self._queue_progress_layout = progress
-        bar.compact_changed.connect(self._set_queue_bar_compact)
-        self._queue_bar_compact = True
-        self._set_queue_bar_compact(True)
-        self._sync_queue_bar_submode_width()
-        return bar
-
-    def _sync_queue_bar_submode_width(self, _width: int | None = None) -> None:
-        bar = getattr(self, "_queue_bar", None)
-        control = getattr(self, "_measure_submode_control", None)
-        if bar is None or control is None:
-            return
-        reservation = 0 if control.isHidden() else control.minimum_control_width
-        bar.set_additional_compact_width(reservation)
-
-    def _set_queue_bar_compact(self, compact: bool) -> None:
-        self._queue_bar_compact = bool(compact)
-        widgets = (
-            self._queue_progress_label,
-            self._queue_progress_bar,
-            self._queue_sweep_label,
-            self._sweep_progress,
-        )
-        if compact:
-            for widget in widgets:
-                self._queue_primary_layout.removeWidget(widget)
-            self._queue_progress_layout.addWidget(self._queue_progress_label)
-            self._queue_progress_layout.addWidget(self._queue_progress_bar, 1)
-            self._queue_progress_layout.addWidget(self._queue_sweep_label)
-            self._queue_progress_layout.addWidget(self._sweep_progress, 1)
-            self._queue_progress_widget.setVisible(True)
-            return
-        for widget in widgets:
-            self._queue_progress_layout.removeWidget(widget)
-        self._queue_primary_layout.addWidget(self._queue_progress_label)
-        self._queue_primary_layout.addWidget(self._queue_progress_bar, 1)
-        self._queue_primary_layout.addWidget(self._queue_sweep_label)
-        self._queue_primary_layout.addWidget(self._sweep_progress, 1)
-        self._queue_progress_widget.setVisible(False)
-
     def _queue_active(self) -> bool:
         return self._queue_target > 0
 
     def _is_hrtf_active(self) -> bool:
-        return self._hrtf is not None and self._hrtf_toggle.isChecked()
+        return self._hrtf is not None and self.measure_tab.hrtf_toggle.isChecked()
 
     def _restore_hrtf_state(self) -> None:
         self._refresh_hrtf_options()
@@ -2299,13 +1927,13 @@ class MainWindow(QMainWindow):
             self._hrtf_options.append((path.stem, str(path)))
 
         current_path = self._hrtf.path if self._hrtf is not None else ""
-        self._hrtf_combo.blockSignals(True)
-        self._hrtf_combo.clear()
+        self.measure_tab.hrtf_combo.blockSignals(True)
+        self.measure_tab.hrtf_combo.clear()
         for label, value in self._hrtf_options:
-            self._hrtf_combo.addItem(label, value)
-        index = self._hrtf_combo.findData(current_path)
-        self._hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
-        self._hrtf_combo.blockSignals(False)
+            self.measure_tab.hrtf_combo.addItem(label, value)
+        index = self.measure_tab.hrtf_combo.findData(current_path)
+        self.measure_tab.hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.measure_tab.hrtf_combo.blockSignals(False)
 
     def _built_in_hrtf_paths(self) -> set[str]:
         paths: set[str] = set()
@@ -2320,21 +1948,21 @@ class MainWindow(QMainWindow):
 
     def _sync_hrtf_ui(self) -> None:
         has_hrtf = self._hrtf is not None
-        self._hrtf_toggle.setEnabled(has_hrtf)
+        self.measure_tab.hrtf_toggle.setEnabled(has_hrtf)
 
         if has_hrtf:
-            self._hrtf_label.setText(Path(self._hrtf.path).stem)
-            self._hrtf_label.setToolTip(self._hrtf.path)
-            index = self._hrtf_combo.findData(self._hrtf.path)
+            self.measure_tab.hrtf_label.setText(Path(self._hrtf.path).stem)
+            self.measure_tab.hrtf_label.setToolTip(self._hrtf.path)
+            index = self.measure_tab.hrtf_combo.findData(self._hrtf.path)
         else:
-            self._hrtf_label.setText("None")
-            self._hrtf_label.setToolTip("")
-            self._hrtf_toggle.setChecked(False)
+            self.measure_tab.hrtf_label.setText("None")
+            self.measure_tab.hrtf_label.setToolTip("")
+            self.measure_tab.hrtf_toggle.setChecked(False)
             index = 0
 
-        self._hrtf_combo.blockSignals(True)
-        self._hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
-        self._hrtf_combo.blockSignals(False)
+        self.measure_tab.hrtf_combo.blockSignals(True)
+        self.measure_tab.hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.measure_tab.hrtf_combo.blockSignals(False)
 
     def _abort_active_sweep(self) -> None:
         """Stop the running sweep and wait for its thread to end.
@@ -2362,7 +1990,7 @@ class MainWindow(QMainWindow):
         single_device_ok = (
             self.devices.current_output_device() is not None
             and self.devices.current_input_device() is not None
-            and self._ch_combo.count() > 0
+            and self.measure_tab.ch_combo.count() > 0
             and self.devices.selected_audio_pair_is_compatible()
         )
         device_ok = (
@@ -2372,54 +2000,54 @@ class MainWindow(QMainWindow):
         )
 
         for widget in (
-            self._out_dev_combo,
-            self._in_dev_combo,
-            self._ch_combo,
-            self._queue_n_spin,
-            self._queue_level_spin,
-            self._queue_level_persist_toggle,
-            self._queue_level_persist_label,
+            self.measure_tab.out_dev_combo,
+            self.measure_tab.in_dev_combo,
+            self.measure_tab.ch_combo,
+            self.measure_tab.queue_n_spin,
+            self.measure_tab.queue_level_spin,
+            self.measure_tab.queue_level_persist_toggle,
+            self.measure_tab.queue_level_persist_label,
             self._bluetooth_mode_toggle,
-            self._variation_toggle,
-            self._distortion_toggle,
-            self._level_mode_combo,
-            self._hrtf_combo,
-            self._undo_btn,
-            self._clear_btn,
+            self.measure_tab.variation_toggle,
+            self.measure_tab.distortion_toggle,
+            self.measure_tab.level_mode_combo,
+            self.measure_tab.hrtf_combo,
+            self.measure_tab.undo_btn,
+            self.measure_tab.clear_btn,
             self._metadata_btn,
             self._clear_metadata_btn,
-            self._advanced_windows_drivers_toggle,
-            self._refresh_devices_btn,
+            self.measure_tab.advanced_windows_drivers_toggle,
+            self.measure_tab.refresh_devices_btn,
         ):
             widget.setEnabled(idle)
 
-        for name in ("_session_menu_btn", "_compare_menu_btn"):
-            widget = getattr(self, name, None)
+        for name in ("session_menu_btn", "compare_menu_btn"):
+            widget = getattr(self.measure_tab, name, None)
             if widget is not None:
                 widget.setEnabled(idle)
 
-        self._two_channel_toggle.setEnabled(idle)
-        self._measure_submode_control.setEnabled(idle)
-        self._bottom_layout_combo.setEnabled(idle)
-        self._ch_combo.setEnabled(idle and not self._two_channel_enabled)
+        self.measure_tab.two_channel_toggle.setEnabled(idle)
+        self.measure_tab.measure_submode_control.setEnabled(idle)
+        self.measure_tab.bottom_layout_combo.setEnabled(idle)
+        self.measure_tab.ch_combo.setEnabled(idle and not self._two_channel_enabled)
 
-        self._hrtf_toggle.setEnabled(idle and self._hrtf is not None)
+        self.measure_tab.hrtf_toggle.setEnabled(idle and self._hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)
         if not idle:
             self._close_metadata_overlay()
         self._rnd_widget.set_busy(not idle)
-        self._start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
-        self._cancel_queue_btn.setEnabled(busy or pass_fail)
+        self.measure_tab.start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
+        self.measure_tab.cancel_queue_btn.setEnabled(busy or pass_fail)
         active_count = (
             len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
-        self._undo_btn.setEnabled(idle and active_count > 0)
+        self.measure_tab.undo_btn.setEnabled(idle and active_count > 0)
         has_measurements = (
             bool(self._two_channel_pairs) or self._pending_pair is not None
             if self._two_channel_enabled
             else bool(self._kept_curves) or self._pending_curve is not None
         )
-        self._clear_btn.setEnabled(idle and has_measurements)
+        self.measure_tab.clear_btn.setEnabled(idle and has_measurements)
         self.measure_io.sync_export_button()
 
     def _start_queue(self) -> None:
@@ -2454,7 +2082,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if self._ch_combo.count() == 0:
+        if self.measure_tab.ch_combo.count() == 0:
             QMessageBox.warning(
                 self,
                 "No Input Channel",
@@ -2486,7 +2114,7 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("Queue start canceled due to high ambient level.")
                 return
 
-        self._queue_target = int(self._queue_n_spin.value())
+        self._queue_target = int(self.measure_tab.queue_n_spin.value())
         self._queue_index = 0
         self._current_sweep_attempts = 0
         overrides = (
@@ -2497,12 +2125,12 @@ class MainWindow(QMainWindow):
         if "queue_count" not in overrides:
             self._settings.set("queue_count", self._queue_target)
 
-        self._queue_progress_bar.setRange(0, max(1, self._queue_target))
-        self._queue_progress_bar.setValue(0)
+        self.measure_tab.queue_progress_bar.setRange(0, max(1, self._queue_target))
+        self.measure_tab.queue_progress_bar.setValue(0)
         kept_count = (
             len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
-        self._queue_progress_label.setText(f"Kept: {kept_count}")
+        self.measure_tab.queue_progress_label.setText(f"Kept: {kept_count}")
 
         self._state = QueueState.QUEUE_RUNNING
         self._apply_state_ui()
@@ -2531,7 +2159,7 @@ class MainWindow(QMainWindow):
         self._stop_channel_balance()
         self._state = QueueState.SWEEPING
         self._apply_state_ui()
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
 
         output_device = self.devices.current_output_device()
         input_device = self.devices.current_input_device()
@@ -2560,7 +2188,7 @@ class MainWindow(QMainWindow):
             f_low=_MEASUREMENT_F_MIN,
             f_high=_MEASUREMENT_F_MAX,
         )
-        output_level_db = float(self._queue_level_spin.value())
+        output_level_db = float(self.measure_tab.queue_level_spin.value())
         output_gain = 10.0 ** (output_level_db / 20.0)
         sweep = (sweep * output_gain).astype(np.float32, copy=False)
 
@@ -2617,7 +2245,7 @@ class MainWindow(QMainWindow):
             attempt=self._current_sweep_attempts,
             sample_rate=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
-            output_level_db=float(self._queue_level_spin.value()),
+            output_level_db=float(self.measure_tab.queue_level_spin.value()),
             input_channel=input_channel + 1,
             output_channel=(output_channel + 1) if output_channel is not None else None,
         )
@@ -2627,7 +2255,7 @@ class MainWindow(QMainWindow):
             self._start_next_sweep(second_stage=True)
 
     def _on_sweep_progress(self, frac: float) -> None:
-        self._sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
+        self.measure_tab.sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
 
     def _on_timing_quality(
         self, start_conf: float, end_conf: float, drift_ms: float, snr_db: float
@@ -2783,7 +2411,7 @@ class MainWindow(QMainWindow):
         self._start_second_pair_stage = False
         self._two_channel_stage = 0
         self._last_timing_quality = None
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
 
         failure_reason = None
         if self._last_measurement_diagnostics is not None:
@@ -2972,7 +2600,7 @@ class MainWindow(QMainWindow):
         # One reset clears the counters and every pending curve or pair.
         self._queue.reset()
         self._state = QueueState.IDLE
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
@@ -2982,7 +2610,7 @@ class MainWindow(QMainWindow):
     def _finish_queue(self) -> None:
         self._queue.reset()
         self._state = QueueState.IDLE
-        self._sweep_progress.setValue(100)
+        self.measure_tab.sweep_progress.setValue(100)
         self._apply_state_ui()
         self.devices.start_level_monitor()
         match = self.measure_compare.target_match_message()
@@ -2991,12 +2619,12 @@ class MainWindow(QMainWindow):
 
     def _update_queue_progress(self) -> None:
         target = max(0, self._queue_target)
-        self._queue_progress_bar.setRange(0, max(1, target))
-        self._queue_progress_bar.setValue(min(self._queue_index, max(1, target)))
+        self.measure_tab.queue_progress_bar.setRange(0, max(1, target))
+        self.measure_tab.queue_progress_bar.setValue(min(self._queue_index, max(1, target)))
         kept_count = (
             len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
-        self._queue_progress_label.setText(f"Kept: {kept_count}")
+        self.measure_tab.queue_progress_label.setText(f"Kept: {kept_count}")
 
     def _show_pass_fail_dialog(self) -> None:
         pending_available = (
@@ -3070,7 +2698,7 @@ class MainWindow(QMainWindow):
                 self.devices.windows_audio_pair_message(),
             )
             return
-        if self._ch_combo.count() == 0:
+        if self.measure_tab.ch_combo.count() == 0:
             QMessageBox.warning(
                 self,
                 "No Input Channel",
@@ -3103,7 +2731,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.SWEEPING
         self._apply_state_ui()
         self._rnd_widget.set_status(f"Sweeping attempt {self._current_sweep_attempts}...")
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
 
         output_device = self.devices.current_output_device()
         input_device = self.devices.current_input_device()
@@ -3125,7 +2753,7 @@ class MainWindow(QMainWindow):
             f_low=_MEASUREMENT_F_MIN,
             f_high=_MEASUREMENT_F_MAX,
         )
-        output_level_db = float(self._queue_level_spin.value())
+        output_level_db = float(self.measure_tab.queue_level_spin.value())
         sweep = (sweep * (10.0 ** (output_level_db / 20.0))).astype(np.float32, copy=False)
 
         worker = SweepWorker()
@@ -3228,7 +2856,7 @@ class MainWindow(QMainWindow):
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = QueueState.IDLE
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
         self._apply_state_ui()
         self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
@@ -3285,7 +2913,7 @@ class MainWindow(QMainWindow):
             return
         freqs, mag_db = self._pending_curve
         channel_label = (
-            self._ch_combo.currentText().strip()
+            self.measure_tab.ch_combo.currentText().strip()
             or f"Channel {self.devices.current_input_channel() + 1}"
         )
         existing_names = {item.name for item in self._rnd_widget.session.measurements}
@@ -3315,7 +2943,7 @@ class MainWindow(QMainWindow):
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = QueueState.IDLE
-        self._sweep_progress.setValue(100)
+        self.measure_tab.sweep_progress.setValue(100)
         self._apply_state_ui()
         self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
@@ -3333,7 +2961,7 @@ class MainWindow(QMainWindow):
         self._rnd_sweep_active = False
         self._current_sweep_attempts = 0
         self._state = QueueState.IDLE
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
         self._apply_state_ui()
         self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
@@ -3587,7 +3215,7 @@ class MainWindow(QMainWindow):
     def _bottom_view_mode(self) -> str:
         if self._is_hrtf_active() and self._hrtf.is_variation:
             return "variation"
-        return "variation" if self._variation_toggle.isChecked() else "average"
+        return "variation" if self.measure_tab.variation_toggle.isChecked() else "average"
 
     def _on_bottom_view_changed(self, *_args) -> None:
         self._update_plots()
@@ -3597,7 +3225,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _distortion_overlay_enabled(self) -> bool:
-        toggle = getattr(self, "_distortion_toggle", None)
+        toggle = getattr(getattr(self, "measure_tab", None), "distortion_toggle", None)
         return toggle is not None and bool(toggle.isChecked())
 
     def _distortion_analysis_allowed(self) -> bool:
@@ -3698,7 +3326,7 @@ class MainWindow(QMainWindow):
         try:
             return absolute_spl_offset_db(
                 sensitivity_pa_per_fs=float(sensitivity),
-                output_level_db=float(self._queue_level_spin.value()),
+                output_level_db=float(self.measure_tab.queue_level_spin.value()),
             )
         except (TypeError, ValueError):
             return None
@@ -3709,7 +3337,7 @@ class MainWindow(QMainWindow):
         return bool(self._kept_curves) or self._pending_curve is not None
 
     def _sync_level_mode_combo(self) -> None:
-        combo = getattr(self, "_level_mode_combo", None)
+        combo = getattr(getattr(self, "measure_tab", None), "level_mode_combo", None)
         if combo is None:
             return
         combo.blockSignals(True)
@@ -3718,7 +3346,7 @@ class MainWindow(QMainWindow):
 
     def _on_level_mode_changed(self, *_args) -> None:
         """Switch level modes, refusing to mix modes inside one kept set."""
-        combo = self._level_mode_combo
+        combo = self.measure_tab.level_mode_combo
         chosen = str(combo.currentData() or "ref_1khz")
         chosen = "dbspl" if chosen == "dbspl" else "ref_1khz"
         if chosen == self._level_mode():
@@ -3761,7 +3389,7 @@ class MainWindow(QMainWindow):
         self._update_plots()
 
     def _on_hrtf_selected(self) -> None:
-        path = self._hrtf_combo.currentData()
+        path = self.measure_tab.hrtf_combo.currentData()
         if not path:
             self._hrtf = None
             self._settings.set("hrtf_path", None)
@@ -3775,9 +3403,9 @@ class MainWindow(QMainWindow):
             self._hrtf = HRTFCurve(path)
             self._settings.set("hrtf_path", path)
             self._sync_hrtf_ui()
-            self._hrtf_toggle.setChecked(True)
+            self.measure_tab.hrtf_toggle.setChecked(True)
             if self._hrtf.is_variation:
-                self._variation_toggle.setChecked(True)
+                self.measure_tab.variation_toggle.setChecked(True)
             self._update_plots()
             self.measure_io.mark_dirty()
             kind = "population variation compensation" if self._hrtf.is_variation else "HRTF"
@@ -3905,7 +3533,7 @@ class MainWindow(QMainWindow):
         self._queue.reset()
         self._kept_distortion = None
         self._update_queue_progress()
-        self._sweep_progress.setValue(0)
+        self.measure_tab.sweep_progress.setValue(0)
         self.measure_io.sync_export_button()
         self._apply_state_ui()
         self.measure_io.mark_dirty()
@@ -4005,10 +3633,10 @@ class MainWindow(QMainWindow):
             self._settings.clear_session("queue_output_level_db")
         clamped = max(-120.0, min(0.0, float(value)))
         if abs(clamped - float(value)) > 1e-9:
-            self._queue_level_spin.blockSignals(True)
-            self._queue_level_spin.setValue(clamped)
-            self._queue_level_spin.blockSignals(False)
-        if self._queue_level_persist_toggle.isChecked():
+            self.measure_tab.queue_level_spin.blockSignals(True)
+            self.measure_tab.queue_level_spin.setValue(clamped)
+            self.measure_tab.queue_level_spin.blockSignals(False)
+        if self.measure_tab.queue_level_persist_toggle.isChecked():
             self._settings.set("queue_output_level_db", clamped)
         if hasattr(self, "_plots"):
             self._plots.two.set_generator_level(clamped)
@@ -4025,10 +3653,12 @@ class MainWindow(QMainWindow):
             self._settings.clear_session("queue_count")
 
     def _on_queue_level_persist_changed(self, _state: int) -> None:
-        persist = self._queue_level_persist_toggle.isChecked()
+        persist = self.measure_tab.queue_level_persist_toggle.isChecked()
         self._settings.set("queue_output_level_persist", persist)
         if persist:
-            self._settings.set("queue_output_level_db", float(self._queue_level_spin.value()))
+            self._settings.set(
+                "queue_output_level_db", float(self.measure_tab.queue_level_spin.value())
+            )
 
     def _send_to_curator(self) -> None:
         if self._state != QueueState.IDLE:
@@ -4176,7 +3806,7 @@ class MainWindow(QMainWindow):
             else self.devices.current_input_channel()
         )
         channel_label = active_label or (
-            self._ch_combo.currentText().strip() or f"Channel {input_channel_index + 1}"
+            self.measure_tab.ch_combo.currentText().strip() or f"Channel {input_channel_index + 1}"
         )
         metadata["measure_channel"] = channel_label
         identity = self._session.asset_tag.strip() or " ".join(
@@ -4419,7 +4049,7 @@ class MainWindow(QMainWindow):
             offset_db=self._rnd_widget.displayed_offset_db(measurement),
         )
         self._settings.set("export_directory", str(path.parent))
-        self._export_dir_input.setText(str(path.parent))
+        self.measure_tab.export_dir_input.setText(str(path.parent))
         self._statusbar.showMessage(f"Exported R&D measurement: {path}")
         self._log_event("INFO", "rnd", "R&D measurement exported", path=str(path))
         self._run_automation_trigger("export_complete")
@@ -4464,7 +4094,7 @@ class MainWindow(QMainWindow):
             smoothing_fraction=int(self._rnd_widget.session.smoothing_fraction or 48),
         )
         self._settings.set("export_directory", str(path.parent))
-        self._export_dir_input.setText(str(path.parent))
+        self.measure_tab.export_dir_input.setText(str(path.parent))
         self._statusbar.showMessage(f"Exported R&D variation: {path}")
         self._log_event("INFO", "rnd", "R&D variation exported", path=str(path))
         self._run_automation_trigger("export_complete")
@@ -4822,15 +4452,15 @@ class MainWindow(QMainWindow):
             return
         output = (
             self.devices.current_output_device_label()
-            if hasattr(self, "_out_dev_combo")
+            if hasattr(self, "measure_tab")
             else "Not selected"
         )
         input_name = (
             self.devices.current_input_device_label()
-            if hasattr(self, "_in_dev_combo")
+            if hasattr(self, "measure_tab")
             else "Not selected"
         )
-        channel = self.devices.current_input_channel() + 1 if hasattr(self, "_ch_combo") else 1
+        channel = self.devices.current_input_channel() + 1 if hasattr(self, "measure_tab") else 1
         self._inputs_btn.setToolTip(
             f"Output: {output or 'Not selected'}\n"
             f"Input: {input_name or 'Not selected'}\n"

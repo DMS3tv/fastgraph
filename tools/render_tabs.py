@@ -71,7 +71,7 @@ pump(0.5)
 # Measure: two kept curves, variation view.
 window._kept_curves = [(freqs, curve(0.0, 1.0)), (freqs, curve(1.5, -1.2))]
 window._recompute_average()
-window._variation_toggle.setChecked(True)
+window.measure_tab.variation_toggle.setChecked(True)
 window._update_plots()
 
 # Curator: real REW export.

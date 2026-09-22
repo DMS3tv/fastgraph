@@ -124,7 +124,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
     window.devices.current_input_device_info = lambda: {"name": "Mic"}
     offset = absolute_spl_offset_db(
         sensitivity_pa_per_fs=0.5,
-        output_level_db=float(window._queue_level_spin.value()),
+        output_level_db=float(window.measure_tab.queue_level_spin.value()),
     )
 
     window._on_sweep_finished(np.zeros(8), np.zeros(8))

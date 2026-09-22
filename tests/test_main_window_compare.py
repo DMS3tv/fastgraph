@@ -47,10 +47,10 @@ def test_compare_menu_sits_after_the_level_combo(make_main_window) -> None:
     row = window._plots._between_plots_widget.layout()
     widgets = [row.itemAt(index).widget() for index in range(row.count())]
 
-    level_index = widgets.index(window._level_mode_combo)
-    assert widgets[level_index + 1] is window._compare_menu_btn
-    assert widgets[level_index + 2] is window._undo_btn
-    assert window._compare_menu_btn.property("menuButton") is True
+    level_index = widgets.index(window.measure_tab.level_mode_combo)
+    assert widgets[level_index + 1] is window.measure_tab.compare_menu_btn
+    assert widgets[level_index + 2] is window.measure_tab.undo_btn
+    assert window.measure_tab.compare_menu_btn.property("menuButton") is True
     assert [
         action.text()
         for action in window.measure_compare._compare_menu.actions()

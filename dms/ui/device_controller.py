@@ -91,11 +91,11 @@ class DeviceController(QObject):
     # ------------------------------------------------------------------
 
     def current_output_device(self) -> int | None:
-        value = self._window._out_dev_combo.currentData()
+        value = self._window.measure_tab.out_dev_combo.currentData()
         return int(value) if value is not None else None
 
     def current_input_device(self) -> int | None:
-        value = self._window._in_dev_combo.currentData()
+        value = self._window.measure_tab.in_dev_combo.currentData()
         return int(value) if value is not None else None
 
     def current_output_device_info(self) -> dict | None:
@@ -131,11 +131,11 @@ class DeviceController(QObject):
         return device_setting(device, "input") if device is not None else None
 
     def current_input_channel(self) -> int:
-        value = self._window._ch_combo.currentData()
+        value = self._window.measure_tab.ch_combo.currentData()
         return int(value) if value is not None else 0
 
     def _use_advanced_windows_drivers(self) -> bool:
-        return bool(self._window._advanced_windows_drivers_toggle.isChecked())
+        return bool(self._window.measure_tab.advanced_windows_drivers_toggle.isChecked())
 
     def selected_audio_pair_is_compatible(self) -> bool:
         return is_compatible_device_pair(
@@ -183,16 +183,16 @@ class DeviceController(QObject):
             return
         matched_output = self._matching_output_for_input(input_device)
         if matched_output is not None:
-            idx = window._out_dev_combo.findData(int(matched_output["index"]))
+            idx = window.measure_tab.out_dev_combo.findData(int(matched_output["index"]))
             if idx >= 0:
-                window._out_dev_combo.setCurrentIndex(idx)
+                window.measure_tab.out_dev_combo.setCurrentIndex(idx)
                 window._settings.set("output_device", self.current_output_device_setting())
                 if show_status:
                     window._statusbar.showMessage(
                         "Matched Windows input/output to the same audio driver backend."
                     )
                 return
-        window._out_dev_combo.setCurrentIndex(-1)
+        window.measure_tab.out_dev_combo.setCurrentIndex(-1)
         window._settings.set("output_device", None)
         if show_status:
             window._statusbar.showMessage(
@@ -260,9 +260,9 @@ class DeviceController(QObject):
         out_duplicates = duplicate_device_names(out_devices)
         in_duplicates = duplicate_device_names(in_devices)
 
-        window._out_dev_combo.blockSignals(True)
-        window._in_dev_combo.blockSignals(True)
-        window._ch_combo.blockSignals(True)
+        window.measure_tab.out_dev_combo.blockSignals(True)
+        window.measure_tab.in_dev_combo.blockSignals(True)
+        window.measure_tab.ch_combo.blockSignals(True)
 
         self._output_devices_by_index = {int(d["index"]): d for d in out_devices}
         self._input_devices_by_index = {int(d["index"]): d for d in in_devices}
@@ -273,16 +273,16 @@ class DeviceController(QObject):
             int(d["index"]): device_label(d, in_duplicates) for d in in_devices
         }
 
-        window._out_dev_combo.clear()
+        window.measure_tab.out_dev_combo.clear()
         for d in out_devices:
-            window._out_dev_combo.addItem(
+            window.measure_tab.out_dev_combo.addItem(
                 self._output_device_labels_by_index[int(d["index"])],
                 int(d["index"]),
             )
 
-        window._in_dev_combo.clear()
+        window.measure_tab.in_dev_combo.clear()
         for d in in_devices:
-            window._in_dev_combo.addItem(
+            window.measure_tab.in_dev_combo.addItem(
                 self._input_device_labels_by_index[int(d["index"])],
                 int(d["index"]),
             )
@@ -300,31 +300,31 @@ class DeviceController(QObject):
 
         if out_devices:
             if selected_out_device is not None:
-                window._out_dev_combo.setCurrentIndex(
-                    window._out_dev_combo.findData(int(selected_out_device["index"]))
+                window.measure_tab.out_dev_combo.setCurrentIndex(
+                    window.measure_tab.out_dev_combo.findData(int(selected_out_device["index"]))
                 )
             elif out_ambiguous:
-                window._out_dev_combo.setCurrentIndex(-1)
+                window.measure_tab.out_dev_combo.setCurrentIndex(-1)
             else:
-                window._out_dev_combo.setCurrentIndex(0)
+                window.measure_tab.out_dev_combo.setCurrentIndex(0)
 
         if in_devices:
             if selected_in_device is not None:
-                window._in_dev_combo.setCurrentIndex(
-                    window._in_dev_combo.findData(int(selected_in_device["index"]))
+                window.measure_tab.in_dev_combo.setCurrentIndex(
+                    window.measure_tab.in_dev_combo.findData(int(selected_in_device["index"]))
                 )
             elif in_ambiguous:
-                window._in_dev_combo.setCurrentIndex(-1)
+                window.measure_tab.in_dev_combo.setCurrentIndex(-1)
             else:
-                window._in_dev_combo.setCurrentIndex(0)
+                window.measure_tab.in_dev_combo.setCurrentIndex(0)
 
-        window._out_dev_combo.blockSignals(False)
-        window._in_dev_combo.blockSignals(False)
+        window.measure_tab.out_dev_combo.blockSignals(False)
+        window.measure_tab.in_dev_combo.blockSignals(False)
 
         self._sync_windows_output_to_input(show_status=False)
 
         self._refresh_channels(selected_ch=selected_ch)
-        window._ch_combo.blockSignals(False)
+        window.measure_tab.ch_combo.blockSignals(False)
 
         window._settings.set("output_device", self.current_output_device_setting())
         window._settings.set("input_device", self.current_input_device_setting())
@@ -378,9 +378,9 @@ class DeviceController(QObject):
         input_device = self.current_input_device()
         count = device_channel_count(input_device, "input") if input_device is not None else 0
 
-        window._ch_combo.clear()
+        window.measure_tab.ch_combo.clear()
         for idx in range(count):
-            window._ch_combo.addItem(f"Ch {idx + 1}", idx)
+            window.measure_tab.ch_combo.addItem(f"Ch {idx + 1}", idx)
 
         want_ch = (
             selected_ch
@@ -390,15 +390,18 @@ class DeviceController(QObject):
 
         if count > 0:
             want_ch = max(0, min(want_ch, count - 1))
-            window._ch_combo.setCurrentIndex(want_ch)
+            window.measure_tab.ch_combo.setCurrentIndex(want_ch)
             window._settings.set("input_channel", want_ch)
-            window._active_ch_label.setText(f"Active input channel: Ch {want_ch + 1}")
+            window.measure_tab.active_ch_label.setText(f"Active input channel: Ch {want_ch + 1}")
         else:
-            window._active_ch_label.setText("Active input channel: —")
+            window.measure_tab.active_ch_label.setText("Active input channel: —")
         window._rnd_widget.set_input_channels(
             [
-                (window._ch_combo.itemText(index), int(window._ch_combo.itemData(index)))
-                for index in range(window._ch_combo.count())
+                (
+                    window.measure_tab.ch_combo.itemText(index),
+                    int(window.measure_tab.ch_combo.itemData(index)),
+                )
+                for index in range(window.measure_tab.ch_combo.count())
             ],
             self.current_input_channel(),
         )
@@ -508,7 +511,7 @@ class DeviceController(QObject):
     def on_channel_changed(self) -> None:
         window = self._window
         window._settings.set("input_channel", self.current_input_channel())
-        window._active_ch_label.setText(
+        window.measure_tab.active_ch_label.setText(
             f"Active input channel: Ch {self.current_input_channel() + 1}"
         )
         window._rnd_widget.set_input_channel(self.current_input_channel())
@@ -516,20 +519,20 @@ class DeviceController(QObject):
         window._refresh_session_labels()
 
     def on_rnd_input_channel_changed(self, channel: int) -> None:
-        index = self._window._ch_combo.findData(int(channel))
-        if index >= 0 and index != self._window._ch_combo.currentIndex():
-            self._window._ch_combo.setCurrentIndex(index)
+        index = self._window.measure_tab.ch_combo.findData(int(channel))
+        if index >= 0 and index != self._window.measure_tab.ch_combo.currentIndex():
+            self._window.measure_tab.ch_combo.setCurrentIndex(index)
 
     def automation_switch_input_device(self, requested: str) -> None:
         window = self._window
         if window._state != QueueState.IDLE:
             raise ValueError("Input device can only be changed while idle.")
         text = requested.strip()
-        for index in range(window._in_dev_combo.count()):
-            data = window._in_dev_combo.itemData(index)
-            label = window._in_dev_combo.itemText(index)
+        for index in range(window.measure_tab.in_dev_combo.count()):
+            data = window.measure_tab.in_dev_combo.itemData(index)
+            label = window.measure_tab.in_dev_combo.itemText(index)
             if text == str(data) or text.casefold() in label.casefold():
-                window._in_dev_combo.setCurrentIndex(index)
+                window.measure_tab.in_dev_combo.setCurrentIndex(index)
                 return
         raise ValueError(f"Input device unavailable: {requested}")
 
@@ -539,11 +542,11 @@ class DeviceController(QObject):
             raise ValueError("Input channel can only be changed while idle.")
         raw = requested.strip().lower()
         text = raw.removeprefix("ch").strip()
-        for index in range(window._ch_combo.count()):
-            data = window._ch_combo.itemData(index)
-            label = window._ch_combo.itemText(index).lower()
+        for index in range(window.measure_tab.ch_combo.count()):
+            data = window.measure_tab.ch_combo.itemData(index)
+            label = window.measure_tab.ch_combo.itemText(index).lower()
             if text == str(data) or text == str(int(data) + 1) or raw == label:
-                window._ch_combo.setCurrentIndex(index)
+                window.measure_tab.ch_combo.setCurrentIndex(index)
                 return
         raise ValueError(f"Input channel unavailable: {requested}")
 
@@ -565,15 +568,15 @@ class DeviceController(QObject):
         input_device = self.current_input_device()
         if input_device is None:
             self._displayed_level_dbfs = -60.0
-            window._level_meter.set_level(-60.0)
-            window._level_status_label.setText("No input")
+            window.measure_tab.level_meter.set_level(-60.0)
+            window.measure_tab.level_status_label.setText("No input")
             return
 
         try:
             if window._two_channel_enabled:
                 if not self.two_channel_devices_ready():
-                    window._level_status_label.setText("Two inputs needed")
-                    window._level_status_label_2.setText("R")
+                    window.measure_tab.level_status_label.setText("Two inputs needed")
+                    window.measure_tab.level_status_label_2.setText("R")
                     return
                 self.dual_level_monitor.start(
                     device_index=input_device,
@@ -581,8 +584,8 @@ class DeviceController(QObject):
                     fs=int(window._settings.get("sample_rate")),
                     buffer_size=int(window._settings.get("buffer_size")),
                 )
-                window._level_status_label.setText("L")
-                window._level_status_label_2.setText("R")
+                window.measure_tab.level_status_label.setText("L")
+                window.measure_tab.level_status_label_2.setText("R")
                 return
             self.level_monitor.start(
                 device_index=input_device,
@@ -591,7 +594,7 @@ class DeviceController(QObject):
                 fs=int(window._settings.get("sample_rate")),
                 buffer_size=int(window._settings.get("buffer_size")),
             )
-            window._level_status_label.setText("RMS")
+            window.measure_tab.level_status_label.setText("RMS")
         except Exception as exc:
             window._statusbar.showMessage(f"Level monitor start failed: {exc}")
 
@@ -606,14 +609,14 @@ class DeviceController(QObject):
         window = self._window
         if window._two_channel_enabled:
             left_db, right_db = self._last_dual_levels
-            window._level_meter.set_level(max(-60.0, min(0.0, left_db)))
-            window._level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
+            window.measure_tab.level_meter.set_level(max(-60.0, min(0.0, left_db)))
+            window.measure_tab.level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
             return
         target_db = max(-60.0, min(0.0, self.last_level_dbfs))
         self._displayed_level_dbfs = self._displayed_level_dbfs * 0.5 + target_db * 0.5
         if abs(self._displayed_level_dbfs - target_db) < 0.2:
             self._displayed_level_dbfs = target_db
-        window._level_meter.set_level(self._displayed_level_dbfs)
+        window.measure_tab.level_meter.set_level(self._displayed_level_dbfs)
 
     def _on_level_error(self, message: str) -> None:
         self._window._statusbar.showMessage(message)

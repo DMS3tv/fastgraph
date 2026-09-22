@@ -28,7 +28,7 @@ def test_curator_is_middle_tab(make_main_window) -> None:
         "Automation",
         "Settings",
     ]
-    assert window._queue_level_persist_toggle.minimumSizeHint().width() >= 54
+    assert window.measure_tab.queue_level_persist_toggle.minimumSizeHint().width() >= 54
 
 
 def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
@@ -44,10 +44,10 @@ def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
         window._plots.single._bot_frame,
         window._plots._footer_widget,
     ]
-    assert window._clear_btn.objectName() == "btn_danger"
-    assert window._level_meter.parent() is window._plots._between_plots_widget
-    assert window._export_dir_input.parent() is window._plots._footer_widget
-    assert not window._clear_btn.isEnabled()
+    assert window.measure_tab.clear_btn.objectName() == "btn_danger"
+    assert window.measure_tab.level_meter.parent() is window._plots._between_plots_widget
+    assert window.measure_tab.export_dir_input.parent() is window._plots._footer_widget
+    assert not window.measure_tab.clear_btn.isEnabled()
 
 
 def test_session_and_bluetooth_controls_precede_tabs(qapp, make_main_window) -> None:
@@ -88,16 +88,21 @@ def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(make_main_window)
 
     assert measure.layout().count() == 1
     assert window._plots._header_widget.objectName() == "measure_queue_bar"
-    assert window._queue_primary_layout.itemAt(0).widget() is window._start_queue_btn
-    assert window._start_queue_btn.text() == "Measure"
+    assert (
+        window.measure_tab.queue_primary_layout.itemAt(0).widget()
+        is window.measure_tab.start_queue_btn
+    )
+    assert window.measure_tab.start_queue_btn.text() == "Measure"
     assert not hasattr(window, "_queue_hint_label")
 
-    window._set_queue_bar_compact(False)
-    assert window._queue_progress_bar.parent() is window._queue_primary_widget
-    assert not window._queue_progress_widget.isVisible()
+    window.measure_tab._set_queue_bar_compact(False)
+    assert window.measure_tab.queue_progress_bar.parent() is window.measure_tab.queue_primary_widget
+    assert not window.measure_tab.queue_progress_widget.isVisible()
 
-    window._set_queue_bar_compact(True)
-    assert window._queue_progress_bar.parent() is window._queue_progress_widget
+    window.measure_tab._set_queue_bar_compact(True)
+    assert (
+        window.measure_tab.queue_progress_bar.parent() is window.measure_tab.queue_progress_widget
+    )
 
 
 def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_main_window) -> None:
@@ -107,28 +112,28 @@ def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_m
     qapp.processEvents()
 
     window._open_inputs_overlay()
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
-    assert window._inputs_overlay.isVisible()
-    assert window._inputs_overlay.height() > 0
-    assert window._inputs_overlay.parent() is window._tabs
-    assert window._inputs_overlay.geometry().right() <= window._tabs.rect().right()
-    assert window._inputs_overlay.geometry().bottom() <= window._tabs.rect().bottom()
+    assert window.measure_tab.inputs_overlay.isVisible()
+    assert window.measure_tab.inputs_overlay.height() > 0
+    assert window.measure_tab.inputs_overlay.parent() is window._tabs
+    assert window.measure_tab.inputs_overlay.geometry().right() <= window._tabs.rect().right()
+    assert window.measure_tab.inputs_overlay.geometry().bottom() <= window._tabs.rect().bottom()
     assert window._inputs_btn.role() == "primary"
     assert window._inputs_btn._has_persistent_outline()
 
     window._state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
     assert window._inputs_btn.isEnabled()
-    assert not window._out_dev_combo.isEnabled()
-    assert not window._in_dev_combo.isEnabled()
-    assert not window._ch_combo.isEnabled()
-    assert not window._refresh_devices_btn.isEnabled()
+    assert not window.measure_tab.out_dev_combo.isEnabled()
+    assert not window.measure_tab.in_dev_combo.isEnabled()
+    assert not window.measure_tab.ch_combo.isEnabled()
+    assert not window.measure_tab.refresh_devices_btn.isEnabled()
 
     QTest.keyClick(window, Qt.Key.Key_Escape)
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
-    assert not window._inputs_overlay.isVisible()
+    assert not window.measure_tab.inputs_overlay.isVisible()
 
 
 def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) -> None:
@@ -136,7 +141,7 @@ def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) ->
     window.resize(1280, 800)
     window.show()
     window._open_inputs_overlay()
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
 
     QTest.mouseClick(
@@ -144,21 +149,21 @@ def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) ->
         Qt.MouseButton.LeftButton,
         pos=QPoint(8, 8),
     )
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
 
-    assert not window._inputs_overlay.isVisible()
+    assert not window.measure_tab.inputs_overlay.isVisible()
 
 
 def test_inputs_overlay_closes_on_tab_change(qapp, make_main_window) -> None:
     window = _window(make_main_window)
     window.show()
     window._open_inputs_overlay()
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     window._tabs.setCurrentWidget(window._rnd_widget)
-    window._inputs_overlay_animation.setCurrentTime(180)
+    window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
     qapp.processEvents()
-    assert not window._inputs_overlay.isVisible()
+    assert not window.measure_tab.inputs_overlay.isVisible()
 
 
 def test_metadata_button_opens_dropdown_and_saves_session(qapp, make_main_window) -> None:
@@ -290,7 +295,7 @@ def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> No
     assert window._settings.get("confirm_clear_measurements") is False
     assert window._curator_widget.graph_state.layers == [curator_marker]
     assert len(window._console_events.events()) >= event_count
-    assert not window._clear_btn.isEnabled()
+    assert not window.measure_tab.clear_btn.isEnabled()
 
     window._settings_widget._confirm_clear.setChecked(True)
     assert window._settings.get("confirm_clear_measurements") is True
@@ -303,7 +308,7 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n10000 3\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
-    window._hrtf_toggle.setChecked(True)
+    window.measure_tab.hrtf_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
     source_mag = np.array([4.0, 0.0, -4.0])
     window._average = (freqs, source_mag)
@@ -337,8 +342,8 @@ def test_send_variation_offsets_display_with_editable_hrtf(
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
-    window._hrtf_toggle.setChecked(True)
-    window._variation_toggle.setChecked(True)
+    window.measure_tab.hrtf_toggle.setChecked(True)
+    window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
     rows = [np.array([value, value + 1.0]) for value in (-2.0, -1.0, 0.0, 1.0, 2.0)]
     window._variation = VariationBand(freqs, *rows)
@@ -380,7 +385,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
         encoding="utf-8",
     )
     window._hrtf = HRTFCurve(str(hrtf_path))
-    window._hrtf_toggle.setChecked(True)
+    window.measure_tab.hrtf_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
     window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
     window._recompute_average()
@@ -414,7 +419,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
 
 def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_window) -> None:
     window = _window(make_main_window)
-    window._variation_toggle.setChecked(True)
+    window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
     window._variation = VariationBand(
         freqs,

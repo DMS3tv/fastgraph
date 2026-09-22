@@ -119,7 +119,7 @@ def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
     assert window._pending_pair_first_raw is None
     assert window._pending_pair_first_diagnostics is None
     assert window._two_channel_stage == 0
-    assert window._clear_btn.isEnabled() is False
+    assert window.measure_tab.clear_btn.isEnabled() is False
 
 
 def test_device_error_is_terminal_in_two_channel_mode(make_main_window, monkeypatch) -> None:

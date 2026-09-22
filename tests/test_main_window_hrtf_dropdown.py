@@ -33,7 +33,10 @@ def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(
 
     window._refresh_hrtf_options()
 
-    assert [window._hrtf_combo.itemText(i) for i in range(window._hrtf_combo.count())] == [
+    assert [
+        window.measure_tab.hrtf_combo.itemText(i)
+        for i in range(window.measure_tab.hrtf_combo.count())
+    ] == [
         "None",
         "Alpha",
         "Beta",
@@ -67,15 +70,17 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
     window = _window(make_main_window)
     window._refresh_hrtf_options()
 
-    window._hrtf_combo.setCurrentIndex(window._hrtf_combo.findData(str(hrtf_path)))
+    window.measure_tab.hrtf_combo.setCurrentIndex(
+        window.measure_tab.hrtf_combo.findData(str(hrtf_path))
+    )
 
     assert window._hrtf is not None
     assert window._hrtf.name == "Fixture A"
     assert window._settings.get("hrtf_path") == str(hrtf_path)
-    assert window._hrtf_toggle.isEnabled()
-    assert window._hrtf_toggle.isChecked()
-    assert window._hrtf_label.text() == "Fixture A"
-    assert window._hrtf_label.toolTip() == str(hrtf_path)
+    assert window.measure_tab.hrtf_toggle.isEnabled()
+    assert window.measure_tab.hrtf_toggle.isChecked()
+    assert window.measure_tab.hrtf_label.text() == "Fixture A"
+    assert window.measure_tab.hrtf_label.toolTip() == str(hrtf_path)
     assert window.update_count == 1
 
 
@@ -89,16 +94,18 @@ def test_selecting_none_clears_hrtf_and_disables_compensation(
     monkeypatch.setattr(main_window_module, "HRTF_DIR", hrtf_dir)
     window = _window(make_main_window)
     window._refresh_hrtf_options()
-    window._hrtf_combo.setCurrentIndex(window._hrtf_combo.findData(str(hrtf_path)))
+    window.measure_tab.hrtf_combo.setCurrentIndex(
+        window.measure_tab.hrtf_combo.findData(str(hrtf_path))
+    )
 
-    window._hrtf_combo.setCurrentIndex(0)
+    window.measure_tab.hrtf_combo.setCurrentIndex(0)
 
     assert window._hrtf is None
     assert window._settings.get("hrtf_path") is None
-    assert not window._hrtf_toggle.isEnabled()
-    assert not window._hrtf_toggle.isChecked()
-    assert window._hrtf_label.text() == "None"
-    assert window._hrtf_label.toolTip() == ""
+    assert not window.measure_tab.hrtf_toggle.isEnabled()
+    assert not window.measure_tab.hrtf_toggle.isChecked()
+    assert window.measure_tab.hrtf_label.text() == "None"
+    assert window.measure_tab.hrtf_label.toolTip() == ""
 
 
 def test_restore_ignores_missing_or_legacy_custom_hrtf_path(
@@ -117,4 +124,4 @@ def test_restore_ignores_missing_or_legacy_custom_hrtf_path(
 
     assert window._hrtf is None
     assert window._settings.get("hrtf_path") is None
-    assert window._hrtf_combo.currentText() == "None"
+    assert window.measure_tab.hrtf_combo.currentText() == "None"

@@ -72,11 +72,11 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> Non
     assert "Devices" not in section_titles
     assert "Queue" not in section_titles
     assert window._plots._header_widget.objectName() == "measure_queue_bar"
-    assert window._start_queue_btn.text() == "Measure"
-    assert window._start_queue_btn._has_persistent_outline() is True
+    assert window.measure_tab.start_queue_btn.text() == "Measure"
+    assert window.measure_tab.start_queue_btn._has_persistent_outline() is True
     assert window._rnd_widget._measure_btn._has_persistent_outline() is True
-    assert isinstance(window._queue_n_spin, ModernSpinBox)
-    assert isinstance(window._queue_level_spin, ModernDoubleSpinBox)
+    assert isinstance(window.measure_tab.queue_n_spin, ModernSpinBox)
+    assert isinstance(window.measure_tab.queue_level_spin, ModernDoubleSpinBox)
     assert isinstance(window._rnd_widget._target_offset_spin, ModernDoubleSpinBox)
     assert window._plots.single._top_frame.radius == 10
     assert window._rnd_widget._plots.top_frame.radius == 10
@@ -84,12 +84,12 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> Non
     window._rnd_widget._notes_toggle.clicked.emit(False)
     assert window._settings.get("rnd_notes_expanded") is False
 
-    window._ch_combo.addItem("Ch 1", 0)
-    window._ch_combo.addItem("Ch 2", 1)
+    window.measure_tab.ch_combo.addItem("Ch 1", 0)
+    window.measure_tab.ch_combo.addItem("Ch 2", 1)
     window._rnd_widget.set_input_channels([("Ch 1", 0), ("Ch 2", 1)], 0)
     window._rnd_widget._input_channel_combo.setCurrentIndex(1)
     assert window.devices.current_input_channel() == 1
-    window._ch_combo.setCurrentIndex(0)
+    window.measure_tab.ch_combo.setCurrentIndex(0)
     assert window._rnd_widget._input_channel_combo.currentData() == 0
 
 
@@ -125,10 +125,10 @@ def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window.devices._input_device_labels_by_index = {1: "Input A"}
     window.devices._output_device_labels_by_index = {2: "Output A"}
-    window._in_dev_combo.addItem("Input A", 1)
-    window._out_dev_combo.addItem("Output A", 2)
-    window._ch_combo.clear()
-    window._ch_combo.addItem("Channel 1", 0)
+    window.measure_tab.in_dev_combo.addItem("Input A", 1)
+    window.measure_tab.out_dev_combo.addItem("Output A", 2)
+    window.measure_tab.ch_combo.clear()
+    window.measure_tab.ch_combo.addItem("Channel 1", 0)
 
     window._keep_rnd_measurement(change_status="changed", notes="Pad revision")
 
@@ -880,25 +880,27 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
     window = make_main_window()
     layout = window._plots._footer_widget.layout()
 
-    assert layout.indexOf(window._send_to_rnd_btn) < layout.indexOf(window._export_btn)
-    assert window._export_dir_input.minimumWidth() == 140
-    assert window._export_dir_input.maximumWidth() == 240
+    assert layout.indexOf(window.measure_tab.send_to_rnd_btn) < layout.indexOf(
+        window.measure_tab.export_btn
+    )
+    assert window.measure_tab.export_dir_input.minimumWidth() == 140
+    assert window.measure_tab.export_dir_input.maximumWidth() == 240
 
     window.measure_io.sync_export_button()
-    assert not window._send_to_rnd_btn.isEnabled()
-    assert "average" in window._send_to_rnd_btn.toolTip().lower()
+    assert not window.measure_tab.send_to_rnd_btn.isEnabled()
+    assert "average" in window.measure_tab.send_to_rnd_btn.toolTip().lower()
 
     window._average = (
         np.array([100.0, 1000.0]),
         np.array([1.0, 0.0]),
     )
     window.measure_io.sync_export_button()
-    assert window._send_to_rnd_btn.isEnabled()
+    assert window.measure_tab.send_to_rnd_btn.isEnabled()
 
     window._state = QueueState.SWEEPING
     window.measure_io.sync_export_button()
-    assert not window._send_to_rnd_btn.isEnabled()
-    assert "idle" in window._send_to_rnd_btn.toolTip().lower()
+    assert not window.measure_tab.send_to_rnd_btn.isEnabled()
+    assert "idle" in window.measure_tab.send_to_rnd_btn.toolTip().lower()
     window._state = QueueState.IDLE
 
 
@@ -911,14 +913,14 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     mag_db = np.array([3.0, -1.0])
     window._average = (freqs, mag_db)
     window._hrtf = object()
-    window._hrtf_toggle.setChecked(False)
+    window.measure_tab.hrtf_toggle.setChecked(False)
     window._rnd_widget.session.hrtf_path = "rnd-default.txt"
     window._rnd_widget.session.hrtf_name = "R&D Default"
     window.devices.current_input_device_label = lambda: "Input A"
     window.devices.current_output_device_label = lambda: "Output B"
     window.devices.current_input_channel = lambda: 1
-    window._ch_combo.clear()
-    window._ch_combo.addItem("Channel 2", 1)
+    window.measure_tab.ch_combo.clear()
+    window.measure_tab.ch_combo.addItem("Channel 2", 1)
     recovery_calls: list[bool] = []
     monkeypatch.setattr(window._rnd_recovery, "schedule", lambda: recovery_calls.append(True))
     log_calls: list[tuple[str, dict]] = []
@@ -974,7 +976,7 @@ def test_measure_average_copies_active_hrtf_as_editable_state(tmp_path, make_mai
     hrtf_path = tmp_path / "average-hrtf.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
-    window._hrtf_toggle.setChecked(True)
+    window.measure_tab.hrtf_toggle.setChecked(True)
     source_mag = np.array([4.0, 0.0])
     window._average = (np.array([100.0, 1000.0]), source_mag)
 
@@ -1003,8 +1005,8 @@ def test_measure_var_sends_all_kept_curves_as_one_group(
     hrtf_path = tmp_path / "transfer-hrtf.txt"
     hrtf_path.write_text(hrtf_rows, encoding="utf-8")
     window._hrtf = HRTFCurve(str(hrtf_path))
-    window._hrtf_toggle.setChecked(True)
-    window._variation_toggle.setChecked(True)
+    window.measure_tab.hrtf_toggle.setChecked(True)
+    window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
     first_mag = np.array([1.0, 0.0])
     second_mag = np.array([2.0, 1.0])

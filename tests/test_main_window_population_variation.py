@@ -20,8 +20,8 @@ def test_population_compensation_forces_measure_view_to_variation(
 ) -> None:
     window = make_main_window()
     window._hrtf = _variation_hrtf(tmp_path)
-    window._hrtf_toggle.setChecked(True)
-    window._variation_toggle.setChecked(False)
+    window.measure_tab.hrtf_toggle.setChecked(True)
+    window.measure_tab.variation_toggle.setChecked(False)
 
     assert window._bottom_view_mode() == "variation"
 

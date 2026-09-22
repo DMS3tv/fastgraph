@@ -1,33 +1,15 @@
 import numpy as np
 import pytest
 from helpers import flat_curve
-from PyQt6.QtCore import QEvent, QSize
-from PyQt6.QtGui import QFont, QFontMetrics
-from PyQt6.QtWidgets import (
-    QApplication,
-    QSizePolicy,
-    QStyle,
-    QStyleOptionButton,
-)
+from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QFontMetrics
+from PyQt6.QtWidgets import QSizePolicy, QStyle, QStyleOptionButton
 
-import dms.dither_fonts as dither_fonts
 import dms.ui.measure_controller as measure_controller_module
 from dms.measure_queue import QueueState
-from dms.style_tokens import DITHER_TOKENS
-from dms.theme import (
-    DARK,
-    DITHER,
-    FASTGRAPH_95,
-    FASTGRAPH_95_DARK,
-    HACKERMAN_95,
-    LIGHT,
-)
+from dms.theme import DARK, DITHER, FASTGRAPH_95, FASTGRAPH_95_DARK, HACKERMAN_95, LIGHT
 from dms.two_channel import TwoChannelCurvePair
 from dms.ui.main_window import MainWindow
-from dms.ui.modern_button import (
-    _FLAT_LABEL_HORIZONTAL_INSET,
-    _FLAT_PAINT_RECT_WIDTH_LOSS,
-)
 
 
 def _two_channel_window(make_main_window, *, theme: str = DARK) -> MainWindow:
@@ -37,28 +19,6 @@ def _two_channel_window(make_main_window, *, theme: str = DARK) -> MainWindow:
             "measure_two_channel_enabled": True,
             "measure_two_channel_bottom_mode": "separate",
         },
-    )
-
-
-def _process_theme_change(qapp) -> None:
-    for _ in range(8):
-        qapp.processEvents()
-
-
-def _independent_dither_label_width(label: str) -> int:
-    base = QFont()
-    base.setPixelSize(DITHER_TOKENS.typography.body_px)
-    heading = dither_fonts.dither_heading_font(base)
-    label_width = QFontMetrics(heading).horizontalAdvance(label.upper())
-    border_width = max(
-        DITHER_TOKENS.geometry.border_px,
-        DITHER_TOKENS.geometry.focus_border_px,
-    )
-    return (
-        label_width
-        + 2 * _FLAT_LABEL_HORIZONTAL_INSET
-        + 2 * border_width
-        + _FLAT_PAINT_RECT_WIDTH_LOSS
     )
 
 
@@ -213,48 +173,6 @@ def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
         window.measure_tab.measure_submode_control.sizePolicy().horizontalPolicy()
         == QSizePolicy.Policy.Fixed
     )
-
-
-def test_measure_button_width_matches_dither_startup_and_switch_paths(
-    qapp,
-    make_main_window,
-) -> None:
-    startup_window = _two_channel_window(make_main_window, theme=DITHER)
-    startup_window.show()
-    _process_theme_change(qapp)
-    startup_button = startup_window.measure_tab.start_queue_btn
-    startup_image = startup_button.grab().toImage()
-    startup_width = startup_image.width()
-    startup_hint_width = startup_button.sizeHint().width()
-
-    assert startup_image.isNull() is False
-    assert startup_width >= _independent_dither_label_width("Measure")
-
-    startup_window.close()
-    startup_window.deleteLater()
-    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-
-    switch_window = _two_channel_window(make_main_window, theme=DARK)
-    switch_window.show()
-    _process_theme_change(qapp)
-    switch_button = switch_window.measure_tab.start_queue_btn
-    dark_width = switch_button.grab().toImage().width()
-    dark_hint_width = switch_button.sizeHint().width()
-
-    switch_window._theme_controller.set_theme(DITHER, persist=False)
-    _process_theme_change(qapp)
-    switch_image = switch_button.grab().toImage()
-
-    assert switch_image.isNull() is False
-    assert switch_image.width() >= _independent_dither_label_width("Measure")
-    assert switch_image.width() == startup_width
-    assert switch_button.sizeHint().width() == startup_hint_width
-
-    switch_window._theme_controller.set_theme(DARK, persist=False)
-    _process_theme_change(qapp)
-
-    assert switch_button.grab().toImage().width() == dark_width
-    assert switch_button.sizeHint().width() == dark_hint_width
 
 
 def test_measure_submode_accessibility_and_responsive_width(make_main_window) -> None:

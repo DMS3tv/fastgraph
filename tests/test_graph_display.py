@@ -8,6 +8,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPen
 
 from dms.graph_display import (
+    EXPORT_FREQUENCY_MARKERS,
+    FREQUENCY_MARKERS,
+    FREQUENCY_TICKS,
     RETRO_GRAPH_MAX_BINS,
     STIPPLE_DASH_PATTERNS,
     retro_step_group,
@@ -103,3 +106,16 @@ def test_curator_image_export_does_not_import_ui_modules() -> None:
         check=True,
     )
     assert result.stdout.strip() == "[]"
+
+
+def test_frequency_markers_include_1k_3k_8k_and_10k_weights() -> None:
+    ticks = dict(FREQUENCY_TICKS)
+
+    assert ticks[1000] == "1k"
+    assert ticks[3000] == "3k"
+    assert ticks[8000] == "8k"
+    assert ticks[10000] == "10k"
+    for markers in (FREQUENCY_MARKERS, EXPORT_FREQUENCY_MARKERS):
+        assert 8000 not in markers
+        assert markers[1000][4] > markers[3000][4]
+        assert markers[10000][4] > markers[3000][4]

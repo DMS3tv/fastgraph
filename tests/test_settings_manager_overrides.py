@@ -1,5 +1,8 @@
 import json
+import stat
 from pathlib import Path
+
+from helpers import corrupt_backups
 
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
@@ -190,3 +193,36 @@ def test_settings_write_failure_is_logged(monkeypatch, caplog) -> None:
         record.levelname == "ERROR" and "could not be saved" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_settings_manager_reports_a_corrupt_file_and_keeps_a_backup(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    (tmp_path / "settings.json").write_text("{truncated", encoding="utf-8")
+
+    settings = SettingsManager()
+
+    assert settings.load_error is not None
+    assert "settings.json" in settings.load_error
+    assert len(corrupt_backups(tmp_path, "settings.json")) == 1
+    # Defaults are in use, and the next write starts a clean file.
+    assert settings.get("sample_rate") == 48000
+    settings.set("sample_rate", 44100)
+    assert json.loads((tmp_path / "settings.json").read_text())["sample_rate"] == 44100
+
+
+def test_settings_manager_has_no_load_error_for_a_healthy_file(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    SettingsManager().set("theme", "light")
+    reloaded = SettingsManager()
+    assert reloaded.load_error is None
+    assert reloaded.corrected_keys == []
+    assert reloaded.get("theme") == "light"
+
+
+def test_settings_file_is_written_owner_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    SettingsManager().set("theme", "light")
+    mode = stat.S_IMODE((tmp_path / "settings.json").stat().st_mode)
+    assert mode & 0o077 == 0, f"credentials file is group/world readable: {oct(mode)}"

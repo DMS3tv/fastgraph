@@ -32,7 +32,11 @@ from dms.theme import (
     brand_theme_colors,
     theme_colors,
 )
-from dms.ui.modern_button import ModernButton
+from dms.ui.modern_button import (
+    _FLAT_LABEL_HORIZONTAL_INSET,
+    _FLAT_PAINT_RECT_WIDTH_LOSS,
+    ModernButton,
+)
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.theme_surface import _dither_tile, dither_brush
@@ -544,3 +548,67 @@ def test_modern_spin_boxes_preserve_value_behaviour(qapp) -> None:
     QTest.mouseClick(decimal._step_down_button, Qt.MouseButton.LeftButton)
     assert decimal.value() == -0.5
     assert decimal.suffix() == " dB"
+
+
+def _process_theme_change(qapp) -> None:
+    for _ in range(8):
+        qapp.processEvents()
+
+
+def _independent_dither_label_width(label: str) -> int:
+    base = QFont()
+    base.setPixelSize(DITHER_TOKENS.typography.body_px)
+    heading = dither_fonts.dither_heading_font(base)
+    label_width = QFontMetrics(heading).horizontalAdvance(label.upper())
+    border_width = max(
+        DITHER_TOKENS.geometry.border_px,
+        DITHER_TOKENS.geometry.focus_border_px,
+    )
+    return (
+        label_width
+        + 2 * _FLAT_LABEL_HORIZONTAL_INSET
+        + 2 * border_width
+        + _FLAT_PAINT_RECT_WIDTH_LOSS
+    )
+
+
+def test_measure_button_width_matches_dither_startup_and_switch_paths(
+    qapp,
+    make_main_window,
+) -> None:
+    startup_window = make_main_window(theme=DITHER)
+    startup_window.show()
+    _process_theme_change(qapp)
+    startup_button = startup_window.measure_tab.start_queue_btn
+    startup_image = startup_button.grab().toImage()
+    startup_width = startup_image.width()
+    startup_hint_width = startup_button.sizeHint().width()
+
+    assert startup_image.isNull() is False
+    assert startup_width >= _independent_dither_label_width("Measure")
+
+    startup_window.close()
+    startup_window.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    switch_window = make_main_window(theme=DARK)
+    switch_window.show()
+    _process_theme_change(qapp)
+    switch_button = switch_window.measure_tab.start_queue_btn
+    dark_width = switch_button.grab().toImage().width()
+    dark_hint_width = switch_button.sizeHint().width()
+
+    switch_window._theme_controller.set_theme(DITHER, persist=False)
+    _process_theme_change(qapp)
+    switch_image = switch_button.grab().toImage()
+
+    assert switch_image.isNull() is False
+    assert switch_image.width() >= _independent_dither_label_width("Measure")
+    assert switch_image.width() == startup_width
+    assert switch_button.sizeHint().width() == startup_hint_width
+
+    switch_window._theme_controller.set_theme(DARK, persist=False)
+    _process_theme_change(qapp)
+
+    assert switch_button.grab().toImage().width() == dark_width
+    assert switch_button.sizeHint().width() == dark_hint_width

@@ -3,12 +3,8 @@
 import numpy as np
 from helpers import ramp_curve
 
-from dms.ui.dual_plot_widget import (
-    _AVERAGE_TITLE,
-    _DELTA_TITLE,
-    _DELTA_Y_LIMIT_DB,
-    DualPlotWidget,
-)
+from dms.theme import DARK, FASTGRAPH_95, HACKERMAN_95, LIGHT
+from dms.ui.dual_plot_widget import _AVERAGE_TITLE, _DELTA_TITLE, _DELTA_Y_LIMIT_DB, DualPlotWidget
 
 
 def _plot_widget(qapp) -> DualPlotWidget:
@@ -105,3 +101,31 @@ def test_clear_all_removes_every_comparison_item(qapp) -> None:
         assert widget._delta_zero_line is None
     finally:
         widget.deleteLater()
+
+
+def test_plot_theme_change_preserves_curves(qapp) -> None:
+    widget = DualPlotWidget()
+    curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
+    widget.update_curves([curve], curve)
+    top_count = len(widget._top_items)
+
+    widget.apply_theme(LIGHT)
+    widget.apply_theme(FASTGRAPH_95)
+    assert all(item.opts["antialias"] is True for item in widget._top_items)
+    assert widget._bot_item is not None and widget._bot_item.opts["antialias"] is True
+    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
+    np.testing.assert_array_equal(widget._top_items[0].yData, [1.0, 1.0, 0.0])
+    np.testing.assert_array_equal(widget._kept_curves[0][0], curve[0])
+    np.testing.assert_array_equal(widget._kept_curves[0][1], curve[1])
+    widget.apply_theme(HACKERMAN_95)
+    assert widget._top_items[0].opts["pen"].color().name().upper() == "#39FF14"
+    assert widget._bot_item is not None
+    assert widget._bot_item.opts["pen"].color().name().upper() == "#39FF14"
+    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
+    widget.apply_theme(DARK)
+
+    assert len(widget._top_items) == top_count
+    assert all(item.opts["antialias"] is True for item in widget._top_items)
+    np.testing.assert_array_equal(widget._top_items[0].xData, curve[0])
+    np.testing.assert_array_equal(widget._top_items[0].yData, curve[1])
+    assert widget._top_plot.backgroundBrush().color().name() == "#1a1a1a"

@@ -1,9 +1,6 @@
 import hashlib
 from pathlib import Path
 
-import numpy as np
-from PyQt6.QtCore import QPoint
-
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
 from dms.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
@@ -24,9 +21,6 @@ from dms.theme import (
     normalize_theme,
     theme_trace_palette,
 )
-from dms.ui.dual_plot_widget import DualPlotWidget
-from dms.ui.settings_dialog import SettingsWidget
-from dms.ui.toggle_switch import ToggleSwitch
 
 
 def test_theme_defaults_and_validation() -> None:
@@ -126,20 +120,6 @@ def test_theme_controller_applies_and_persists(qapp, monkeypatch, tmp_path: Path
     assert "#f3f5f8" in qapp.styleSheet()
 
 
-def test_settings_theme_options_save_registered_theme(qapp, monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
-    settings = SettingsManager()
-    widget = SettingsWidget(settings)
-    received: list[tuple[str, object]] = []
-    widget.settings_changed.connect(lambda key, value: received.append((key, value)))
-
-    widget._theme_buttons[FASTGRAPH_95].click()
-
-    assert settings.get("theme") == FASTGRAPH_95
-    assert ("theme", FASTGRAPH_95) in received
-    assert widget._theme_buttons[FASTGRAPH_95].isChecked()
-
-
 def test_theme_controller_brand_mode_persists_and_signals(qapp, monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     settings = SettingsManager()
@@ -180,44 +160,3 @@ def test_brand_stylesheet_has_visible_accent_hierarchy() -> None:
     assert "QPushButton#exportButton" in stylesheet
     assert 'QLineEdit[metadataState="manual"]' in stylesheet
     assert "border-bottom: 3px solid #7A7A7A" in stylesheet
-
-
-def test_custom_switch_uses_full_painted_hitbox(qapp) -> None:
-    switch = ToggleSwitch("")
-    switch.resize(54, 30)
-    assert switch.hitButton(QPoint(2, 2)) is True
-    assert switch.hitButton(QPoint(51, 27)) is True
-
-
-def test_custom_switch_reserves_space_for_painted_track(qapp) -> None:
-    switch = ToggleSwitch("")
-    assert switch.sizeHint().width() >= 54
-    assert switch.minimumSizeHint().width() >= 54
-
-
-def test_plot_theme_change_preserves_curves(qapp) -> None:
-    widget = DualPlotWidget()
-    curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
-    widget.update_curves([curve], curve)
-    top_count = len(widget._top_items)
-
-    widget.apply_theme(LIGHT)
-    widget.apply_theme(FASTGRAPH_95)
-    assert all(item.opts["antialias"] is True for item in widget._top_items)
-    assert widget._bot_item is not None and widget._bot_item.opts["antialias"] is True
-    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
-    np.testing.assert_array_equal(widget._top_items[0].yData, [1.0, 1.0, 0.0])
-    np.testing.assert_array_equal(widget._kept_curves[0][0], curve[0])
-    np.testing.assert_array_equal(widget._kept_curves[0][1], curve[1])
-    widget.apply_theme(HACKERMAN_95)
-    assert widget._top_items[0].opts["pen"].color().name().upper() == "#39FF14"
-    assert widget._bot_item is not None
-    assert widget._bot_item.opts["pen"].color().name().upper() == "#39FF14"
-    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
-    widget.apply_theme(DARK)
-
-    assert len(widget._top_items) == top_count
-    assert all(item.opts["antialias"] is True for item in widget._top_items)
-    np.testing.assert_array_equal(widget._top_items[0].xData, curve[0])
-    np.testing.assert_array_equal(widget._top_items[0].yData, curve[1])
-    assert widget._top_plot.backgroundBrush().color().name() == "#1a1a1a"

@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPen
@@ -10,7 +15,7 @@ from dms.graph_display import (
     stipple_trace_pen,
     uses_retro_steps,
 )
-from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS
+from dms.style_tokens import DARK_TOKENS, DITHER_TOKENS
 
 
 def test_retro_steps_reduce_display_points_and_preserve_local_extrema() -> None:
@@ -81,3 +86,20 @@ def test_stipple_trace_pen_uses_each_pattern_and_cycles() -> None:
     cycled = stipple_trace_pen(source, 9, DITHER_TOKENS)
     assert cycled.style() == Qt.PenStyle.CustomDashLine
     assert cycled.dashPattern() == [6.0, 3.0]
+
+
+def test_curator_image_export_does_not_import_ui_modules() -> None:
+    code = (
+        "import sys, dms.curator.export_image;"
+        "print([m for m in sys.modules if m == 'dms.ui' or m.startswith('dms.ui.')])"
+    )
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+    )
+    assert result.stdout.strip() == "[]"

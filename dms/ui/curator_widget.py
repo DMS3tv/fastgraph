@@ -43,6 +43,7 @@ from dms.curator.transforms import (
 )
 from dms.hrtf import HRTFCurve
 from dms.brand_fonts import brand_font_status
+from dms.style_tokens import THEME_DEFINITIONS
 from dms.theme import (
     DARK,
     ensure_graph_color,
@@ -59,7 +60,6 @@ from dms.ui.curator_graph_widget import (
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import THEME_DEFINITIONS
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 

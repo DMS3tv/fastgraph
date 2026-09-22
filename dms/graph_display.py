@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPen
+from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen
 
 from dms.processing import VariationBand
-from dms.ui.style_tokens import ThemeTokens, tokens_for
+from dms.style_tokens import ThemeTokens, tokens_for
 
 RETRO_GRAPH_MAX_BINS = 256
 STIPPLE_DASH_PATTERNS: tuple[tuple[float, ...] | None, ...] = (
@@ -161,3 +161,110 @@ def _retained_indexes(
                 selected.add(int(members[int(np.nanargmin(series))]))
                 selected.add(int(members[int(np.nanargmax(series))]))
     return np.array(sorted(selected), dtype=int)
+
+
+def aperiodic_dither_band_image(
+    width: int,
+    height: int,
+    upper_points: Sequence[tuple[float, float]],
+    lower_points: Sequence[tuple[float, float]],
+    *,
+    foreground: QColor,
+    minimum_density: float = 0.045,
+    maximum_density: float = 0.34,
+    seed: int = 0xD17E3,
+) -> QImage:
+    """Return a transparent, aperiodic dither band.
+
+    Point coordinates are normalized to the image. The Y coordinate is zero at
+    the top. Ink density is highest at each boundary and lowest at the center.
+    """
+
+    image_width = max(1, int(width))
+    image_height = max(1, int(height))
+    rgba = np.zeros((image_height, image_width, 4), dtype=np.uint8)
+    if not upper_points or not lower_points:
+        return _rgba_image(rgba)
+
+    upper = _sample_normalized_curve(upper_points, image_width)
+    lower = _sample_normalized_curve(lower_points, image_width)
+    top = np.minimum(upper, lower) * max(0, image_height - 1)
+    bottom = np.maximum(upper, lower) * max(0, image_height - 1)
+
+    rows = np.arange(image_height, dtype=np.float64)[:, None]
+    inside = (rows >= top[None, :]) & (rows <= bottom[None, :])
+    nearest_edge = np.minimum(rows - top[None, :], bottom[None, :] - rows)
+    half_span = np.maximum((bottom - top) * 0.5, 1.0)[None, :]
+    center_distance = np.clip(nearest_edge / half_span, 0.0, 1.0)
+    edge_weight = np.square(1.0 - center_distance)
+    low = max(0.0, min(1.0, float(minimum_density)))
+    high = max(low, min(1.0, float(maximum_density)))
+    density = low + (high - low) * edge_weight
+
+    columns_u32 = np.arange(image_width, dtype=np.uint32)[None, :]
+    rows_u32 = np.arange(image_height, dtype=np.uint32)[:, None]
+    hashed = (columns_u32 * np.uint32(0x9E3779B1)) ^ (rows_u32 * np.uint32(0x85EBCA77))
+    hashed ^= np.uint32(seed & 0xFFFFFFFF)
+    hashed ^= hashed >> np.uint32(16)
+    hashed *= np.uint32(0x7FEB352D)
+    hashed ^= hashed >> np.uint32(15)
+    hashed *= np.uint32(0x846CA68B)
+    hashed ^= hashed >> np.uint32(16)
+    threshold = hashed.astype(np.float64) / float(np.iinfo(np.uint32).max)
+    ink = inside & (threshold < density)
+
+    color = QColor(foreground)
+    rgba[ink] = np.array(color.getRgb(), dtype=np.uint8)
+    return _rgba_image(rgba)
+
+
+def paint_aperiodic_dither_band(
+    painter: QPainter,
+    rect: QRectF,
+    upper_points: Sequence[tuple[float, float]],
+    lower_points: Sequence[tuple[float, float]],
+    *,
+    foreground: QColor,
+    minimum_density: float = 0.045,
+    maximum_density: float = 0.34,
+) -> None:
+    """Paint the shared aperiodic dither band into a target rectangle."""
+
+    width = max(1, round(rect.width()))
+    height = max(1, round(rect.height()))
+    image = aperiodic_dither_band_image(
+        width,
+        height,
+        upper_points,
+        lower_points,
+        foreground=foreground,
+        minimum_density=minimum_density,
+        maximum_density=maximum_density,
+    )
+    painter.drawImage(rect, image)
+
+
+def _sample_normalized_curve(points: Sequence[tuple[float, float]], width: int) -> np.ndarray:
+    values = np.asarray(points, dtype=np.float64)
+    if values.ndim != 2 or values.shape[1] != 2:
+        raise ValueError("Dither boundary points must contain X and Y pairs")
+    finite = np.isfinite(values).all(axis=1)
+    values = values[finite]
+    if len(values) == 0:
+        return np.zeros(width, dtype=np.float64)
+    order = np.argsort(values[:, 0], kind="stable")
+    values = values[order]
+    sample_x = np.linspace(0.0, 1.0, width)
+    return np.clip(np.interp(sample_x, values[:, 0], values[:, 1]), 0.0, 1.0)
+
+
+def _rgba_image(rgba: np.ndarray) -> QImage:
+    height, width, _channels = rgba.shape
+    image = QImage(
+        rgba.data,
+        width,
+        height,
+        int(rgba.strides[0]),
+        QImage.Format.Format_RGBA8888,
+    )
+    return image.copy()

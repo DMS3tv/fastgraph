@@ -6,7 +6,7 @@ from PyQt6.QtCore import QEvent, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
-from dms.ui.style_tokens import mode_tokens
+from dms.style_tokens import mode_tokens
 
 
 class _RoundedViewportOverlay(QWidget):

@@ -55,6 +55,7 @@ from dms.rnd.models import (
     group_variation,
 )
 from dms.rnd.photos import RnDPhotoStore
+from dms.style_tokens import tokens_for
 from dms.theme import (
     ensure_graph_color,
     brand_theme_colors,
@@ -66,7 +67,6 @@ from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import tokens_for
 from dms.ui.theme_surface import DitherSurface, aperiodic_dither_band_item
 from dms.ui.toggle_switch import ToggleSwitch
 

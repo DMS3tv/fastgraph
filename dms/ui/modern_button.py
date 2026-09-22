@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.dither_fonts import dither_heading_font
-from dms.ui.style_tokens import ThemeTokens, mode_tokens
+from dms.style_tokens import ThemeTokens, mode_tokens
 from dms.ui.theme_surface import paint_dither
 
 _OBJECT_ROLES = {

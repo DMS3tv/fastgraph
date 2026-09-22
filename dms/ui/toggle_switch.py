@@ -8,7 +8,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import QApplication, QCheckBox
 
-from dms.ui.style_tokens import mode_tokens
+from dms.style_tokens import mode_tokens
 
 
 class ToggleSwitch(QCheckBox):

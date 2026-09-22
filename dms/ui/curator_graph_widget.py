@@ -17,13 +17,13 @@ from dms.graph_display import (
     stipple_trace_pen,
     uses_retro_steps,
 )
+from dms.style_tokens import tokens_for
 from dms.theme import (
     ensure_graph_color,
     brand_theme_colors,
     normalize_theme,
     theme_colors,
 )
-from dms.ui.style_tokens import tokens_for
 from dms.ui.theme_surface import aperiodic_dither_band_item
 
 FREQ_MIN = 20.0

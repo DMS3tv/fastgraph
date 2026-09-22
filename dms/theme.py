@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QApplication
 from dms import brand_brand
 from dms.dither_fonts import configure_dither_typography, dither_font_status
 from dms.settings_manager import SettingsManager
-from dms.ui.style_tokens import (
+from dms.style_tokens import (
     BRAND_TOKENS,
     THEME_DEFINITIONS,
     ThemeTokens,

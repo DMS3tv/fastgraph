@@ -20,11 +20,11 @@ from PyQt6.QtWidgets import (
 
 from dms.graph_display import retro_step_band, retro_step_series, stipple_trace_pen
 from dms.processing import VariationBand
+from dms.style_tokens import tokens_for
 from dms.theme import ensure_graph_color, brand_theme_colors, normalize_theme, theme_colors
 from dms.ui.dual_plot_widget import DualPlotWidget, _configure_plot_widget
 from dms.ui.modern_spinbox import ModernDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import tokens_for
 
 Curve = tuple[np.ndarray, np.ndarray]
 BLUE = "#3B82F6"

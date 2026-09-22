@@ -6,6 +6,7 @@ from PyQt6.QtCore import QPoint
 
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
+from dms.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
 from dms.theme import (
     DARK,
     DITHER,
@@ -25,7 +26,6 @@ from dms.theme import (
 )
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.settings_dialog import SettingsWidget
-from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
 from dms.ui.toggle_switch import ToggleSwitch
 
 

@@ -25,6 +25,7 @@ from dms.graph_display import (
     uses_retro_steps,
 )
 from dms.processing import VariationBand
+from dms.style_tokens import tokens_for
 from dms.theme import (
     FASTGRAPH_95,
     LIGHT,
@@ -35,7 +36,6 @@ from dms.theme import (
     theme_trace_palette,
 )
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import tokens_for
 
 pg.setConfigOption("background", "#1a1a1a")
 pg.setConfigOption("foreground", "#888888")

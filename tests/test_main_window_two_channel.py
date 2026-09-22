@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 import dms.dither_fonts as dither_fonts
 import dms.ui.main_window as main_window_module
 from dms.measure_queue import QueueState
+from dms.style_tokens import DITHER_TOKENS
 from dms.theme import (
     DARK,
     DITHER,
@@ -26,7 +27,6 @@ from dms.ui.modern_button import (
     _FLAT_LABEL_HORIZONTAL_INSET,
     _FLAT_PAINT_RECT_WIDTH_LOSS,
 )
-from dms.ui.style_tokens import DITHER_TOKENS
 
 
 def _window(make_main_window, *, theme: str = DARK) -> MainWindow:

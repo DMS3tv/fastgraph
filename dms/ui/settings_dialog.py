@@ -26,9 +26,9 @@ from dms.shortcuts import (
     SHORTCUT_ACTIONS,
     shortcut_bindings_from_settings,
 )
+from dms.style_tokens import THEME_DEFINITIONS, theme_definition
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
-from dms.ui.style_tokens import THEME_DEFINITIONS, theme_definition
 from dms.ui.theme_surface import ThemePreview
 
 

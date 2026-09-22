@@ -13,7 +13,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from dms.ui.style_tokens import ThemeTokens, mode_tokens
+from dms.style_tokens import ThemeTokens, mode_tokens
 from dms.ui.theme_surface import paint_dither
 
 

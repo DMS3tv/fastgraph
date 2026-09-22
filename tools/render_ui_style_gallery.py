@@ -24,10 +24,10 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.dither_fonts import configure_dither_typography
+from dms.style_tokens import mode_tokens
 from dms.theme import application_stylesheet, brand_application_stylesheet
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
-from dms.ui.style_tokens import mode_tokens
 from dms.ui.theme_surface import DitherSurface
 
 

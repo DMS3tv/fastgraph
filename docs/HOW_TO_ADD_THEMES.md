@@ -11,7 +11,7 @@ mode. Do not add it to the selectable theme registry.
 
 | File | Purpose |
 |---|---|
-| `dms/ui/style_tokens.py` | Theme tokens, flags, and the selectable theme registry |
+| `dms/style_tokens.py` | Theme tokens, flags, and the selectable theme registry |
 | `dms/theme.py` | Theme normalization, shared Qt stylesheet, trace colors, and optional style-family builders |
 | `dms/graph_display.py` | Display-only stepped graph behavior |
 | `dms/curator/export_image.py` | Theme-aware Curator image exports |
@@ -43,7 +43,7 @@ modules one clear name to import.
 
 ## 2. Define the Tokens
 
-Add a `ThemeTokens` value in `dms/ui/style_tokens.py`. Start from an existing
+Add a `ThemeTokens` value in `dms/style_tokens.py`. Start from an existing
 theme that has similar geometry and behavior.
 
 ```python
@@ -95,7 +95,7 @@ traces against their actual backgrounds.
 
 ## 3. Register the Theme
 
-Add the definition to `THEME_DEFINITIONS` in `dms/ui/style_tokens.py`:
+Add the definition to `THEME_DEFINITIONS` in `dms/style_tokens.py`:
 
 ```python
 THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (

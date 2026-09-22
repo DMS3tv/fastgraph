@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.ui.style_tokens import mode_tokens
+from dms.style_tokens import mode_tokens
 
 
 def _mix(first: QColor, second: QColor, amount: float) -> QColor:

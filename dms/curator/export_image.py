@@ -9,10 +9,14 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterP
 
 from dms.curator.models import CurveData, GraphState
 from dms.curator.transforms import visible_display_layers
-from dms.graph_display import retro_step_group, retro_step_series, stipple_trace_pen
+from dms.graph_display import (
+    paint_aperiodic_dither_band,
+    retro_step_group,
+    retro_step_series,
+    stipple_trace_pen,
+)
+from dms.style_tokens import ThemeTokens, tokens_for
 from dms.theme import ensure_graph_color, normalize_theme
-from dms.ui.style_tokens import ThemeTokens, tokens_for
-from dms.ui.theme_surface import paint_aperiodic_dither_band
 
 FREQ_MIN = 20.0
 FREQ_MAX = 20000.0

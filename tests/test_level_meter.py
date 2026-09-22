@@ -5,8 +5,7 @@ import pytest
 from PyQt6.QtCore import Qt
 
 from dms import audio_engine
-from dms.ui.level_meter import LevelMeterWidget
-from dms.ui.style_tokens import (
+from dms.style_tokens import (
     DARK_TOKENS,
     DITHER_TOKENS,
     FASTGRAPH_95_DARK_TOKENS,
@@ -15,6 +14,7 @@ from dms.ui.style_tokens import (
     BRAND_TOKENS,
     LIGHT_TOKENS,
 )
+from dms.ui.level_meter import LevelMeterWidget
 
 
 def test_level_meter_fraction_and_threshold_colors() -> None:

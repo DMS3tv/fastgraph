@@ -38,6 +38,7 @@ from dms.curator.export_image import (
 from dms.curator.export_brand import brand_display_color
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.processing import VariationBand
+from dms.style_tokens import DITHER_TOKENS, BRAND_TOKENS, THEME_DEFINITIONS, tokens_for
 from dms.theme import (
     DARK,
     DITHER,
@@ -51,7 +52,6 @@ from dms.ui.curator_graph_widget import FREQUENCY_MARKERS
 from dms.ui.curator_graph_widget import FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
-from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, THEME_DEFINITIONS, tokens_for
 
 
 @pytest.fixture

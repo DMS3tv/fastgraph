@@ -693,7 +693,7 @@ class SweepWorker(QObject):
         post_silence: float = 0.5,
         latency: str = "low",
         bluetooth_headphone_mode: bool = False,
-        start_alignment_confidence_min: float = 9.0,
+        start_alignment_confidence_min: float = 6.0,
         end_marker_confidence_min: float = 7.0,
         timing_drift_max_ms: float = 35.0,
         output_channel: int | None = None,

@@ -304,3 +304,88 @@
 ### Notes
 
 - This release covers all user-facing changes since v0.2.6.
+
+## [0.3.4]
+
+The R&D tab now includes a between-viewport smoothing control with `1/48`,
+`1/24`, `1/12`, `1/6`, and `1/3` options. The selected smoothing applies to R&D
+plotting, TXT export, and Send to Curator while leaving saved raw session curves
+unchanged.
+
+R&D also adds bottom-viewport Delta Mode. When enabled, the first bottom item is
+used as the reference and later bottom-visible measurements or Var bands are
+shown as deltas from that reference. The top viewport remains normal.
+
+The R&D measurement list now has a more obvious vertical scrollbar and supports
+measurement multi-select. Ctrl/shift selection can be used to pick measurements,
+and New Group moves the selected measurements into a new group in visual order.
+
+## [0.3.3]
+
+R&D session HRTF selections now save both the original file path and the HRTF
+name. When a session is opened on another machine or install folder, Fastgraph
+tries to reconnect the selection to a matching file in the current `HRTFs`
+folder. If an HRTF is still missing, the R&D status line and row dropdown show
+that clearly, and export/Curator transfer is blocked until the row is changed to
+an available HRTF or `None`.
+
+R&D **Var** behavior is stricter: when a group has **Var** enabled, its original
+traces are hidden even if there are not yet enough measurements to draw the
+band. The status line reports that the group needs at least two measurements.
+The group **View 2** checkbox continues to show the full group in View 2.
+
+## [0.3.2]
+
+R&D groups now draw **Var** with the same confidence-style band used by Measure
+and Curator: p10-p90 outer fill, p25-p75 inner fill, and a median line. When a
+group's **Var** is active, the band replaces that group's individual traces in
+that viewport. Multiple visible group variation bands use distinct colors.
+
+The R&D tab also adds top-of-viewport preference bounds, an importable custom
+session target with its own dB offset, row-level Curator-style dB offsets for
+measurements and groups, and a default HRTF dropdown next to the R&D Measure
+button. Group and measurement offsets are additive, so a group can shift a whole
+prototype set while individual measurements can still be fine-tuned. New R&D
+measurements inherit the default R&D HRTF selection when they are kept.
+
+R&D session saves include the new offset, target, HRTF, and preference-bounds
+state. Older R&D session files still load with offsets set to `0 dB`, no target,
+and bounds off.
+
+## [0.3.1]
+
+Fastgraph now includes an **R&D** tab for exploratory single-sweep measurement
+sessions. R&D measurements are kept as individual named entries with metadata,
+input/channel identity, notes, milestone flags, per-measurement HRTF selection,
+View 1 visibility, and View 2 visibility. Measurements can be organized into
+named groups with group notes, view checkboxes, milestone marking, and optional
+group variation bands.
+
+R&D group variation follows the viewports where the group is visible.
+**View 1** and **View 2** control group visibility in each viewport. **Var**
+adds the variation band only to those active group viewports. R&D sessions can be saved
+and loaded as `.fastgraph-rnd.json`
+files; Settings includes a default folder for those session files.
+
+Selected R&D measurements and groups can also keep photo notes. Use **Capture**
+to take a webcam photo or **Import** to attach an existing image, then click a
+thumbnail to view, caption, or remove it. Photos are saved as compact JPEGs in
+a sibling `<session-name>.attachments` folder, so move or copy that folder with
+the `.fastgraph-rnd.json` file when sharing a session.
+
+R&D exports operate on the selected measurement or group. Measurements export as
+TXT, groups with variation enabled export as variation TXT, and selected
+measurements or group variations can be sent directly to Curator.
+
+## [0.3.0]
+
+Fastgraph now includes **Curator**, a graph image generation tool for comparing
+headphone frequency-response and variation-band measurements and turning them
+into presentation-ready graph images. Curator lives between the Measure and
+Automation tabs, shares Fastgraph's HRTF library and theme, and reports its
+actions to the same diagnostic console.
+
+The Measure tab can send its current average or variation view directly to
+Curator. The transferred layer receives an editable 1 kHz offset so it sits at
+0 dB without changing the source data or frequency-response shape. Any active
+HRTF remains selected and can be changed or removed in Curator.

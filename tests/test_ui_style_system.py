@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
 import dms.dither_fonts as dither_fonts
 import dms.settings_manager as settings_module
+from dms.graph_display import aperiodic_dither_band_image
 from dms.settings_manager import SettingsManager
 from dms.style_tokens import (
     DARK_TOKENS,
@@ -34,11 +35,7 @@ from dms.theme import (
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.theme_surface import (
-    _dither_tile,
-    aperiodic_dither_band_image,
-    dither_brush,
-)
+from dms.ui.theme_surface import _dither_tile, dither_brush
 
 
 def test_style_tokens_define_the_documented_scale() -> None:

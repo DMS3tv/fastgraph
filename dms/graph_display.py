@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import partial
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QTransform
+from PyQt6.QtWidgets import QGraphicsPixmapItem
 
 from dms.processing import VariationBand
 from dms.style_tokens import ThemeTokens, tokens_for
@@ -268,3 +271,144 @@ def _rgba_image(rgba: np.ndarray) -> QImage:
         QImage.Format.Format_RGBA8888,
     )
     return image.copy()
+
+
+def aperiodic_dither_band_item(
+    x_values: Sequence[float],
+    upper_values: Sequence[float],
+    lower_values: Sequence[float],
+    *,
+    foreground: QColor,
+    sample_width: int = 640,
+    sample_height: int = 240,
+    minimum_density: float = 0.045,
+    maximum_density: float = 0.34,
+) -> QGraphicsPixmapItem | None:
+    """Return a graph item that maps the shared dither band to data space."""
+
+    x_data = np.asarray(x_values, dtype=np.float64)
+    upper_data = np.asarray(upper_values, dtype=np.float64)
+    lower_data = np.asarray(lower_values, dtype=np.float64)
+    length = min(len(x_data), len(upper_data), len(lower_data))
+    if length < 2:
+        return None
+    x_data = x_data[:length]
+    upper_data = upper_data[:length]
+    lower_data = lower_data[:length]
+    finite = np.isfinite(x_data) & np.isfinite(upper_data) & np.isfinite(lower_data)
+    x_data = x_data[finite]
+    upper_data = upper_data[finite]
+    lower_data = lower_data[finite]
+    if len(x_data) < 2:
+        return None
+
+    x_min = float(np.min(x_data))
+    x_max = float(np.max(x_data))
+    y_min = float(np.min(np.minimum(upper_data, lower_data)))
+    y_max = float(np.max(np.maximum(upper_data, lower_data)))
+    x_span = x_max - x_min
+    y_span = y_max - y_min
+    if x_span <= 0.0 or y_span <= 0.0:
+        return None
+
+    upper_points = list(zip((x_data - x_min) / x_span, (y_max - upper_data) / y_span))
+    lower_points = list(zip((x_data - x_min) / x_span, (y_max - lower_data) / y_span))
+    image = aperiodic_dither_band_image(
+        sample_width,
+        sample_height,
+        upper_points,
+        lower_points,
+        foreground=foreground,
+        minimum_density=minimum_density,
+        maximum_density=maximum_density,
+    )
+    item = QGraphicsPixmapItem(QPixmap.fromImage(image))
+    item.setTransformationMode(Qt.TransformationMode.FastTransformation)
+    transform = QTransform()
+    transform.translate(x_min, y_max)
+    transform.scale(x_span / image.width(), -y_span / image.height())
+    item.setTransform(transform)
+    return item
+
+
+def _plot_line(plot, freqs, values, *, pen):
+    return plot.plot(freqs, values, pen=pen, antialias=True)
+
+
+def add_variation_band(
+    plot,
+    band: VariationBand,
+    *,
+    outer_brush,
+    inner_brush,
+    median_pen,
+    median_glow_pen=None,
+    plot_curve=None,
+) -> list:
+    """Draw the p10-p90 and p25-p75 fills and the median; return every item added.
+
+    ``plot_curve(freqs, values, pen=...)`` adds one line; it defaults to an
+    antialiased ``plot.plot``.
+    """
+    if plot_curve is None:
+        plot_curve = partial(_plot_line, plot)
+    clear = pg.mkPen((0, 0, 0, 0))
+    items = []
+    for upper, lower, brush in (
+        (band.p90, band.p10, outer_brush),
+        (band.p75, band.p25, inner_brush),
+    ):
+        upper_item = plot_curve(band.freqs, upper, pen=clear)
+        lower_item = plot_curve(band.freqs, lower, pen=clear)
+        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(brush))
+        plot.addItem(fill)
+        items.extend([upper_item, lower_item, fill])
+    if median_glow_pen is not None:
+        items.append(plot_curve(band.freqs, band.median, pen=median_glow_pen))
+    items.append(plot_curve(band.freqs, band.median, pen=median_pen))
+    return items
+
+
+def add_bounds_band(
+    plot,
+    freqs: np.ndarray,
+    upper: np.ndarray,
+    lower: np.ndarray,
+    *,
+    tokens: ThemeTokens,
+    color: QColor,
+    plot_curve=None,
+) -> list:
+    """Draw the preference-bounds fill; return every item added.
+
+    Dither themes get the aperiodic dither between hard edges, drawn as given.
+    Other themes get a translucent ``color`` fill, with edges from ``plot_curve``.
+    """
+    if tokens.dither_chrome:
+        items = []
+        fill = aperiodic_dither_band_item(
+            np.log10(freqs),
+            upper,
+            lower,
+            foreground=QColor(tokens.plot_grid),
+            sample_width=max(64, min(1024, plot.viewport().width())),
+            sample_height=max(48, min(512, plot.viewport().height())),
+        )
+        if fill is not None:
+            plot.addItem(fill)
+            items.append(fill)
+        edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
+        items.append(plot.plot(freqs, upper, pen=edge_pen, antialias=False))
+        items.append(plot.plot(freqs, lower, pen=edge_pen, antialias=False))
+        return items
+    if plot_curve is None:
+        plot_curve = partial(_plot_line, plot)
+    edge = QColor(color)
+    edge.setAlpha(185)
+    fill_color = QColor(color)
+    fill_color.setAlpha(102)
+    upper_item = plot_curve(freqs, upper, pen=pg.mkPen(edge, width=1.5))
+    lower_item = plot_curve(freqs, lower, pen=pg.mkPen(edge, width=1.5))
+    fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(fill_color))
+    plot.addItem(fill)
+    return [upper_item, lower_item, fill]

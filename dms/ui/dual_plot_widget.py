@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QFileDialog, QMenu, QVBoxLayout, QWidget
 
 from dms import brand_brand
 from dms.graph_display import (
+    add_variation_band,
     retro_step_band,
     retro_step_series,
     stipple_trace_pen,
@@ -786,9 +787,7 @@ class DualPlotWidget(QWidget):
             return
         if self._uses_retro_steps():
             band = retro_step_band(band)
-        freqs = band.freqs
 
-        antialias = True
         if not self._brand_mode and tokens_for(self._theme).trace_palette:
             base = QColor(theme_trace_palette(self._theme)[0])
             outer_color = QColor(base)
@@ -798,24 +797,6 @@ class DualPlotWidget(QWidget):
         else:
             outer_color = QColor(*_BAND_OUTER)
             inner_color = QColor(*_BAND_INNER)
-        upper90 = self._bot_plot.plot(
-            freqs, band.p90, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
-        )
-        lower10 = self._bot_plot.plot(
-            freqs, band.p10, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
-        )
-        fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer_color))
-        self._bot_plot.addItem(fill90)
-
-        upper75 = self._bot_plot.plot(
-            freqs, band.p75, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
-        )
-        lower25 = self._bot_plot.plot(
-            freqs, band.p25, pen=pg.mkPen(color=(0, 0, 0, 0)), antialias=antialias
-        )
-        fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner_color))
-        self._bot_plot.addItem(fill75)
-
         colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
         median_base = (
             QColor(theme_trace_palette(self._theme)[0])
@@ -824,16 +805,16 @@ class DualPlotWidget(QWidget):
         )
         median_color = ensure_graph_color(median_base, colors["plot_bg"])
         median_color.setAlpha(_BAND_MEDIAN[3])
-        median_item = self._bot_plot.plot(
-            freqs,
-            band.median,
-            pen=pg.mkPen(color=median_color, width=1.8),
-            antialias=antialias,
-        )
         self._bot_extra_items.extend(
-            [upper90, lower10, fill90, upper75, lower25, fill75, median_item]
+            add_variation_band(
+                self._bot_plot,
+                band,
+                outer_brush=outer_color,
+                inner_brush=inner_color,
+                median_pen=pg.mkPen(color=median_color, width=1.8),
+            )
         )
-        self._auto_center_y(self._bot_plot, [(freqs, band.p10), (freqs, band.p90)])
+        self._auto_center_y(self._bot_plot, [(band.freqs, band.p10), (band.freqs, band.p90)])
 
     def _auto_center_y(
         self,

@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from collections.abc import Iterable
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
@@ -40,6 +41,8 @@ from dms import brand_brand
 from dms.curator.models import PreferenceBounds
 from dms.curator.parser import load_preference_bounds, load_two_column_txt_curve
 from dms.graph_display import (
+    add_bounds_band,
+    add_variation_band,
     retro_step_group,
     retro_step_series,
     stipple_trace_pen,
@@ -67,7 +70,7 @@ from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.theme_surface import DitherSurface, aperiodic_dither_band_item
+from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -378,7 +381,6 @@ class RnDPlotWidget(QWidget):
         group: RnDGroup,
         variation: VariationBand,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
-        freqs = variation.freqs
         qcolor = self._display_color(
             "#ff5078" if group.milestone else group.color or self._accent_color()
         )
@@ -386,36 +388,20 @@ class RnDPlotWidget(QWidget):
         outer.setAlpha(55 if not group.milestone else 75)
         inner = QColor(qcolor)
         inner.setAlpha(95 if not group.milestone else 118)
-        upper90 = self._plot_curve(plot, freqs, variation.p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower10 = self._plot_curve(plot, freqs, variation.p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
-        plot.addItem(fill90)
-        upper75 = self._plot_curve(plot, freqs, variation.p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower25 = self._plot_curve(plot, freqs, variation.p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
-        plot.addItem(fill75)
         glow = QColor(qcolor)
         glow.setAlpha(58)
-        median_glow = self._plot_curve(plot, freqs, variation.median, pen=pg.mkPen(glow, width=7.0))
-        median_item = self._plot_curve(
-            plot,
-            freqs,
-            variation.median,
-            pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
-        )
         self._items.extend(
-            [
-                upper90,
-                lower10,
-                fill90,
-                upper75,
-                lower25,
-                fill75,
-                median_glow,
-                median_item,
-            ]
+            add_variation_band(
+                plot,
+                variation,
+                outer_brush=outer,
+                inner_brush=inner,
+                median_pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
+                median_glow_pen=pg.mkPen(glow, width=7.0),
+                plot_curve=partial(self._plot_curve, plot),
+            )
         )
-        return [(freqs, variation.p10), (freqs, variation.p90)]
+        return [(variation.freqs, variation.p10), (variation.freqs, variation.p90)]
 
     def _draw_preference_bounds(
         self,
@@ -432,34 +418,20 @@ class RnDPlotWidget(QWidget):
         if len(freqs) < 2:
             return []
         tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
+        # The dither fill is drawn as given, so it is stepped here as a group;
+        # plain edges are stepped one by one through ``_plot_curve``.
+        shown = (freqs, upper, lower)
         if tokens.dither_chrome:
-            display_freqs, display_upper, display_lower = retro_step_group(freqs, (upper, lower))
-            fill = aperiodic_dither_band_item(
-                np.log10(display_freqs),
-                display_upper,
-                display_lower,
-                foreground=QColor(tokens.plot_grid),
-                sample_width=max(64, min(1024, plot.viewport().width())),
-                sample_height=max(48, min(512, plot.viewport().height())),
+            shown = retro_step_group(freqs, (upper, lower))
+        self._items.extend(
+            add_bounds_band(
+                plot,
+                *shown,
+                tokens=tokens,
+                color=self._display_color("#969696"),
+                plot_curve=partial(self._plot_curve, plot),
             )
-            if fill is not None:
-                plot.addItem(fill)
-                self._items.append(fill)
-            edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
-            upper_item = plot.plot(display_freqs, display_upper, pen=edge_pen, antialias=False)
-            lower_item = plot.plot(display_freqs, display_lower, pen=edge_pen, antialias=False)
-            self._items.extend([upper_item, lower_item])
-            return [(freqs, upper), (freqs, lower)]
-        bounds_color = self._display_color("#969696")
-        upper_pen = QColor(bounds_color)
-        upper_pen.setAlpha(185)
-        fill_color = QColor(bounds_color)
-        fill_color.setAlpha(102)
-        upper_item = self._plot_curve(plot, freqs, upper, pen=pg.mkPen(upper_pen, width=1.5))
-        lower_item = self._plot_curve(plot, freqs, lower, pen=pg.mkPen(upper_pen, width=1.5))
-        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(fill_color))
-        plot.addItem(fill)
-        self._items.extend([upper_item, lower_item, fill])
+        )
         return [(freqs, upper), (freqs, lower)]
 
     def _draw_target(

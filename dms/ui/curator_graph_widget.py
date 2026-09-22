@@ -12,11 +12,14 @@ from dms.curator.export_image import aligned_bounds
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
 from dms.graph_display import (
+    add_bounds_band,
+    add_variation_band,
     retro_step_group,
     retro_step_series,
     stipple_trace_pen,
     uses_retro_steps,
 )
+from dms.processing import VariationBand
 from dms.style_tokens import tokens_for
 from dms.theme import (
     ensure_graph_color,
@@ -24,7 +27,6 @@ from dms.theme import (
     normalize_theme,
     theme_colors,
 )
-from dms.ui.theme_surface import aperiodic_dither_band_item
 
 FREQ_MIN = 20.0
 FREQ_MAX = 20000.0
@@ -328,38 +330,16 @@ class GraphWidget(LockedPlotWidget):
             return
         if self._uses_retro_steps():
             freqs, upper_mag, lower_mag = retro_step_group(freqs, (upper_mag, lower_mag))
-        tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
-        if tokens.dither_chrome:
-            fill = aperiodic_dither_band_item(
-                np.log10(freqs),
+        self._items.extend(
+            add_bounds_band(
+                self,
+                freqs,
                 upper_mag,
                 lower_mag,
-                foreground=QColor(tokens.plot_grid),
-                sample_width=max(64, min(1024, self.viewport().width())),
-                sample_height=max(48, min(512, self.viewport().height())),
+                tokens=tokens_for(self._theme, brand_mode=self._brand_mode),
+                color=self._display_color("#969696"),
             )
-            if fill is not None:
-                self.addItem(fill)
-                self._items.append(fill)
-            edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
-            upper_item = self.plot(freqs, upper_mag, pen=edge_pen, antialias=False)
-            lower_item = self.plot(freqs, lower_mag, pen=edge_pen, antialias=False)
-            self._items.extend([upper_item, lower_item])
-            return
-        bounds_color = self._display_color("#969696")
-        bounds_pen = QColor(bounds_color)
-        bounds_pen.setAlpha(185)
-        bounds_fill = QColor(bounds_color)
-        bounds_fill.setAlpha(102)
-        upper_item = self.plot(
-            freqs, upper_mag, pen=pg.mkPen(bounds_pen, width=1.5), antialias=True
         )
-        lower_item = self.plot(
-            freqs, lower_mag, pen=pg.mkPen(bounds_pen, width=1.5), antialias=True
-        )
-        fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(bounds_fill))
-        self.addItem(fill)
-        self._items.extend([upper_item, lower_item, fill])
 
     def _draw_curve(
         self,
@@ -410,22 +390,15 @@ class GraphWidget(LockedPlotWidget):
             freqs, p10, p25, median_values, p75, p90 = retro_step_group(
                 freqs, (p10, p25, median_values, p75, p90)
             )
-        antialias = True
-        upper90 = self.plot(freqs, p90, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
-        lower10 = self.plot(freqs, p10, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
-        fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
-        self.addItem(fill90)
-        upper75 = self.plot(freqs, p75, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
-        lower25 = self.plot(freqs, p25, pen=pg.mkPen((0, 0, 0, 0)), antialias=antialias)
-        fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
-        self.addItem(fill75)
-        median = self.plot(
-            freqs,
-            median_values,
-            pen=pg.mkPen(qcolor, width=2.2),
-            antialias=antialias,
+        self._items.extend(
+            add_variation_band(
+                self,
+                VariationBand(freqs, p10, p25, median_values, p75, p90),
+                outer_brush=outer,
+                inner_brush=inner,
+                median_pen=pg.mkPen(qcolor, width=2.2),
+            )
         )
-        self._items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median])
 
 
 def _has_variation(curve: CurveData) -> bool:

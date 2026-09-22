@@ -18,7 +18,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.graph_display import retro_step_band, retro_step_series, stipple_trace_pen
+from dms.graph_display import (
+    add_variation_band,
+    retro_step_band,
+    retro_step_series,
+    stipple_trace_pen,
+)
 from dms.processing import VariationBand
 from dms.style_tokens import tokens_for
 from dms.theme import ensure_graph_color, brand_theme_colors, normalize_theme, theme_colors
@@ -131,22 +136,20 @@ class _PlotPane(QWidget):
             band = variation
             if tokens.retro_graph and not brand_mode:
                 band = retro_step_band(band)
-            freqs = band.freqs
             outer = QColor(display_color)
             outer.setAlpha(50)
             inner = QColor(display_color)
             inner.setAlpha(88)
-            u90 = self.plot.plot(freqs, band.p90, pen=pg.mkPen(None))
-            l10 = self.plot.plot(freqs, band.p10, pen=pg.mkPen(None))
-            u75 = self.plot.plot(freqs, band.p75, pen=pg.mkPen(None))
-            l25 = self.plot.plot(freqs, band.p25, pen=pg.mkPen(None))
-            fill90 = pg.FillBetweenItem(u90, l10, brush=pg.mkBrush(outer))
-            fill75 = pg.FillBetweenItem(u75, l25, brush=pg.mkBrush(inner))
-            self.plot.addItem(fill90)
-            self.plot.addItem(fill75)
-            median_item = self.plot.plot(freqs, band.median, pen=pg.mkPen(display_color, width=2.0))
-            self._items.extend([u90, l10, u75, l25, fill90, fill75, median_item])
-            _auto_center(self.plot, [(freqs, band.p10), (freqs, band.p90)])
+            self._items.extend(
+                add_variation_band(
+                    self.plot,
+                    band,
+                    outer_brush=outer,
+                    inner_brush=inner,
+                    median_pen=pg.mkPen(display_color, width=2.0),
+                )
+            )
+            _auto_center(self.plot, [(band.freqs, band.p10), (band.freqs, band.p90)])
         elif curve is not None:
             freqs, values = curve
             if tokens.retro_graph and not brand_mode:

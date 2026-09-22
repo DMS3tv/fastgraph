@@ -15,6 +15,8 @@ GRID_POINTS = 1200
 F_LOW = 20.0
 F_HIGH = 20000.0
 F_REF = 1000.0
+#: Default fractional-octave smoothing (1/48 octave).
+DEFAULT_SMOOTHING = 48
 
 #: Standard-normal quantiles for the 90th and 75th percentiles. Percentile
 #: columns are converted to a sigma through these, so independent spreads can
@@ -48,8 +50,8 @@ def sigma_from_percentiles(
 def generate_log_sweep(
     duration: float,
     fs: int,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
     fade_ms: float = 10.0,
 ) -> np.ndarray:
     """Return mono log swept sine in range [-1, 1]."""
@@ -79,8 +81,8 @@ def compute_frequency_response(
     recording: np.ndarray,
     sweep: np.ndarray,
     fs: int,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
     **window_kwargs,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -212,7 +214,7 @@ def deconvolve_sweep(
 
 def _default_second_harmonic_delay(duration_s: float) -> float:
     """Δt₂ for the default 20 Hz – 20 kHz sweep band."""
-    return harmonic_time_offsets((2,), duration_s=duration_s, f_low=20.0, f_high=20000.0)[2]
+    return harmonic_time_offsets((2,), duration_s=duration_s, f_low=F_LOW, f_high=F_HIGH)[2]
 
 
 def _find_linear_peak(ir: np.ndarray, fs: int, duration_s: float) -> int:
@@ -303,8 +305,8 @@ def window_impulse_response(
     post_ms: float | None = None,
     head_taper_ms: float = 2.0,
     tail_taper_ms: float = 20.0,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
 ) -> np.ndarray:
     """Window the linear part of a deconvolved impulse response.
 
@@ -368,8 +370,8 @@ def frequency_response_from_ir(
     ir_window: np.ndarray,
     fs: int,
     *,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
     bin_hz_max: float = 0.1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Magnitude spectrum of a windowed impulse response, restricted to band.
@@ -409,8 +411,8 @@ _HARMONIC_LIMIT_GUARD = 0.9
 def harmonic_responses(
     deconv: SweepDeconvolution,
     *,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
     orders: Sequence[int] = (2, 3, 4, 5),
     n_points: int = 600,
 ) -> HarmonicAnalysis:
@@ -462,12 +464,12 @@ def harmonic_responses(
     longest = max(w.size for w in windows.values())
     padded = {k: np.pad(w, (0, longest - w.size)) for k, w in windows.items()}
 
-    grid_freqs, linear_db = _band_response(padded[1], fs, f_low, f_high, n_points, f_ref=1000.0)
+    grid_freqs, linear_db = _band_response(padded[1], fs, f_low, f_high, n_points, f_ref=F_REF)
 
     nyquist = fs / 2.0
     order_db: dict[int, np.ndarray] = {}
     for k in wanted:
-        _, mag_k = _band_response(padded[k], fs, f_low * k, f_high * k, n_points, f_ref=1000.0 * k)
+        _, mag_k = _band_response(padded[k], fs, f_low * k, f_high * k, n_points, f_ref=F_REF * k)
         rel = mag_k - linear_db
         harmonic_freqs = grid_freqs * k
         # Mask a little below the hard limit: the last few percent before
@@ -800,7 +802,7 @@ def _smooth_on_log_grid(
 def smooth_fractional_octave(
     freqs: np.ndarray,
     mag_db: np.ndarray,
-    fraction: int = 48,
+    fraction: int = DEFAULT_SMOOTHING,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Apply Gaussian smoothing on a log-frequency axis.

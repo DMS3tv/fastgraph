@@ -8,7 +8,7 @@ from uuid import uuid4
 import numpy as np
 
 from dms.brand_brand import NON_BRAND_DEFAULT_COLORS as DEFAULT_COLORS
-from dms.processing import VariationBand, percentile_band
+from dms.processing import DEFAULT_SMOOTHING, VariationBand, percentile_band
 from dms.session import SessionData
 
 SCHEMA_VERSION = 1
@@ -201,7 +201,7 @@ class RnDSession:
     target_freqs: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     target_mag_db: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     target_offset_db: float = 0.0
-    smoothing_fraction: int = 48
+    smoothing_fraction: int = DEFAULT_SMOOTHING
     delta_mode_enabled: bool = False
     schema_version: int = SCHEMA_VERSION
     saved_app_version: str = ""
@@ -261,7 +261,7 @@ class RnDSession:
             target_freqs=np.array(data.get("target_freqs") or [], dtype=float),
             target_mag_db=np.array(data.get("target_mag_db") or [], dtype=float),
             target_offset_db=float(data.get("target_offset_db") or 0.0),
-            smoothing_fraction=int(data.get("smoothing_fraction") or 48),
+            smoothing_fraction=int(data.get("smoothing_fraction") or DEFAULT_SMOOTHING),
             delta_mode_enabled=bool(data.get("delta_mode_enabled", False)),
         )
         session.repair_ordering()
@@ -336,7 +336,7 @@ def generate_measurement_name(
 def group_variation(
     measurements: list[RnDMeasurement],
     *,
-    smoothing_fraction: int = 48,
+    smoothing_fraction: int = DEFAULT_SMOOTHING,
 ) -> VariationBand | None:
     if len(measurements) < 2:
         return None

@@ -26,7 +26,7 @@ from dms.graph_display import (
     stipple_trace_pen,
     uses_retro_steps,
 )
-from dms.processing import VariationBand
+from dms.processing import F_REF, VariationBand
 from dms.style_tokens import tokens_for
 from dms.theme import (
     FASTGRAPH_95,
@@ -221,7 +221,7 @@ class DualPlotWidget(QWidget):
         self._reference_lines: list[pg.InfiniteLine] = []
         for pw in (self._top_plot, self._bot_plot):
             ref = pg.InfiniteLine(
-                pos=np.log10(1000.0),
+                pos=np.log10(F_REF),
                 angle=90,
                 pen=pg.mkPen(color=(80, 80, 80), style=Qt.PenStyle.DashLine),
             )

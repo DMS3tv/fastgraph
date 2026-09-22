@@ -33,7 +33,7 @@ from dms.measure_persistence import (
 )
 from dms.measure_queue import QueueState
 from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
-from dms.processing import smooth_fractional_octave
+from dms.processing import DEFAULT_SMOOTHING, smooth_fractional_octave
 from dms.recovery import RecoveryCandidate, measure_recovery_manager
 from dms.settings_manager import config_dir
 from dms.ui.measure_dialogs import MeasureRecoveryDialog
@@ -531,8 +531,6 @@ class MeasureIO(QObject):
         self.export_average()
 
     def export_average(self, requested_path: str | None = None) -> None:
-        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
-
         window = self._window
         # Export what is displayed: the same smoothed curve the bottom
         # viewport draws, with the smoothing recorded in the header.
@@ -572,7 +570,7 @@ class MeasureIO(QObject):
                 compensated=compensated,
                 hrtf=window.measure.hrtf if compensated else None,
                 n_sweeps=active_count,
-                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                smoothing_fraction=DEFAULT_SMOOTHING,
                 level_mode=window.measure.level_mode()
                 if window.measure.spl_offset_db() is not None
                 else "ref_1khz",
@@ -591,8 +589,6 @@ class MeasureIO(QObject):
             QMessageBox.warning(window, "Export Error", str(exc))
 
     def export_variation(self, requested_path: str | None = None) -> None:
-        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
-
         window = self._window
         two_channel = window.measure.two_channel_enabled
         active_variation = (
@@ -635,7 +631,7 @@ class MeasureIO(QObject):
                 compensated=compensated,
                 hrtf=window.measure.hrtf if compensated else None,
                 n_sweeps=active_count,
-                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                smoothing_fraction=DEFAULT_SMOOTHING,
                 level_mode=window.measure.level_mode()
                 if window.measure.spl_offset_db() is not None
                 else "ref_1khz",
@@ -726,8 +722,6 @@ class MeasureIO(QObject):
         return dialog.clickedButton() is overwrite
 
     def export_all(self) -> None:
-        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
-
         window = self._window
         reason = self._export_all_unavailable_reason()
         if reason:
@@ -810,10 +804,10 @@ class MeasureIO(QObject):
                 temp_dir = Path(temp_name)
                 # Same smoothed curves and header as Export Average.
                 raw_freqs, raw_mag = smooth_fractional_octave(
-                    *raw_average, fraction=_DISPLAY_AVG_SMOOTHING
+                    *raw_average, fraction=DEFAULT_SMOOTHING
                 )
                 comp_freqs, comp_mag = smooth_fractional_octave(
-                    *comp_average, fraction=_DISPLAY_AVG_SMOOTHING
+                    *comp_average, fraction=DEFAULT_SMOOTHING
                 )
                 level_mode = (
                     window.measure.level_mode()
@@ -828,7 +822,7 @@ class MeasureIO(QObject):
                     compensated=False,
                     hrtf=None,
                     n_sweeps=active_count,
-                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                    smoothing_fraction=DEFAULT_SMOOTHING,
                     level_mode=level_mode,
                 )
                 export_curve(
@@ -839,7 +833,7 @@ class MeasureIO(QObject):
                     compensated=True,
                     hrtf=hrtf,
                     n_sweeps=active_count,
-                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                    smoothing_fraction=DEFAULT_SMOOTHING,
                     level_mode=level_mode,
                 )
                 for index, variation, compensated in (
@@ -858,7 +852,7 @@ class MeasureIO(QObject):
                         compensated=compensated,
                         hrtf=hrtf if compensated else None,
                         n_sweeps=active_count,
-                        smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                        smoothing_fraction=DEFAULT_SMOOTHING,
                         level_mode=level_mode,
                     )
                 for name, destination in zip(filenames, destinations):

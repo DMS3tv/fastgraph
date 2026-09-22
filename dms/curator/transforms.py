@@ -7,6 +7,7 @@ from scipy.special import erf
 
 from dms.curator.models import CurveData, LayerState
 from dms.processing import (
+    DEFAULT_SMOOTHING,
     F_REF,
     VariationBand,
     log_grid,
@@ -72,7 +73,7 @@ def smooth_curve(curve: CurveData, fraction: int) -> CurveData:
 
 def visible_display_layers(
     layers: list[LayerState],
-    smoothing_fraction: int = 48,
+    smoothing_fraction: int = DEFAULT_SMOOTHING,
 ) -> list[tuple[LayerState, CurveData]]:
     return [
         (

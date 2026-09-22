@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QDialog, QMessageBox, QProgressDialog
 
 from dms.console import exception_diagnostics
 from dms.export import export_curve
+from dms.processing import DEFAULT_SMOOTHING
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.squiglink import (
     DEFAULT_CONNECT_TIMEOUT,
@@ -71,8 +72,6 @@ class SquiglinkController(QObject):
         return host, port
 
     def upload(self) -> None:
-        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
-
         # Upload what is displayed, exactly as Export Average writes it.
         curve = self._window.measure.bottom_curve_for_display()
         if curve is None:
@@ -163,7 +162,7 @@ class SquiglinkController(QObject):
                 compensated=compensated,
                 hrtf=self._window.measure.hrtf if compensated else None,
                 n_sweeps=self._window.measure.active_measure_count(),
-                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                smoothing_fraction=DEFAULT_SMOOTHING,
                 level_mode=self._window.measure.level_mode()
                 if self._window.measure.spl_offset_db() is not None
                 else "ref_1khz",

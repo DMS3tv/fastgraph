@@ -9,6 +9,7 @@ from uuid import uuid4
 import numpy as np
 
 from dms import brand_brand
+from dms.processing import DEFAULT_SMOOTHING
 
 if TYPE_CHECKING:
     from dms.hrtf import HRTFCurve
@@ -98,7 +99,7 @@ class GraphState:
     y_max: float = 17.5
     background: str = "#101217"
     aspect_locked_25db: bool = True
-    smoothing_fraction: int = 48
+    smoothing_fraction: int = DEFAULT_SMOOTHING
     show_layer_names: bool = True
     brand_clean_slate: bool = False
     export_text: ExportText = field(default_factory=ExportText)

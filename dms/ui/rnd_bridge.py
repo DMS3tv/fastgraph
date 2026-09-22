@@ -25,7 +25,13 @@ from dms.file_io import ensure_extension, same_session_file
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import MAX_SWEEP_ATTEMPTS, QueueState
 from dms.measurement_alignment import is_retryable_timing_failure
-from dms.processing import downsample_to_log_points, generate_log_sweep, normalize_at_1khz
+from dms.processing import (
+    DEFAULT_SMOOTHING,
+    F_REF,
+    downsample_to_log_points,
+    generate_log_sweep,
+    normalize_at_1khz,
+)
 from dms.recovery import RecoveryCandidate, rnd_recovery_manager
 from dms.rnd.models import RnDGroup, RnDMeasurement, generate_measurement_name
 from dms.rnd.models import group_variation as rnd_group_variation
@@ -229,14 +235,14 @@ class RndBridge(QObject):
             (freqs, mag_db), _distortion = self._window.measure.analyze_sweep(recording, sweep)
             spl_offset = self._window.measure.spl_offset_db()
             if spl_offset is None:
-                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=F_REF)
             else:
                 mag_db = mag_db + spl_offset
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
                 n_points=600,
-                f_ref=1000.0,
+                f_ref=F_REF,
                 normalize_ref=spl_offset is None,
             )
             self._window.measure.queue.pending_curve = (freqs_ds, mag_ds)
@@ -706,7 +712,9 @@ class RndBridge(QObject):
                 return
             variation = rnd_group_variation(
                 measurements,
-                smoothing_fraction=int(self._window._rnd_widget.session.smoothing_fraction or 48),
+                smoothing_fraction=int(
+                    self._window._rnd_widget.session.smoothing_fraction or DEFAULT_SMOOTHING
+                ),
             )
             if variation is None:
                 QMessageBox.information(
@@ -809,7 +817,9 @@ class RndBridge(QObject):
             compensated=compensated,
             hrtf=hrtf,
             n_sweeps=1,
-            smoothing_fraction=int(self._window._rnd_widget.session.smoothing_fraction or 48),
+            smoothing_fraction=int(
+                self._window._rnd_widget.session.smoothing_fraction or DEFAULT_SMOOTHING
+            ),
             offset_db=self._window._rnd_widget.displayed_offset_db(measurement),
         )
         self._window._settings.set("export_directory", str(path.parent))
@@ -826,7 +836,9 @@ class RndBridge(QObject):
             return
         variation = rnd_group_variation(
             measurements,
-            smoothing_fraction=int(self._window._rnd_widget.session.smoothing_fraction or 48),
+            smoothing_fraction=int(
+                self._window._rnd_widget.session.smoothing_fraction or DEFAULT_SMOOTHING
+            ),
         )
         if variation is None:
             QMessageBox.information(
@@ -863,7 +875,9 @@ class RndBridge(QObject):
             compensated=compensated,
             hrtf=hrtf,
             n_sweeps=len(measurements),
-            smoothing_fraction=int(self._window._rnd_widget.session.smoothing_fraction or 48),
+            smoothing_fraction=int(
+                self._window._rnd_widget.session.smoothing_fraction or DEFAULT_SMOOTHING
+            ),
         )
         self._window._settings.set("export_directory", str(path.parent))
         self._window.measure_tab.export_dir_input.setText(str(path.parent))

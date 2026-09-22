@@ -35,6 +35,11 @@ from dms.measurement_alignment import (
     is_retryable_timing_failure,
 )
 from dms.processing import (
+    DEFAULT_SMOOTHING,
+    F_HIGH,
+    F_LOW,
+    F_REF,
+    GRID_POINTS,
     HarmonicAnalysis,
     VariationBand,
     absolute_spl_offset_db,
@@ -65,10 +70,8 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
 
-_MEASUREMENT_F_MIN = 20.0
-_MEASUREMENT_F_MAX = 20000.0
-_DISPLAY_AVG_POINTS = 1200
-_DISPLAY_AVG_SMOOTHING = 48
+_MEASUREMENT_F_MIN = F_LOW
+_MEASUREMENT_F_MAX = F_HIGH
 #: Harmonic analysis needs a clean recording; below this SNR the distortion
 #: packets are indistinguishable from the noise floor, so nothing is computed.
 _DISTORTION_MIN_SNR_DB = 20.0
@@ -682,7 +685,7 @@ class MeasureController(QObject):
                         first_mag,
                         freqs,
                         mag_db,
-                        f_ref=1000.0,
+                        f_ref=F_REF,
                     )
                 else:
                     # Absolute levels: the shared 1 kHz anchor would throw the
@@ -693,14 +696,14 @@ class MeasureController(QObject):
                     first_freqs,
                     first_norm,
                     n_points=600,
-                    f_ref=1000.0,
+                    f_ref=F_REF,
                     normalize_ref=False,
                 )
                 second_ds = downsample_to_log_points(
                     freqs,
                     second_norm,
                     n_points=600,
-                    f_ref=1000.0,
+                    f_ref=F_REF,
                     normalize_ref=False,
                 )
                 self.queue.pending_pair = TwoChannelCurvePair(
@@ -718,13 +721,13 @@ class MeasureController(QObject):
                 QTimer.singleShot(0, self.show_pass_fail_dialog)
                 return
             if spl_offset is None:
-                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
+                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=F_REF)
 
             freqs_ds, mag_ds = downsample_to_log_points(
                 freqs,
                 mag_db,
                 n_points=600,
-                f_ref=1000.0,
+                f_ref=F_REF,
                 normalize_ref=spl_offset is None,
             )
 
@@ -1076,8 +1079,8 @@ class MeasureController(QObject):
 
         freqs, mag_db = compute_rms_average(
             self.kept_curves,
-            n_points=_DISPLAY_AVG_POINTS,
-            f_ref=1000.0,
+            n_points=GRID_POINTS,
+            f_ref=F_REF,
             f_min=_MEASUREMENT_F_MIN,
             f_max=_MEASUREMENT_F_MAX,
             # In dB SPL the average must keep the absolute level.
@@ -1091,7 +1094,7 @@ class MeasureController(QObject):
             "channel_2": channel_curves(self.two_channel_pairs, 2),
             "combined": combined_pair_curves(
                 self.two_channel_pairs,
-                n_points=_DISPLAY_AVG_POINTS,
+                n_points=GRID_POINTS,
             ),
         }
 
@@ -1103,8 +1106,8 @@ class MeasureController(QObject):
                 continue
             averages[key] = compute_rms_average(
                 curves,
-                n_points=_DISPLAY_AVG_POINTS,
-                f_ref=1000.0,
+                n_points=GRID_POINTS,
+                f_ref=F_REF,
                 f_min=_MEASUREMENT_F_MIN,
                 f_max=_MEASUREMENT_F_MAX,
                 normalize_ref=False,
@@ -1146,7 +1149,7 @@ class MeasureController(QObject):
             return channel_curves(self.two_channel_pairs, 2)
         return combined_pair_curves(
             self.two_channel_pairs,
-            n_points=_DISPLAY_AVG_POINTS,
+            n_points=GRID_POINTS,
         )
 
     def active_measure_count(self) -> int:
@@ -1198,7 +1201,7 @@ class MeasureController(QObject):
         band = percentile_band(
             curves,
             grid=average[0],
-            smoothing=_DISPLAY_AVG_SMOOTHING,
+            smoothing=DEFAULT_SMOOTHING,
             hrtf=None if variation_hrtf else hrtf,
         )
         return hrtf.apply_to_variation(band) if variation_hrtf else band
@@ -1230,7 +1233,7 @@ class MeasureController(QObject):
         return smooth_fractional_octave(
             freqs,
             mag_db,
-            fraction=_DISPLAY_AVG_SMOOTHING,
+            fraction=DEFAULT_SMOOTHING,
         )
 
     def refresh(self, *_args) -> None:
@@ -1258,7 +1261,7 @@ class MeasureController(QObject):
                     averages[key] = smooth_fractional_octave(
                         freqs,
                         values,
-                        fraction=_DISPLAY_AVG_SMOOTHING,
+                        fraction=DEFAULT_SMOOTHING,
                     )
                 else:
                     averages[key] = None

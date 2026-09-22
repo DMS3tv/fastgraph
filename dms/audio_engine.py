@@ -21,6 +21,7 @@ from dms.measurement_alignment import (
     align_recording_to_layout,
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
+from dms.processing import F_HIGH, F_LOW
 from dms.recording_dump import save_failed_recording
 
 logger = logging.getLogger(__name__)
@@ -707,8 +708,8 @@ class SweepWorker(QObject):
         sweep_noise_margin_min_db: float = 3.0,
         snr_warn_db: float = 10.0,
         failed_recording_dir: str | None = None,
-        sweep_f_low: float = 20.0,
-        sweep_f_high: float = 20000.0,
+        sweep_f_low: float = F_LOW,
+        sweep_f_high: float = F_HIGH,
     ) -> None:
         """Call from a QThread or thread pool."""
         self._abort.clear()
@@ -763,8 +764,8 @@ class SweepWorker(QObject):
         sweep_noise_margin_min_db=3.0,
         snr_warn_db=10.0,
         failed_recording_dir=None,
-        sweep_f_low=20.0,
-        sweep_f_high=20000.0,
+        sweep_f_low=F_LOW,
+        sweep_f_high=F_HIGH,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)

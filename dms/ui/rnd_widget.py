@@ -49,7 +49,7 @@ from dms.graph_display import (
     uses_retro_steps,
 )
 from dms.hrtf import HRTFCurve
-from dms.processing import VariationBand, smooth_fractional_octave
+from dms.processing import DEFAULT_SMOOTHING, F_REF, VariationBand, smooth_fractional_octave
 from dms.rnd.models import (
     DEFAULT_COLORS,
     RnDGroup,
@@ -110,7 +110,7 @@ def _parsed_hrtf_curve(path: str, _mtime_ns: int, _size: int) -> HRTFCurve:
 
 def _configure_plot(plot: pg.PlotWidget) -> None:
     _configure_plot_widget(plot)
-    for pos, angle in ((np.log10(1000.0), 90), (0.0, 0)):
+    for pos, angle in ((np.log10(F_REF), 90), (0.0, 0)):
         plot.addItem(
             pg.InfiniteLine(
                 pos=pos,
@@ -1552,7 +1552,9 @@ class RnDWidget(QWidget):
     def _on_smoothing_changed(self, _index: int) -> None:
         if self._syncing:
             return
-        self.session.smoothing_fraction = int(self._smoothing_combo.currentData() or 48)
+        self.session.smoothing_fraction = int(
+            self._smoothing_combo.currentData() or DEFAULT_SMOOTHING
+        )
         self._redraw()
         self.state_changed.emit()
 
@@ -1620,7 +1622,9 @@ class RnDWidget(QWidget):
     def _sync_view_controls(self) -> None:
         self._syncing = True
         try:
-            index = self._smoothing_combo.findData(int(self.session.smoothing_fraction or 48))
+            index = self._smoothing_combo.findData(
+                int(self.session.smoothing_fraction or DEFAULT_SMOOTHING)
+            )
             self._smoothing_combo.setCurrentIndex(index if index >= 0 else 0)
             self._delta_mode_toggle.setChecked(bool(self.session.delta_mode_enabled))
         finally:
@@ -1927,7 +1931,7 @@ class RnDWidget(QWidget):
                 ]
                 top_variation = group_variation(
                     measurements,
-                    smoothing_fraction=int(self.session.smoothing_fraction or 48),
+                    smoothing_fraction=int(self.session.smoothing_fraction or DEFAULT_SMOOTHING),
                 )
                 if top_variation is not None:
                     top_variations.append((group, top_variation))
@@ -1940,7 +1944,7 @@ class RnDWidget(QWidget):
                 ]
                 bottom_variation = group_variation(
                     measurements,
-                    smoothing_fraction=int(self.session.smoothing_fraction or 48),
+                    smoothing_fraction=int(self.session.smoothing_fraction or DEFAULT_SMOOTHING),
                 )
                 if bottom_variation is not None:
                     bottom_variations.append((group, bottom_variation))
@@ -2079,7 +2083,7 @@ class RnDWidget(QWidget):
         return curve.freqs, curve.median
 
     def _smooth_curve(self, freqs: np.ndarray, mag_db: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        fraction = int(self.session.smoothing_fraction or 48)
+        fraction = int(self.session.smoothing_fraction or DEFAULT_SMOOTHING)
         if fraction <= 0:
             return freqs, mag_db
         return smooth_fractional_octave(freqs, mag_db, fraction=fraction)

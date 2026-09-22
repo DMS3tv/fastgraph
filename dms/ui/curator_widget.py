@@ -43,6 +43,7 @@ from dms.curator.transforms import (
 )
 from dms.hrtf import HRTFCurve
 from dms.brand_fonts import brand_font_status
+from dms.processing import DEFAULT_SMOOTHING
 from dms.style_tokens import THEME_DEFINITIONS
 from dms.theme import (
     DARK,
@@ -1606,7 +1607,9 @@ class CuratorWidget(QWidget):
         )
 
     def _on_smoothing_changed(self, _index: int) -> None:
-        self._state.smoothing_fraction = int(self._smoothing_combo.currentData() or 48)
+        self._state.smoothing_fraction = int(
+            self._smoothing_combo.currentData() or DEFAULT_SMOOTHING
+        )
         self._redraw()
         logger.info(
             "Curator smoothing changed",
@@ -1639,7 +1642,7 @@ class CuratorWidget(QWidget):
 
     def _reset_view(self) -> None:
         self._state.aspect_locked_25db = True
-        self._state.smoothing_fraction = 48
+        self._state.smoothing_fraction = DEFAULT_SMOOTHING
         self._state.show_layer_names = True
         self.set_y_limits(DEFAULT_Y_MIN, DEFAULT_Y_MAX)
         self.reset_background_to_theme()

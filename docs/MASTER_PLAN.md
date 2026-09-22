@@ -20,7 +20,7 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 | 8 | DSP upgrade (deconvolution, distortion, band averaging, SPL) | done 2026-09-08 |
 | 9 | Measure sessions and comparison features | done 2026-09-08 |
 | 10 | Hardware acceptance (when hardware is available) | pending |
-| C0–C8 | Code cleanup (Part 2 plan, 2026-09-22): tooling, reviewer's guide, dead code, helper consolidation, main-window split, conventions, tests, docs | C0 in progress on `cleanup/2026-09` |
+| C0–C8 | Code cleanup (Part 2 plan, 2026-09-22): tooling, reviewer's guide, dead code, helper consolidation, main-window split, conventions, tests, docs | C0 done 2026-09-22; C1 in progress on `cleanup/2026-09` |
 
 ## Standing decisions
 
@@ -57,3 +57,4 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 | 2026-09-08 | Phase 4 audio-thread hygiene (a1790a9): level monitors store block RMS in the callback and emit from a 50 ms GUI timer; `DevicePoller` enumerates on its own thread, emits on change only, pauses during queue/review/R&D sweep (a device lost mid-sweep is reported by the stream) | 698 passed in 86 s |
 | 2026-09-21 | Owner-reported: released 0.4.2 Curator flattens bass on linear-grid REW files (smoothing assumed log spacing; fixed since Phase 6, dev build verified within 0.1 dB on the owner's AirPods files). REW import audit: 98-case matrix (7 grids × 7 delimiter/decimal/phase/encoding shapes × 2 loaders). Fixed decimal comma with comma delimiter; `load_two_column_txt_curve` now delegates to the Curator parser; non-percentile wide files import as a response | 35 failing cases → 0; 3 new tests; full suite green |
 | 2026-09-22 | Cleanup plan approved (plan file Part 2). Three surveys: main window 19 concerns / ~7,200 lines; ~1,000 lines duplicated; dead/legacy list; FR-path gaps; ruff baseline 29 default findings. Decisions: `cleanup/2026-09` off the frozen hardening branch; Export All matches the display; reformat commit first | branch created |
+| 2026-09-22 | C0 tooling: `pyproject.toml` (ruff E/F/I/UP/B/SIM, line length 100, pytest config folded in), 29 default findings fixed by hand (shadowed `QPushButton` in 7 widgets, unused imports/variables, late import), one-off `ruff format` + mechanical fixes commit 1ab8c99 listed in `.git-blame-ignore-revs`, lint job gating CI, README Code Style section | ruff clean; suite green (one timing flake noted: `test_slow_upload_leaves_the_gui_thread_responsive` under `-n auto`, passes alone; C7 item) |

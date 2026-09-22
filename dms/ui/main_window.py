@@ -1043,7 +1043,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Setting saved.")
 
     def _configure_keyboard_shortcuts(self) -> None:
-        for shortcut in getattr(self, "_keyboard_shortcuts", []):
+        for shortcut in self._keyboard_shortcuts:
             shortcut.setEnabled(False)
             shortcut.deleteLater()
         self._keyboard_shortcuts = []
@@ -1201,7 +1201,7 @@ class MainWindow(QMainWindow):
             severity.upper() == "ERROR"
             and source != "automation"
             and hasattr(self, "_automation_widget")
-            and not getattr(self, "_automation_running", False)
+            and not self._automation_running
         ):
             QTimer.singleShot(0, lambda: self._run_automation_trigger("app_error"))
 
@@ -1235,7 +1235,7 @@ class MainWindow(QMainWindow):
                 keys=corrected,
             )
 
-        cal_error = getattr(getattr(self, "_cal_store", None), "load_error", None)
+        cal_error = getattr(self._cal_store, "load_error", None)
         if cal_error:
             problems.append(str(cal_error))
             self._log_event(
@@ -1283,7 +1283,7 @@ class MainWindow(QMainWindow):
         widget = getattr(self, "_automation_widget", None)
         if widget is None:
             return
-        running = getattr(self, "_automation_running", False)
+        running = self._automation_running
         if running and trigger in _AUTOMATION_REENTRANT_TRIGGERS:
             self._log_event(
                 "DEBUG",
@@ -1317,9 +1317,7 @@ class MainWindow(QMainWindow):
 
     def _drain_automation_queue(self) -> None:
         """Run queued automations sequentially, never re-entering a run."""
-        if getattr(self, "_automation_running", False) or getattr(
-            self, "_automation_draining", False
-        ):
+        if self._automation_running or getattr(self, "_automation_draining", False):
             return
         queue = self._automation_pending()
         self._automation_draining = True
@@ -1333,7 +1331,7 @@ class MainWindow(QMainWindow):
     def _run_automation(
         self, automation: AutomationDefinition, triggered_by: str = "manual"
     ) -> None:
-        if getattr(self, "_automation_running", False):
+        if self._automation_running:
             self._log_event(
                 "WARNING", "automation", "Automation already running", name=automation.name
             )
@@ -3002,8 +3000,7 @@ class MainWindow(QMainWindow):
         self._active_ch_label.setText(
             f"Active input channel: Ch {self._current_input_channel() + 1}"
         )
-        if hasattr(self, "_rnd_widget"):
-            self._rnd_widget.set_input_channel(self._current_input_channel())
+        self._rnd_widget.set_input_channel(self._current_input_channel())
         self._start_level_monitor()
         self._refresh_session_labels()
 
@@ -3020,7 +3017,7 @@ class MainWindow(QMainWindow):
         self._last_level_dbfs = max(self._last_dual_levels)
 
     def _refresh_level_meter_display(self) -> None:
-        if getattr(self, "_two_channel_enabled", False):
+        if self._two_channel_enabled:
             left_db, right_db = self._last_dual_levels
             self._level_meter.set_level(max(-60.0, min(0.0, left_db)))
             self._level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
@@ -3106,7 +3103,7 @@ class MainWindow(QMainWindow):
 
     def _apply_state_ui(self) -> None:
         if (
-            getattr(self, "_devices_dirty", False)
+            self._devices_dirty
             and self._queue.allows_device_reselect()
             and not self._rnd_sweep_active
         ):
@@ -3164,8 +3161,7 @@ class MainWindow(QMainWindow):
         self._settings_widget.set_editing_enabled(idle)
         if not idle:
             self._close_metadata_overlay()
-        if hasattr(self, "_rnd_widget"):
-            self._rnd_widget.set_busy(not idle)
+        self._rnd_widget.set_busy(not idle)
         self._start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
         active_count = (
@@ -3554,7 +3550,7 @@ class MainWindow(QMainWindow):
         # A device or stream failure is terminal: retrying only repeats it, so
         # two-channel mode must not offer a pair retry for it.
         retry_complete_pair = bool(
-            getattr(self, "_two_channel_enabled", False)
+            self._two_channel_enabled
             and self._queue_active()
             and not is_device_failure(message, failure_reason)
         )
@@ -4157,7 +4153,7 @@ class MainWindow(QMainWindow):
         return value if isinstance(value, tuple) else None
 
     def _active_measure_curves(self) -> list[tuple[np.ndarray, np.ndarray]]:
-        if not getattr(self, "_two_channel_enabled", False):
+        if not self._two_channel_enabled:
             return list(self._kept_curves)
         key = self._active_two_channel_key()
         if key == "channel_1":
@@ -4170,14 +4166,10 @@ class MainWindow(QMainWindow):
         )
 
     def _active_measure_count(self) -> int:
-        return (
-            len(self._two_channel_pairs)
-            if getattr(self, "_two_channel_enabled", False)
-            else len(self._kept_curves)
-        )
+        return len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
 
     def _active_measure_label(self) -> str:
-        if not getattr(self, "_two_channel_enabled", False):
+        if not self._two_channel_enabled:
             return ""
         return curve_label_for_selection(self._active_two_channel_key())
 
@@ -4190,7 +4182,7 @@ class MainWindow(QMainWindow):
         return self._session
 
     def _active_measure_variation(self):
-        if getattr(self, "_two_channel_enabled", False):
+        if self._two_channel_enabled:
             return self._two_channel_variations.get(self._active_two_channel_key())
         return self._variation
 
@@ -7147,7 +7139,7 @@ class MainWindow(QMainWindow):
         # the source tree and the released bundle read "fastgraph Beta".
         app_name = os.environ.get("FASTGRAPH_APP_NAME", "").strip() or "fastgraph Beta"
         title = f"DMS {app_name} — {self._session.display_name()} @ {self._session.rig}"
-        path = getattr(self, "_measure_session_path", None)
+        path = self._measure_session_path
         if path is not None:
             # ``.fastgraph-measure.json`` is a two-part suffix, so one ``stem``
             # would leave ``.fastgraph-measure`` behind.
@@ -7157,6 +7149,6 @@ class MainWindow(QMainWindow):
             else:
                 name = path.stem
             title = f"{title} • {name}"
-        if getattr(self, "_measure_dirty", False):
+        if self._measure_dirty:
             title = f"{title}*"
         self.setWindowTitle(title)

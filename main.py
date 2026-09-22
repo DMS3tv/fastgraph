@@ -1,9 +1,11 @@
 import sys
+
 from PyQt6.QtWidgets import QApplication
-from dms.ui.main_window import MainWindow
-from dms.settings_manager import SettingsManager
+
 from dms.session import SessionData
+from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
+from dms.ui.main_window import MainWindow
 from dms.version import __version__
 
 

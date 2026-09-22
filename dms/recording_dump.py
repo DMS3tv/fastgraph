@@ -17,11 +17,10 @@ import json
 import time
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from scipy.io import wavfile
-
 
 DUMP_VERSION = 1
 
@@ -56,8 +55,8 @@ def save_failed_recording(
     alignment_settings: Any,
     diagnostics: Any,
     failure_message: str,
-    failure_reason: Optional[str],
-    extra: Optional[dict[str, Any]] = None,
+    failure_reason: str | None,
+    extra: dict[str, Any] | None = None,
 ) -> Path:
     """Write ``<stamp>.wav`` and ``<stamp>.json``; return the JSON path."""
     directory = Path(directory)

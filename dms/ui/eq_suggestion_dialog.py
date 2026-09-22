@@ -12,7 +12,6 @@ the residual and the match percentage always describe the filters on screen.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 from PyQt6.QtGui import QFont
@@ -41,9 +40,10 @@ from dms.comparison import (
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import (
     ModernDoubleSpinBox as QDoubleSpinBox,
+)
+from dms.ui.modern_spinbox import (
     ModernSpinBox as QSpinBox,
 )
-
 
 #: Offset modes in the order the combo shows them, with the wording used
 #: everywhere else in the Measure tab.
@@ -66,7 +66,7 @@ class EqSuggestionDialog(QDialog):
         target: tuple[np.ndarray, np.ndarray],
         *,
         offset_mode: str = "1khz",
-        parent: Optional[QWidget] = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("EQ Suggestion")
@@ -116,9 +116,7 @@ class EqSuggestionDialog(QDialog):
         self._offset_combo = QComboBox()
         for label, value in _OFFSET_LABELS:
             self._offset_combo.addItem(label, value)
-        index = self._offset_combo.findData(
-            offset_mode if offset_mode in OFFSET_MODES else "1khz"
-        )
+        index = self._offset_combo.findData(offset_mode if offset_mode in OFFSET_MODES else "1khz")
         self._offset_combo.setCurrentIndex(max(0, index))
         self._offset_combo.setMaximumWidth(190)
         controls.addWidget(self._offset_combo)
@@ -201,8 +199,7 @@ class EqSuggestionDialog(QDialog):
                     "",
                     f"Residual RMS   {before.overall_rms_db:.2f} dB  ->  "
                     f"{suggestion.residual_rms_db:.2f} dB",
-                    f"Match          {before.match_percent:.0f} %  ->  "
-                    f"{after.match_percent:.0f} %",
+                    f"Match          {before.match_percent:.0f} %  ->  {after.match_percent:.0f} %",
                     "",
                     "Equalizer APO",
                     self._apo_text,

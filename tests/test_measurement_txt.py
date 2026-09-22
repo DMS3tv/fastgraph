@@ -8,14 +8,7 @@ from dms.measurement_txt import load_two_column_txt_curve
 
 def test_load_two_column_txt_curve_accepts_rew_style(tmp_path: Path) -> None:
     path = tmp_path / "curve.txt"
-    path.write_text(
-        "# header\n"
-        "freq mag\n"
-        "100 1.0\n"
-        "200,2.0\n"
-        "* comment\n"
-        "50 -1.0\n"
-    )
+    path.write_text("# header\nfreq mag\n100 1.0\n200,2.0\n* comment\n50 -1.0\n")
     freqs, mags = load_two_column_txt_curve(str(path), label="Measurement")
     assert np.allclose(freqs, np.array([50.0, 100.0, 200.0]))
     assert np.allclose(mags, np.array([-1.0, 1.0, 2.0]))

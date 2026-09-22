@@ -7,7 +7,6 @@ user's current standard settings, and leaving it should restore those settings.
 from collections.abc import Mapping
 from typing import Any
 
-
 MEASUREMENT_PROFILE_KEYS = (
     "sweep_duration",
     "latency",
@@ -46,11 +45,7 @@ BLUETOOTH_PROFILE_DEFAULTS: dict[str, Any] = {
 
 def snapshot_measurement_profile(settings: Mapping[str, Any]) -> dict[str, Any]:
     """Capture only known measurement profile fields from a settings mapping."""
-    return {
-        key: settings[key]
-        for key in MEASUREMENT_PROFILE_KEYS
-        if key in settings
-    }
+    return {key: settings[key] for key in MEASUREMENT_PROFILE_KEYS if key in settings}
 
 
 def is_complete_measurement_profile(profile: object) -> bool:

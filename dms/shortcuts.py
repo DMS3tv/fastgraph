@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 SHORTCUT_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("start_measurement", "Start Measurement", "Enter"),
     ("fail_review", "Fail / Redo Review", "F"),

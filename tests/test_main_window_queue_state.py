@@ -36,9 +36,7 @@ def _silence_dialogs(monkeypatch, *, expect_question: bool = True):
 
     monkeypatch.setattr(main_window_module.QMessageBox, "question", question)
     monkeypatch.setattr(main_window_module.QMessageBox, "warning", warning)
-    monkeypatch.setattr(
-        main_window_module.QTimer, "singleShot", lambda _delay, callback: None
-    )
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: None)
     return calls
 
 
@@ -179,7 +177,9 @@ def test_shortcut_and_console_start_are_blocked_in_channel_balance(
     assert window._state == AppState.IDLE
 
 
-def test_starting_a_sweep_stops_the_channel_balance_generator(make_main_window, monkeypatch) -> None:
+def test_starting_a_sweep_stops_the_channel_balance_generator(
+    make_main_window, monkeypatch
+) -> None:
     window = make_main_window()
     stopped = []
     monkeypatch.setattr(window, "_stop_channel_balance", lambda: stopped.append(True))
@@ -204,12 +204,14 @@ def test_device_poll_is_deferred_while_the_queue_runs(make_main_window, monkeypa
     window = make_main_window()
     refreshed = []
     monkeypatch.setattr(window, "_refresh_devices", lambda: refreshed.append(True))
-    monkeypatch.setattr(main_window_module, "get_output_devices", lambda: [
-        {"index": 1, "name": "Out", "hostapi": 0}
-    ])
-    monkeypatch.setattr(main_window_module, "get_input_devices", lambda: [
-        {"index": 2, "name": "In", "hostapi": 0}
-    ])
+    monkeypatch.setattr(
+        main_window_module,
+        "get_output_devices",
+        lambda: [{"index": 1, "name": "Out", "hostapi": 0}],
+    )
+    monkeypatch.setattr(
+        main_window_module, "get_input_devices", lambda: [{"index": 2, "name": "In", "hostapi": 0}]
+    )
     monkeypatch.setattr(window, "_current_output_device", lambda: 1)
     monkeypatch.setattr(window, "_current_input_device", lambda: 2)
     window._last_output_devices = []
@@ -286,15 +288,19 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
         def exec(self):
             return answers.pop()
 
-    monkeypatch.setattr(main_window_module, "QMessageBox", type(
-        "QMessageBoxStub",
-        (),
-        {
-            "Icon": main_window_module.QMessageBox.Icon,
-            "StandardButton": main_window_module.QMessageBox.StandardButton,
-            "__new__": lambda cls, *a, **k: _Dialog(),
-        },
-    ))
+    monkeypatch.setattr(
+        main_window_module,
+        "QMessageBox",
+        type(
+            "QMessageBoxStub",
+            (),
+            {
+                "Icon": main_window_module.QMessageBox.Icon,
+                "StandardButton": main_window_module.QMessageBox.StandardButton,
+                "__new__": lambda cls, *a, **k: _Dialog(),
+            },
+        ),
+    )
     answers.append(main_window_module.QMessageBox.StandardButton.Cancel)
     assert confirm() is False
     answers.append(main_window_module.QMessageBox.StandardButton.Discard)

@@ -14,23 +14,27 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import dms.curator.export_image as export_image_module
+import dms.ui.curator_widget as main_window_module
+from dms.console import ConsoleEventStore
 from dms.curator.export_image import (
     ACCENT_COLOR,
+    DITHER_FOOTER_HEIGHT,
     PLOT_INSET_BOTTOM,
     PLOT_INSET_LEFT,
     PLOT_INSET_RIGHT,
     PLOT_INSET_TOP,
     _curve_path,
+    _draw_legend,
     _y_for_db,
     aligned_bounds,
     aspect_locked_rect,
-    DITHER_FOOTER_HEIGHT,
-    FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
-    _draw_legend,
     export_graph_image,
     fit_title,
 )
-import dms.curator.export_image as export_image_module
+from dms.curator.export_image import (
+    FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
+)
 from dms.curator.export_brand import brand_display_color
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.theme import (
@@ -39,15 +43,14 @@ from dms.theme import (
     FASTGRAPH_95,
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
+    ensure_graph_color,
     theme_trace_palette,
 )
-from dms.theme import ensure_graph_color
-from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions, tokens_for
-from dms.ui.curator_graph_widget import FREQUENCY_MARKERS, FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
-import dms.ui.curator_widget as main_window_module
+from dms.ui.curator_graph_widget import FREQUENCY_MARKERS
+from dms.ui.curator_graph_widget import FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
-from dms.console import ConsoleEventStore
+from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions, tokens_for
 
 
 @pytest.fixture
@@ -67,14 +70,14 @@ def make_curator(qapp):
         widget.deleteLater()
 
 
-def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(make_curator, qapp, tmp_path: Path) -> None:
+def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(
+    make_curator, qapp, tmp_path: Path
+) -> None:
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("100 1\n1000 5\n", encoding="utf-8")
     second.write_text(
-        "* Export Type: Variation Band\n"
-        "100 -2 -1 -3 1 2\n"
-        "1000 -1 0 -3 2 3\n",
+        "* Export Type: Variation Band\n100 -2 -1 -3 1 2\n1000 -1 0 -3 2 3\n",
         encoding="utf-8",
     )
 
@@ -136,7 +139,9 @@ def test_fastgraph95_curves_use_the_fine_step_display_renderer(make_curator, qap
     window.close()
 
 
-def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(make_curator, qapp) -> None:
+def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(
+    make_curator, qapp
+) -> None:
     window = make_curator(ConsoleEventStore(), theme=HACKERMAN_95)
     curve = CurveData(
         kind="fr",
@@ -154,8 +159,7 @@ def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(make_c
 
 
 def test_color_dialog_standard_swatches_follow_active_theme_and_background(
-    make_curator,
-    qapp, monkeypatch
+    make_curator, qapp, monkeypatch
 ) -> None:
     standard_colors: dict[int, str] = {}
     opened_palettes: list[dict[int, str]] = []
@@ -271,20 +275,24 @@ def test_dither_curator_variation_median_matches_solid_measure_median(make_curat
     curator_median = next(
         item
         for item in curator._graph._items
-        if isinstance(item, pg.PlotDataItem)
-        and item.opts["pen"].widthF() == pytest.approx(2.2)
+        if isinstance(item, pg.PlotDataItem) and item.opts["pen"].widthF() == pytest.approx(2.2)
     )
 
     measure = DualPlotWidget()
     measure.apply_theme(DITHER)
-    measure.update_curves([], None, variation=(
-        variation.freqs,
-        variation.p10_db,
-        variation.p25_db,
-        variation.p75_db,
-        variation.p90_db,
-        variation.median_db,
-    ), bottom_mode="variation")
+    measure.update_curves(
+        [],
+        None,
+        variation=(
+            variation.freqs,
+            variation.p10_db,
+            variation.p25_db,
+            variation.p75_db,
+            variation.p90_db,
+            variation.median_db,
+        ),
+        bottom_mode="variation",
+    )
     measure_median = measure._bot_extra_items[-1]
 
     assert curator_median.opts["pen"].style() == Qt.PenStyle.SolidLine
@@ -340,17 +348,17 @@ def test_data_rows_expose_inline_layer_controls(make_curator, qapp, tmp_path: Pa
     assert row.name_edit.text() == "Renamed Layer"
 
 
-def test_create_combined_variation_hides_sources_and_disables_hrtf(make_curator, qapp, tmp_path: Path) -> None:
+def test_create_combined_variation_hides_sources_and_disables_hrtf(
+    make_curator, qapp, tmp_path: Path
+) -> None:
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text(
-        "100 0 1 2 3 4\n"
-        "1000 10 11 12 13 14\n",
+        "100 0 1 2 3 4\n1000 10 11 12 13 14\n",
         encoding="utf-8",
     )
     second.write_text(
-        "100 5 6 7 8 9\n"
-        "1000 15 16 17 18 19\n",
+        "100 5 6 7 8 9\n1000 15 16 17 18 19\n",
         encoding="utf-8",
     )
     window = make_curator(ConsoleEventStore())
@@ -380,8 +388,7 @@ def test_combine_button_ignores_fr_layers(make_curator, qapp, tmp_path: Path) ->
     variation = tmp_path / "variation.txt"
     fr = tmp_path / "fr.txt"
     variation.write_text(
-        "100 0 1 2 3 4\n"
-        "1000 10 11 12 13 14\n",
+        "100 0 1 2 3 4\n1000 10 11 12 13 14\n",
         encoding="utf-8",
     )
     fr.write_text("100 1\n1000 2\n", encoding="utf-8")
@@ -469,7 +476,9 @@ def test_view_aspect_toggle_and_reset(make_curator, qapp) -> None:
     assert window.graph_state.show_layer_names is True
 
 
-def test_curator_uses_right_sidebar_and_drop_import(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
+def test_curator_uses_right_sidebar_and_drop_import(
+    make_curator, qapp, tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "drop.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
     unsupported = tmp_path / "ignore.csv"
@@ -481,14 +490,18 @@ def test_curator_uses_right_sidebar_and_drop_import(make_curator, qapp, tmp_path
     class _Mime:
         def urls(self):
             from PyQt6.QtCore import QUrl
+
             return [QUrl.fromLocalFile(str(source)), QUrl.fromLocalFile(str(unsupported))]
 
     class _Drop:
         accepted = False
+
         def mimeData(self):
             return _Mime()
+
         def acceptProposedAction(self):
             self.accepted = True
+
         def ignore(self):
             self.accepted = False
 
@@ -572,7 +585,9 @@ def test_viewport_text_inputs_update_export_text(make_curator, qapp) -> None:
     assert window.graph_state.export_text.notes == ""
 
 
-def test_wipe_runs_for_bounds_and_measurement_changes(make_curator, qapp, tmp_path: Path, monkeypatch) -> None:
+def test_wipe_runs_for_bounds_and_measurement_changes(
+    make_curator, qapp, tmp_path: Path, monkeypatch
+) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     bounds_dir = tmp_path / "Bounds"
     hrtf_dir.mkdir()
@@ -627,8 +642,7 @@ def test_export_graph_image_writes_16_by_9_png(make_curator, qapp, tmp_path: Pat
 
 
 def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
-    make_curator,
-    qapp, tmp_path: Path
+    make_curator, qapp, tmp_path: Path
 ) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
@@ -658,7 +672,9 @@ def test_existing_export_themes_keep_matching_classic_and_retro_flags() -> None:
     assert BRAND_TOKENS.classic_controls is BRAND_TOKENS.retro_graph
 
 
-def test_dither_export_uses_tokens_and_excludes_gold_accent(make_curator, qapp, tmp_path: Path) -> None:
+def test_dither_export_uses_tokens_and_excludes_gold_accent(
+    make_curator, qapp, tmp_path: Path
+) -> None:
     source = tmp_path / "dither-curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
     window = make_curator(ConsoleEventStore(), theme=DITHER)
@@ -691,9 +707,7 @@ def test_dither_export_uses_tokens_and_excludes_gold_accent(make_curator, qapp, 
     window.close()
 
 
-def test_dither_export_masthead_is_filled_with_knocked_out_text(
-    qapp, tmp_path: Path
-) -> None:
+def test_dither_export_masthead_is_filled_with_knocked_out_text(qapp, tmp_path: Path) -> None:
     state = GraphState()
     state.export_text.title = "Test Masthead"
     state.export_text.fixture = "711 Fixture"
@@ -707,17 +721,18 @@ def test_dither_export_masthead_is_filled_with_knocked_out_text(
     assert image.pixelColor(799, 0).name().upper() == block
     assert image.pixelColor(0, 117).name().upper() == block
     assert image.pixelColor(799, 117).name().upper() == block
-    assert sum(
-        image.pixelColor(x, y).rgba() == knockout
-        for y in range(20, 100)
-        for x in range(30, 770)
-    ) > 500
+    assert (
+        sum(
+            image.pixelColor(x, y).rgba() == knockout
+            for y in range(20, 100)
+            for x in range(30, 770)
+        )
+        > 500
+    )
     assert image.pixelColor(100, 124).name().upper() == DITHER_TOKENS.background
 
 
-def test_dither_export_footer_is_square_filled_and_uses_knockout_text(
-    qapp, tmp_path: Path
-) -> None:
+def test_dither_export_footer_is_square_filled_and_uses_knockout_text(qapp, tmp_path: Path) -> None:
     state = GraphState()
     state.export_text.hrtf_note = "Test Fixture"
     state.export_text.notes = ""
@@ -750,9 +765,7 @@ def test_dither_export_footer_is_square_filled_and_uses_knockout_text(
     assert max(y for _x, y in text_pixels) < image.height() - 1
 
 
-def test_dither_export_bounds_density_varies_from_edge_to_center(
-    qapp, tmp_path: Path
-) -> None:
+def test_dither_export_bounds_density_varies_from_edge_to_center(qapp, tmp_path: Path) -> None:
     freqs = np.array([20.0, 20000.0])
     state = GraphState(y_min=-10.0, y_max=10.0)
     state.bounds = PreferenceBounds(
@@ -1020,9 +1033,7 @@ def test_remove_acts_on_every_selected_layer(make_curator, qapp) -> None:
     assert [layer.name for layer in window.graph_state.layers] == ["Third"]
 
 
-def test_remove_falls_back_to_the_focused_row_when_nothing_is_selected(
-    make_curator, qapp
-) -> None:
+def test_remove_falls_back_to_the_focused_row_when_nothing_is_selected(make_curator, qapp) -> None:
     window = make_curator(ConsoleEventStore())
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     window.add_curve(curve, "First", animate=False)
@@ -1094,15 +1105,11 @@ def test_combined_layer_is_marked_stale_when_a_source_changes(make_curator, qapp
     window._set_layer_offset(first.id, 5.0)
 
     assert combined.stale is True
-    row = window._layer_list.itemWidget(
-        window._layer_list.item(len(window.graph_state.layers) - 1)
-    )
+    row = window._layer_list.itemWidget(window._layer_list.item(len(window.graph_state.layers) - 1))
     assert row.findChild(QLabel, "layerStaleBadge") is not None
 
 
-def test_combined_layer_is_marked_stale_when_a_source_is_removed(
-    make_curator, qapp
-) -> None:
+def test_combined_layer_is_marked_stale_when_a_source_is_removed(make_curator, qapp) -> None:
     window = make_curator(ConsoleEventStore())
     first = window.add_curve(_variation_curve(), "First", animate=False, normalize=False)
     second = window.add_curve(_variation_curve(2.0), "Second", animate=False, normalize=False)
@@ -1160,9 +1167,10 @@ def test_layer_row_swatch_uses_the_contrast_corrected_colour(make_curator, qapp)
 
     row = window._layer_list.itemWidget(window._layer_list.item(0))
     assert row.swatch_color.lower() != "#101010"
-    assert row.swatch_color.lower() == ensure_graph_color(
-        "#101010", window.graph_state.background
-    ).name().lower()
+    assert (
+        row.swatch_color.lower()
+        == ensure_graph_color("#101010", window.graph_state.background).name().lower()
+    )
     assert "#242a35" not in row.color_btn.styleSheet()
 
 
@@ -1197,9 +1205,7 @@ def test_import_status_is_error_toned_when_every_file_fails(
     assert loaded == 0
     assert failures
     statuses = [
-        event
-        for event in _curator_events(window)
-        if event.message.startswith("Import failed")
+        event for event in _curator_events(window) if event.message.startswith("Import failed")
     ]
     assert statuses and statuses[-1].severity == "ERROR"
 

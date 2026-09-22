@@ -10,7 +10,6 @@ from urllib.request import urlopen
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QObject, pyqtSignal
 
-
 # The feed decides which URL the app hands to the OS browser. Both ends are
 # constrained: the feed itself must be fetched over TLS, and the release link
 # it advertises must point at this project's own GitHub organisation, so a
@@ -56,9 +55,7 @@ def parse_update_feed(url: str, timeout: float = 3.5) -> UpdateInfo:
     if not version or not release_url:
         raise ValueError("Update feed must contain non-empty 'version' and 'url'.")
     if not is_allowed_release_url(release_url):
-        raise ValueError(
-            f"Update feed release URL must start with {RELEASE_URL_PREFIX}."
-        )
+        raise ValueError(f"Update feed release URL must start with {RELEASE_URL_PREFIX}.")
     return UpdateInfo(latest_version=version, release_url=release_url, summary=summary)
 
 
@@ -96,9 +93,7 @@ class UpdateCheckWorker(QObject):
         try:
             info = parse_update_feed(self._feed_url)
             if is_remote_newer(self._current_version, info.latest_version):
-                self.update_available.emit(
-                    info.latest_version, info.release_url, info.summary
-                )
+                self.update_available.emit(info.latest_version, info.release_url, info.summary)
             else:
                 self.up_to_date.emit(info.latest_version)
         except (ValueError, URLError, TimeoutError, OSError) as exc:

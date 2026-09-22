@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections import deque
 import math
 import threading
+from collections import deque
 
 import numpy as np
 import sounddevice as sd
@@ -120,9 +120,7 @@ class ChannelBalanceEngine(QObject):
             outdata[:, 0] = ramp
             outdata[:, 1] = ramp
             if indata.shape[1] >= 2:
-                self._frames.append(
-                    np.array(indata[:, :2], dtype=np.float32, copy=True)
-                )
+                self._frames.append(np.array(indata[:, :2], dtype=np.float32, copy=True))
             self._previous_block_tail = 0.0
             self._ramp_done.set()
             raise sd.CallbackStop

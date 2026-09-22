@@ -45,7 +45,11 @@ def test_rnd_tab_and_settings_folder_control(tmp_path, make_main_window) -> None
     window = make_main_window()
 
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "R&&D", "Curator", "Automation", "Settings"
+        "Measure",
+        "R&&D",
+        "Curator",
+        "Automation",
+        "Settings",
     ]
     window._settings_widget._rnd_session_dir.setText(str(tmp_path / "sessions"))
     window._settings_widget._rnd_session_dir.editingFinished.emit()
@@ -60,8 +64,7 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> Non
     assert window._rnd_widget._notes_toggle.text() == "Notes"
     assert window._rnd_widget._notes_toggle.objectName() == "section_toggle"
     section_titles = {
-        toggle.text()
-        for toggle in window.findChildren(QToolButton, "section_toggle")
+        toggle.text() for toggle in window.findChildren(QToolButton, "section_toggle")
     }
     assert "Notes" in section_titles
     assert "Devices" not in section_titles
@@ -203,7 +206,9 @@ def test_rnd_dirty_state_ignores_selection_and_tracks_content(make_main_window) 
     assert window._rnd_dirty is True
 
 
-def test_rnd_manual_save_and_load_modes_update_dirty_state(tmp_path, monkeypatch, make_main_window) -> None:
+def test_rnd_manual_save_and_load_modes_update_dirty_state(
+    tmp_path, monkeypatch, make_main_window
+) -> None:
     window = make_main_window()
     window._rnd_widget.add_measurement(_measurement("current", "Current"))
     save_path = tmp_path / "saved.fastgraph-rnd.json"
@@ -255,7 +260,9 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(tmp_path, monkeypatch
     assert window._rnd_dirty is True
 
 
-def test_rnd_manual_save_completes_partial_extension(tmp_path, monkeypatch, make_main_window) -> None:
+def test_rnd_manual_save_completes_partial_extension(
+    tmp_path, monkeypatch, make_main_window
+) -> None:
     window = make_main_window()
     window._rnd_widget.add_measurement(_measurement())
     selected_path = tmp_path / "prototype.fastgraph-rnd"
@@ -442,7 +449,9 @@ def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(make_main_w
 
     assert calls[-1]["top_group_variations"] == []
     assert calls[-1]["top_measurements"] == []
-    assert window._rnd_widget._status_label.text() == "Ready - Var needs 2 measurements: Prototype A"
+    assert (
+        window._rnd_widget._status_label.text() == "Ready - Var needs 2 measurements: Prototype A"
+    )
 
 
 def test_rnd_group_view_2_honours_each_row_checkbox(make_main_window) -> None:
@@ -642,7 +651,10 @@ def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(make_main_windo
 
     assert calls[-1]["delta_mode_active"] is True
     assert calls[-1]["delta_measurements"] == []
-    assert window._rnd_widget._status_label.text() == "Ready - Delta Mode needs at least 2 bottom items"
+    assert (
+        window._rnd_widget._status_label.text()
+        == "Ready - Delta Mode needs at least 2 bottom items"
+    )
 
 
 def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_window) -> None:
@@ -698,8 +710,13 @@ def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_wi
 def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, make_main_window) -> None:
     window = make_main_window()
 
-    assert window._rnd_widget._tree.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
-    assert window._rnd_widget._tree.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert (
+        window._rnd_widget._tree.selectionMode()
+        == QAbstractItemView.SelectionMode.ExtendedSelection
+    )
+    assert (
+        window._rnd_widget._tree.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    )
     assert window._rnd_widget._tree.styleSheet() == ""
     assert "QScrollBar:vertical" in qapp.styleSheet()
     assert "QScrollBar:horizontal" in qapp.styleSheet()
@@ -755,7 +772,9 @@ def test_rnd_default_hrtf_is_applied_to_new_measurements(make_main_window) -> No
     assert window._rnd_widget.session.measurements[0].hrtf_path == "fixture.txt"
 
 
-def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(tmp_path, monkeypatch, make_main_window) -> None:
+def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(
+    tmp_path, monkeypatch, make_main_window
+) -> None:
     hrtf_dir = tmp_path / "HRTFs"
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
@@ -779,7 +798,9 @@ def test_rnd_export_blocks_missing_hrtf(tmp_path, monkeypatch, make_main_window)
     measurement.hrtf_name = "Fixture Gone"
     measurement.hrtf_path = str(tmp_path / "missing" / "Fixture Gone.txt")
     warnings: list[tuple] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args: warnings.append(args))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *args: warnings.append(args)
+    )
 
     window._export_rnd_measurement(measurement, str(tmp_path / "out.txt"))
 
@@ -1022,21 +1043,24 @@ def test_rnd_tree_uses_view_checkboxes_without_show_column(make_main_window) -> 
     window._rnd_widget._sync_tree()
     tree = window._rnd_widget._tree
 
-    assert [
-        tree.headerItem().text(index)
-        for index in range(tree.columnCount())
-    ] == ["Name", "View 1", "View 2", "Var", "Milestone", "Offset", "HRTF"]
+    assert [tree.headerItem().text(index) for index in range(tree.columnCount())] == [
+        "Name",
+        "View 1",
+        "View 2",
+        "Var",
+        "Milestone",
+        "Offset",
+        "HRTF",
+    ]
     assert tree.findChildren(rnd_widget_module.ToggleSwitch) == []
 
     group_item = tree.topLevelItem(0)
     child_item = group_item.child(0)
     group_boxes = {
-        column: tree.itemWidget(group_item, column).findChild(QCheckBox)
-        for column in (1, 2, 3, 4)
+        column: tree.itemWidget(group_item, column).findChild(QCheckBox) for column in (1, 2, 3, 4)
     }
     measurement_boxes = {
-        column: tree.itemWidget(child_item, column).findChild(QCheckBox)
-        for column in (1, 2, 4)
+        column: tree.itemWidget(child_item, column).findChild(QCheckBox) for column in (1, 2, 4)
     }
     assert all(group_boxes.values())
     assert all(measurement_boxes.values())

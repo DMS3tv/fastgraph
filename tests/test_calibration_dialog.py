@@ -15,9 +15,7 @@ def _dialog(qapp, channel: int) -> calibration_dialog.CalibrationDialog:
     )
 
 
-def test_calibration_opens_only_through_selected_channel(
-    qapp, monkeypatch
-) -> None:
+def test_calibration_opens_only_through_selected_channel(qapp, monkeypatch) -> None:
     stream_calls = []
 
     class _FakeInputStream:

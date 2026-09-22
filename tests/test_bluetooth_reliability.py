@@ -29,7 +29,6 @@ from dms.measurement_layout import build_measurement_layout
 from dms.processing import generate_log_sweep
 from dms.recording_dump import load_failed_recording, save_failed_recording
 
-
 FS = 48_000
 
 
@@ -39,7 +38,9 @@ def _headphone(x: np.ndarray) -> np.ndarray:
     return y + lfilter(b, a, y)
 
 
-def _codec(x: np.ndarray, *, lp_hz: float, jitter_ms: float, frame_ms: float = 23.0, seed: int = 3) -> np.ndarray:
+def _codec(
+    x: np.ndarray, *, lp_hz: float, jitter_ms: float, frame_ms: float = 23.0, seed: int = 3
+) -> np.ndarray:
     rng = np.random.default_rng(seed)
     y = sosfilt(butter(4, lp_hz, btype="lowpass", fs=FS, output="sos"), x)
     n = int(round(frame_ms * 1e-3 * FS))
@@ -64,14 +65,16 @@ def _bluetooth_recording(
 ):
     sweep = generate_log_sweep(1.0, FS)
     layout = build_measurement_layout(sweep, FS, 0.2, 1.2, True)
-    excitation = _codec(_headphone(layout.excitation.astype(np.float64)), lp_hz=lp_hz, jitter_ms=jitter_ms)
+    excitation = _codec(
+        _headphone(layout.excitation.astype(np.float64)), lp_hz=lp_hz, jitter_ms=jitter_ms
+    )
     excitation *= 10.0 ** (gain_db / 20.0)
     rng = np.random.default_rng(seed)
     rec = rng.normal(0.0, 10.0 ** (noise_dbfs / 20.0), layout.total_samples + FS // 2)
     start = layout.excitation_start_sample + int(round(latency_ms * 1e-3 * FS))
     segment = excitation.copy()
     segment[: int(round(mute_ms * 1e-3 * FS))] = 0.0
-    rec[start:start + len(segment)] += segment
+    rec[start : start + len(segment)] += segment
     return sweep, layout, rec.astype(np.float32)
 
 
@@ -116,9 +119,7 @@ def test_heavy_codec_degradation_falls_back_to_sweep_with_warning(name: str) -> 
     result = align_recording_to_layout(rec, sweep, layout, _settings())
 
     assert result.diagnostics.alignment_mode == "sweep_fallback"
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     assert result.diagnostics.raw_marker_confidence is not None
     assert result.start.background_confidence > 20.0
     assert result.start.peak_correlation >= 0.10

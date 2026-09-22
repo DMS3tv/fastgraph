@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (
     QStyleOptionButton,
 )
 
-import dms.ui.main_window as main_window_module
 import dms.dither_fonts as dither_fonts
+import dms.ui.main_window as main_window_module
 from dms.theme import (
     DARK,
     DITHER,
@@ -104,12 +104,16 @@ def _resolved_segment_width(button, state: QStyle.StateFlag) -> tuple[int, int]:
     option.initFrom(button)
     option.text = button.text()
     option.state = state
-    required_width = button.style().sizeFromContents(
-        QStyle.ContentsType.CT_PushButton,
-        option,
-        QSize(text_width, metrics.height()),
-        button,
-    ).width()
+    required_width = (
+        button.style()
+        .sizeFromContents(
+            QStyle.ContentsType.CT_PushButton,
+            option,
+            QSize(text_width, metrics.height()),
+            button,
+        )
+        .width()
+    )
     return text_width, required_width
 
 
@@ -208,14 +212,10 @@ def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
                 assert chrome_width > 0, context
                 assert button.width() - text_width > chrome_width, context
                 assert button.minimumWidth() > required_width, context
-            assert (
-                button.sizePolicy().horizontalPolicy()
-                == QSizePolicy.Policy.Fixed
-            )
+            assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
 
     assert (
-        window._measure_submode_control.sizePolicy().horizontalPolicy()
-        == QSizePolicy.Policy.Fixed
+        window._measure_submode_control.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
     )
 
 
@@ -281,10 +281,7 @@ def test_measure_submode_accessibility_and_responsive_width(make_main_window) ->
     assert window._queue_bar_compact is False
 
     window._two_channel_toggle.setChecked(False)
-    assert (
-        window._queue_bar.compact_breakpoint
-        == window._queue_bar._BASE_COMPACT_WIDTH
-    )
+    assert window._queue_bar.compact_breakpoint == window._queue_bar._BASE_COMPACT_WIDTH
 
 
 def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window) -> None:
@@ -304,9 +301,7 @@ def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window
     assert window._active_measure_label() == "R"
     assert window._active_measure_session().channel_side == "R"
     assert window._session.channel_side == ""
-    np.testing.assert_allclose(
-        window._bottom_curve_for_display_and_export()[1], -2.0
-    )
+    np.testing.assert_allclose(window._bottom_curve_for_display_and_export()[1], -2.0)
 
 
 def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main_window) -> None:
@@ -343,10 +338,7 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
     pair_freqs = window._pending_pair.channel_1[0]
     first_reference = float(np.interp(1000.0, pair_freqs, first))
     second_reference = float(np.interp(1000.0, pair_freqs, second))
-    reference_power = (
-        10.0 ** (first_reference / 10.0)
-        + 10.0 ** (second_reference / 10.0)
-    ) / 2.0
+    reference_power = (10.0 ** (first_reference / 10.0) + 10.0 ** (second_reference / 10.0)) / 2.0
     assert 10.0 * np.log10(reference_power) == pytest.approx(0.0, abs=1e-6)
 
 

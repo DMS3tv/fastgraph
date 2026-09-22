@@ -22,8 +22,9 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from dms.file_io import load_json_with_backup
 from dms.measure_session import (
@@ -31,7 +32,6 @@ from dms.measure_session import (
     MeasureSession,
     UnsupportedMeasureSessionVersion,
 )
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -60,9 +60,7 @@ def ensure_measure_session_extension(path: Path | str) -> Path:
     name = path.name
     lower_name = name.lower()
     if lower_name.endswith(MEASURE_SESSION_EXTENSION):
-        return path.with_name(
-            name[: -len(MEASURE_SESSION_EXTENSION)] + MEASURE_SESSION_EXTENSION
-        )
+        return path.with_name(name[: -len(MEASURE_SESSION_EXTENSION)] + MEASURE_SESSION_EXTENSION)
     if lower_name.endswith(".fastgraph-measure"):
         return path.with_name(name + ".json")
     if lower_name.endswith(".json"):

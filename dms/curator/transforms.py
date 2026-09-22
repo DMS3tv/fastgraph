@@ -8,7 +8,6 @@ from scipy.special import erf
 from dms.curator.models import CurveData, LayerState
 from dms.processing import smooth_fractional_octave
 
-
 NORMALIZATION_FREQ_HZ = 1000.0
 COMBINE_GRID_POINTS = 1200
 COMBINE_F_MIN = 20.0
@@ -55,9 +54,7 @@ def normalization_offset_at_1khz_with_warning(
     return -float(np.interp(NORMALIZATION_FREQ_HZ, freqs, values)), None
 
 
-def apply_layer_transform(
-    layer: LayerState, combination: str = "independent"
-) -> CurveData:
+def apply_layer_transform(layer: LayerState, combination: str = "independent") -> CurveData:
     """Compensate one layer. ``combination`` selects how a population HRTF's
     spread is merged with the layer's own - see ``HRTFCurve.apply_to_variation``.
     """
@@ -81,6 +78,7 @@ def apply_layer_transform(
 
 def smooth_curve(curve: CurveData, fraction: int) -> CurveData:
     """Return a smoothed display copy without changing the stored source curve."""
+
     def smooth(values: np.ndarray | None) -> np.ndarray | None:
         if values is None:
             return None
@@ -105,9 +103,7 @@ def visible_display_layers(
     return [
         (
             layer,
-            smooth_curve(
-                apply_layer_transform(layer, combination), smoothing_fraction
-            ),
+            smooth_curve(apply_layer_transform(layer, combination), smoothing_fraction),
         )
         for layer in layers
         if layer.visible
@@ -264,9 +260,7 @@ def _correct_optional(values: np.ndarray | None, correction: np.ndarray) -> np.n
     return values - correction
 
 
-def _apply_variation_hrtf(
-    curve: CurveData, hrtf, combination: str = "independent"
-) -> CurveData:
+def _apply_variation_hrtf(curve: CurveData, hrtf, combination: str = "independent") -> CurveData:
     if curve.kind == "fr" and curve.mag_db is not None:
         p10, p25, median, p75, p90 = hrtf.apply_to_magnitude_as_variation(
             curve.freqs,

@@ -64,8 +64,7 @@ def _standard_hrtf(tmp_path: Path) -> HRTFCurve:
 def _population_hrtf(tmp_path: Path) -> HRTFCurve:
     path = tmp_path / "population.txt"
     path.write_text(
-        "100 1 2 3 4 5\n"
-        "1000 2 3 4 5 6\n",
+        "100 1 2 3 4 5\n1000 2 3 4 5 6\n",
         encoding="utf-8",
     )
     return HRTFCurve(str(path))

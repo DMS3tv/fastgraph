@@ -23,10 +23,7 @@ def test_coded_timing_markers_are_deterministic_and_distinct() -> None:
 
     corr = float(
         np.dot(marker_a_1, marker_b)
-        / (
-            np.sqrt(np.sum(np.square(marker_a_1)))
-            * np.sqrt(np.sum(np.square(marker_b)))
-        )
+        / (np.sqrt(np.sum(np.square(marker_a_1))) * np.sqrt(np.sum(np.square(marker_b))))
     )
     assert abs(corr) < 0.65
 
@@ -49,9 +46,7 @@ def test_non_bluetooth_layout_includes_primer_with_sweep_only_excitation() -> No
     assert layout.primer_gap_samples == int(round(0.24 * fs))
     assert (
         layout.excitation_start_sample
-        == len(layout.wake_primer)
-        + layout.primer_gap_samples
-        + layout.pre_silence_samples
+        == len(layout.wake_primer) + layout.primer_gap_samples + layout.pre_silence_samples
     )
     assert layout.sweep_start_sample == layout.excitation_start_sample
     assert layout.sweep_end_sample == layout.sweep_start_sample + len(sweep)
@@ -66,9 +61,7 @@ def test_non_bluetooth_layout_includes_primer_with_sweep_only_excitation() -> No
     np.testing.assert_array_equal(layout.excitation, sweep)
     assert (
         layout.total_samples
-        == layout.excitation_start_sample
-        + len(layout.excitation)
-        + layout.post_silence_samples
+        == layout.excitation_start_sample + len(layout.excitation) + layout.post_silence_samples
     )
     assert layout.excitation.dtype == np.float32
 
@@ -89,9 +82,7 @@ def test_bluetooth_layout_includes_primer_and_primer_gap() -> None:
     assert layout.primer_gap_samples == int(round(0.24 * fs))
     assert (
         layout.excitation_start_sample
-        == len(layout.wake_primer)
-        + layout.primer_gap_samples
-        + layout.pre_silence_samples
+        == len(layout.wake_primer) + layout.primer_gap_samples + layout.pre_silence_samples
     )
     assert layout.sweep_start_sample > layout.excitation_start_sample
     assert layout.end_marker_gap_samples == int(round(0.12 * fs))
@@ -121,13 +112,13 @@ def test_output_signal_matches_mono_and_stereo_playback_shapes() -> None:
     np.testing.assert_allclose(stereo[:, 0], stereo[:, 1])
     np.testing.assert_allclose(
         stereo[
-            layout.excitation_start_sample:
-            layout.excitation_start_sample + len(layout.excitation),
+            layout.excitation_start_sample : layout.excitation_start_sample
+            + len(layout.excitation),
             0,
         ],
         layout.excitation,
     )
-    assert np.max(np.abs(stereo[:len(layout.wake_primer), 0])) > 0.0
+    assert np.max(np.abs(stereo[: len(layout.wake_primer), 0])) > 0.0
 
 
 def test_standard_output_signal_contains_primer_then_sweep_between_silence() -> None:
@@ -146,12 +137,12 @@ def test_standard_output_signal_contains_primer_then_sweep_between_silence() -> 
     primer_n = len(layout.wake_primer)
     assert np.max(np.abs(out[:primer_n, 0])) > 0.0
     np.testing.assert_allclose(out[:primer_n, 0], layout.wake_primer)
-    assert np.max(np.abs(out[primer_n:layout.sweep_start_sample, 0])) == 0.0
+    assert np.max(np.abs(out[primer_n : layout.sweep_start_sample, 0])) == 0.0
     np.testing.assert_allclose(
-        out[layout.sweep_start_sample:layout.sweep_end_sample, 0],
+        out[layout.sweep_start_sample : layout.sweep_end_sample, 0],
         sweep,
     )
-    assert np.max(np.abs(out[layout.sweep_end_sample:, 0])) == 0.0
+    assert np.max(np.abs(out[layout.sweep_end_sample :, 0])) == 0.0
 
 
 @pytest.mark.parametrize(

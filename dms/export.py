@@ -1,11 +1,10 @@
-from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
 import numpy as np
 
-from dms.session import SessionData
 from dms.hrtf import HRTFCurve
+from dms.session import SessionData
 
 
 def build_filename(
@@ -56,9 +55,9 @@ def export_curve(
     session: SessionData,
     output_path: Path,
     compensated: bool,
-    hrtf: Optional[HRTFCurve] = None,
-    n_sweeps: Optional[int] = None,
-    smoothing_fraction: Optional[int] = None,
+    hrtf: HRTFCurve | None = None,
+    n_sweeps: int | None = None,
+    smoothing_fraction: int | None = None,
     level_mode: str = "ref_1khz",
 ) -> None:
     """Write REW-compatible TXT file.
@@ -110,9 +109,9 @@ def export_variation(
     session: SessionData,
     output_path: Path,
     compensated: bool,
-    hrtf: Optional[HRTFCurve] = None,
-    n_sweeps: Optional[int] = None,
-    smoothing_fraction: Optional[int] = None,
+    hrtf: HRTFCurve | None = None,
+    n_sweeps: int | None = None,
+    smoothing_fraction: int | None = None,
 ) -> None:
     """Write DMS Fastgraph variation-band TXT file."""
     header = session.to_rew_header()
@@ -147,8 +146,6 @@ def export_variation(
         p75_db,
         p90_db,
     ):
-        lines.append(
-            f"{f:.4f}\t{p10:.6f}\t{p25:.6f}\t{median:.6f}\t{p75:.6f}\t{p90:.6f}"
-        )
+        lines.append(f"{f:.4f}\t{p10:.6f}\t{p25:.6f}\t{median:.6f}\t{p75:.6f}\t{p90:.6f}")
 
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

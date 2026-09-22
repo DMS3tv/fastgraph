@@ -133,7 +133,7 @@ def test_sync_remote_phone_book_invalid_fail(monkeypatch) -> None:
             password="p",
             phone_book_stem="Apple AirPods Pro 2 small tips",
         )
-        assert False, "expected RuntimeError"
+        raise AssertionError("expected RuntimeError")
     except RuntimeError as exc:
         assert "canceled" in str(exc).lower()
 
@@ -146,9 +146,7 @@ def test_ensure_upload_metadata_returns_true_when_already_complete() -> None:
 
 
 def test_ensure_upload_metadata_prompts_and_saves_fields(monkeypatch) -> None:
-    fake = SimpleNamespace(
-        _session=SessionData(rig="KB500X", brand="", model="", channel_side="")
-    )
+    fake = SimpleNamespace(_session=SessionData(rig="KB500X", brand="", model="", channel_side=""))
 
     class _DialogAccepted:
         def __init__(self, *_args, **_kwargs):

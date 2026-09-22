@@ -135,9 +135,7 @@ def test_duplicate_copies_the_automation_and_leaves_the_source_alone(
     assert original.id == original_id
     assert copy.id and copy.id != original_id
     assert copy.name == "Round Trip Copy"
-    assert [step.to_dict() for step in copy.steps] == [
-        step.to_dict() for step in original.steps
-    ]
+    assert [step.to_dict() for step in copy.steps] == [step.to_dict() for step in original.steps]
     widget.deleteLater()
 
 

@@ -49,9 +49,12 @@ def test_session_menu_sits_at_the_start_of_the_export_row(make_main_window) -> N
 
     assert row.itemAt(0).widget() is window._session_menu_btn
     assert window._session_menu_btn.property("menuButton") is True
-    assert [
-        action.text() for action in window._session_menu.actions()
-    ] == ["New Session", "Save Session", "Save Session As…", "Load Session…"]
+    assert [action.text() for action in window._session_menu.actions()] == [
+        "New Session",
+        "Save Session",
+        "Save Session As…",
+        "Load Session…",
+    ]
 
 
 def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
@@ -61,10 +64,12 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     hrtf_name = _hrtf_name()
 
     window._kept_curves.extend([_curve(), _curve(1.0)])
-    window._kept_sweep_meta.extend([
-        {"timing_quality": (12.0, 11.0, 2.0, 40.0)},
-        {},
-    ])
+    window._kept_sweep_meta.extend(
+        [
+            {"timing_quality": (12.0, 11.0, 2.0, 40.0)},
+            {},
+        ]
+    )
     window._session = SessionData(rig="Rig 2", brand="Acme", model="Widget")
     window._recompute_average()
     window._hrtf_combo.setCurrentIndex(window._hrtf_combo.findText(hrtf_name))
@@ -85,9 +90,7 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
 
     assert len(other._kept_curves) == 2
     # Arrays serialize rounded to six decimals.
-    np.testing.assert_allclose(
-        other._kept_curves[1][1], window._kept_curves[1][1], atol=1e-5
-    )
+    np.testing.assert_allclose(other._kept_curves[1][1], window._kept_curves[1][1], atol=1e-5)
     assert other._session.brand == "Acme"
     assert other._session.model == "Widget"
     assert other._session.rig == "Rig 2"
@@ -100,13 +103,9 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     assert other._measure_dirty is False
 
 
-def test_two_channel_pairs_survive_a_round_trip(
-    tmp_path, monkeypatch, make_main_window
-) -> None:
+def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main_window) -> None:
     window = make_main_window(settings={"measure_two_channel_enabled": True})
-    window._two_channel_pairs.append(
-        TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(2.0))
-    )
+    window._two_channel_pairs.append(TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(2.0)))
     window._kept_pair_meta.append({})
     window._recompute_two_channel_results()
 
@@ -120,9 +119,7 @@ def test_two_channel_pairs_survive_a_round_trip(
 
     assert other._two_channel_enabled is True
     assert len(other._two_channel_pairs) == 1
-    np.testing.assert_allclose(
-        other._two_channel_pairs[0].channel_2[1], _curve(2.0)[1], atol=1e-5
-    )
+    np.testing.assert_allclose(other._two_channel_pairs[0].channel_2[1], _curve(2.0)[1], atol=1e-5)
 
 
 def test_dirty_flag_and_window_title_track_the_session(
@@ -177,9 +174,7 @@ def test_save_as_asks_before_replacing_another_file(
     assert existing.read_text(encoding="utf-8") == "{}"
 
 
-def test_close_prompt_offers_save_only_while_dirty(
-    tmp_path, monkeypatch, make_main_window
-) -> None:
+def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_main_window) -> None:
     from conftest import REAL_CONFIRM_MEASURE_CLOSE
 
     window = make_main_window()
@@ -205,15 +200,19 @@ def test_close_prompt_offers_save_only_while_dirty(
         def exec(self):
             return answers.pop()
 
-    monkeypatch.setattr(main_window_module, "QMessageBox", type(
-        "QMessageBoxStub",
-        (),
-        {
-            "Icon": main_window_module.QMessageBox.Icon,
-            "StandardButton": main_window_module.QMessageBox.StandardButton,
-            "__new__": lambda cls, *a, **k: _Dialog(),
-        },
-    ))
+    monkeypatch.setattr(
+        main_window_module,
+        "QMessageBox",
+        type(
+            "QMessageBoxStub",
+            (),
+            {
+                "Icon": main_window_module.QMessageBox.Icon,
+                "StandardButton": main_window_module.QMessageBox.StandardButton,
+                "__new__": lambda cls, *a, **k: _Dialog(),
+            },
+        ),
+    )
 
     window._kept_curves.append(_curve())
     window._kept_sweep_meta.append({})
@@ -301,9 +300,7 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
     assert enabled == [True]
 
 
-def test_console_session_commands_save_and_load(
-    tmp_path, make_main_window
-) -> None:
+def test_console_session_commands_save_and_load(tmp_path, make_main_window) -> None:
     window = make_main_window()
     window._kept_curves.append(_curve())
     window._kept_sweep_meta.append({})

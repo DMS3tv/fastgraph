@@ -25,14 +25,16 @@ signals; everything the manager actually does with files is plain Python.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import shutil
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -42,7 +44,6 @@ from dms.measure_session import (
     MeasureSession,
     UnsupportedMeasureSessionVersion,
 )
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -72,17 +73,13 @@ def copy_session_file(source: Path, destination: Path) -> None:
         shutil.copyfile(source, temp_path)
         temp_path.replace(destination)
     finally:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             temp_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def remove_session_file(path: Path) -> None:
-    try:
+    with contextlib.suppress(FileNotFoundError):
         Path(path).unlink()
-    except FileNotFoundError:
-        pass
 
 
 @dataclass(frozen=True)
@@ -145,7 +142,7 @@ class MeasureRecoveryManager(QObject):
 
         self._enabled = False
         self._closing = False
-        self._pending: Optional[dict[str, Any]] = None
+        self._pending: dict[str, Any] | None = None
         self._future: Future | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=1,
@@ -365,9 +362,7 @@ class MeasureRecoveryManager(QObject):
             # Read straight through instead of via ``load_measure_session``:
             # that helper renames a damaged file aside for the user, and here
             # the file has to stay put so it can be quarantined instead.
-            session = MeasureSession.from_dict(
-                json.loads(path.read_text(encoding="utf-8"))
-            )
+            session = MeasureSession.from_dict(json.loads(path.read_text(encoding="utf-8")))
         except UnsupportedMeasureSessionVersion:
             # The file is intact; this build is simply too old to read it.
             return MeasureRecoveryCandidate(
@@ -409,7 +404,5 @@ class MeasureRecoveryManager(QObject):
 
     @staticmethod
     def _remove_empty_parent(path: Path) -> None:
-        try:
+        with contextlib.suppress(OSError):
             path.rmdir()
-        except OSError:
-            pass

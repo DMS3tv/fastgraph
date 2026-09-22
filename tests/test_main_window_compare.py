@@ -45,18 +45,14 @@ def _window_with_target(make_main_window, tmp_path, **kwargs):
 def test_compare_menu_sits_after_the_level_combo(make_main_window) -> None:
     window = make_main_window()
     row = window._plots._between_plots_widget.layout()
-    widgets = [
-        row.itemAt(index).widget() for index in range(row.count())
-    ]
+    widgets = [row.itemAt(index).widget() for index in range(row.count())]
 
     level_index = widgets.index(window._level_mode_combo)
     assert widgets[level_index + 1] is window._compare_menu_btn
     assert widgets[level_index + 2] is window._undo_btn
     assert window._compare_menu_btn.property("menuButton") is True
     assert [
-        action.text()
-        for action in window._compare_menu.actions()
-        if not action.isSeparator()
+        action.text() for action in window._compare_menu.actions() if not action.isSeparator()
     ] == [
         "Load Target…",
         "Clear Target",
@@ -67,9 +63,7 @@ def test_compare_menu_sits_after_the_level_combo(make_main_window) -> None:
     ]
 
 
-def test_loading_a_target_draws_it_and_is_remembered(
-    tmp_path, make_main_window
-) -> None:
+def test_loading_a_target_draws_it_and_is_remembered(tmp_path, make_main_window) -> None:
     window, target = _window_with_target(make_main_window, tmp_path)
 
     assert window._measure_target is not None
@@ -101,9 +95,7 @@ def test_delta_view_swaps_the_bottom_curve(tmp_path, make_main_window) -> None:
         delta_curve[1], plain_average[1]
     )
     # A delta against a tilted target is nothing like the response itself.
-    expected = window._measure_delta_result(
-        window._bottom_curve_for_display_and_export()
-    )
+    expected = window._measure_delta_result(window._bottom_curve_for_display_and_export())
     np.testing.assert_allclose(delta_curve[1], expected.delta_db)
 
     window._delta_view_action.setChecked(False)
@@ -120,9 +112,7 @@ def test_delta_view_needs_a_target(make_main_window) -> None:
         {
             "Icon": main_window_module.QMessageBox.Icon,
             "StandardButton": main_window_module.QMessageBox.StandardButton,
-            "information": staticmethod(
-                lambda *args, **kwargs: seen.append("information")
-            ),
+            "information": staticmethod(lambda *args, **kwargs: seen.append("information")),
         },
     )
     original = main_window_module.QMessageBox
@@ -137,9 +127,7 @@ def test_delta_view_needs_a_target(make_main_window) -> None:
     assert window._delta_view_action.isChecked() is False
 
 
-def test_review_dialog_shows_the_deviation_summary(
-    tmp_path, make_main_window
-) -> None:
+def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
     window._state = AppState.PASS_FAIL
     window._queue_target = 1
@@ -198,9 +186,7 @@ def test_eq_dialog_reports_an_apo_preset(tmp_path, make_main_window) -> None:
         dialog.deleteLater()
 
 
-def test_eq_suggestion_needs_a_target_and_an_average(
-    tmp_path, make_main_window
-) -> None:
+def test_eq_suggestion_needs_a_target_and_an_average(tmp_path, make_main_window) -> None:
     window = make_main_window()
 
     window._open_eq_suggestion()
@@ -225,9 +211,7 @@ def test_reference_layers_draw_and_clear(tmp_path, make_main_window) -> None:
 
     assert len(window._measure_reference_layers) == 3
     assert len(window._plots.single._compare_items) == 3
-    colors = {
-        layer[3] for layer in window._plots.single._reference_layers
-    }
+    colors = {layer[3] for layer in window._plots.single._reference_layers}
     assert len(colors) == 3
 
     # A fourth is refused rather than crowding the viewport.
@@ -253,9 +237,7 @@ def test_reference_layers_draw_and_clear(tmp_path, make_main_window) -> None:
     assert window._plots.single._compare_items == []
 
 
-def test_missing_remembered_target_is_dropped_silently(
-    tmp_path, make_main_window
-) -> None:
+def test_missing_remembered_target_is_dropped_silently(tmp_path, make_main_window) -> None:
     missing = tmp_path / "gone.txt"
     window = make_main_window(settings={"measure_target_path": str(missing)})
 

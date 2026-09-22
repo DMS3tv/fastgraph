@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
-
-from dms import brand_brand
-from dms.hrtf import HRTFCurve
 from uuid import uuid4
 
 import numpy as np
 
+from dms import brand_brand
+from dms.hrtf import HRTFCurve
 
 CurveKind = Literal["fr", "variation"]
 
@@ -27,7 +26,7 @@ class CurveData:
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
-    def shifted(self, amount_db: float) -> "CurveData":
+    def shifted(self, amount_db: float) -> CurveData:
         return replace(
             self,
             mag_db=_shift_optional(self.mag_db, amount_db),

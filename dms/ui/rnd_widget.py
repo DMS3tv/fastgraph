@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from uuid import uuid4
-
 import logging
 import os
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
+from uuid import uuid4
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -21,29 +20,32 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QGroupBox,
-    QHeaderView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QSplitter,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTextEdit,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from dms import brand_brand
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.models import PreferenceBounds
-from dms.ui.modern_button import ModernButton as QPushButton
-from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
-from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.theme_surface import DitherSurface, aperiodic_dither_band_item
-from dms.ui.style_tokens import tokens_for
+from dms.graph_display import (
+    retro_step_group,
+    retro_step_series,
+    stipple_trace_pen,
+    uses_retro_steps,
+)
+from dms.hrtf import HRTFCurve
 from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
@@ -54,14 +56,6 @@ from dms.rnd.models import (
     group_variation,
 )
 from dms.rnd.photos import RnDPhotoStore
-from dms.hrtf import HRTFCurve
-from dms import brand_brand
-from dms.graph_display import (
-    retro_step_group,
-    retro_step_series,
-    stipple_trace_pen,
-    uses_retro_steps,
-)
 from dms.theme import (
     ensure_graph_color,
     brand_theme_colors,
@@ -69,8 +63,13 @@ from dms.theme import (
     theme_colors,
     theme_trace_palette,
 )
-from dms.ui.toggle_switch import ToggleSwitch
+from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
+from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.style_tokens import tokens_for
+from dms.ui.theme_surface import DitherSurface, aperiodic_dither_band_item
+from dms.ui.toggle_switch import ToggleSwitch
 
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 HRTF_DIR = ROOT_DIR / "HRTFs"
@@ -225,11 +224,27 @@ class RnDPlotWidget(QWidget):
         *,
         top_measurements: list[tuple[RnDMeasurement, np.ndarray]],
         pinned_measurements: list[tuple[RnDMeasurement, np.ndarray]],
-        top_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
-        bottom_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
+        top_group_variations: list[
+            tuple[
+                RnDGroup,
+                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            ]
+        ],
+        bottom_group_variations: list[
+            tuple[
+                RnDGroup,
+                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            ]
+        ],
         delta_mode_active: bool = False,
         delta_measurements: list[tuple[RnDMeasurement, np.ndarray, np.ndarray]] | None = None,
-        delta_group_variations: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] | None = None,
+        delta_group_variations: list[
+            tuple[
+                RnDGroup,
+                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            ]
+        ]
+        | None = None,
         preference_bounds: PreferenceBounds | None = None,
         target_curve: tuple[str, np.ndarray, np.ndarray] | None = None,
         review_curve: tuple[np.ndarray, np.ndarray] | None = None,
@@ -372,43 +387,35 @@ class RnDPlotWidget(QWidget):
         outer.setAlpha(55 if not group.milestone else 75)
         inner = QColor(qcolor)
         inner.setAlpha(95 if not group.milestone else 118)
-        upper90 = self._plot_curve(
-            plot, freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0))
-        )
-        lower10 = self._plot_curve(
-            plot, freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0))
-        )
+        upper90 = self._plot_curve(plot, freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        lower10 = self._plot_curve(plot, freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
         fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
         plot.addItem(fill90)
-        upper75 = self._plot_curve(
-            plot, freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0))
-        )
-        lower25 = self._plot_curve(
-            plot, freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0))
-        )
+        upper75 = self._plot_curve(plot, freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        lower25 = self._plot_curve(plot, freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         plot.addItem(fill75)
         glow = QColor(qcolor)
         glow.setAlpha(58)
-        median_glow = self._plot_curve(
-            plot, freqs, median, pen=pg.mkPen(glow, width=7.0)
-        )
+        median_glow = self._plot_curve(plot, freqs, median, pen=pg.mkPen(glow, width=7.0))
         median_item = self._plot_curve(
             plot,
             freqs,
             median,
             pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
         )
-        self._items.extend([
-            upper90,
-            lower10,
-            fill90,
-            upper75,
-            lower25,
-            fill75,
-            median_glow,
-            median_item,
-        ])
+        self._items.extend(
+            [
+                upper90,
+                lower10,
+                fill90,
+                upper75,
+                lower25,
+                fill75,
+                median_glow,
+                median_item,
+            ]
+        )
         return [(freqs, p10), (freqs, p90)]
 
     def _draw_preference_bounds(
@@ -427,9 +434,7 @@ class RnDPlotWidget(QWidget):
             return []
         tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
         if tokens.dither_chrome:
-            display_freqs, display_upper, display_lower = retro_step_group(
-                freqs, (upper, lower)
-            )
+            display_freqs, display_upper, display_lower = retro_step_group(freqs, (upper, lower))
             fill = aperiodic_dither_band_item(
                 np.log10(display_freqs),
                 display_upper,
@@ -442,12 +447,8 @@ class RnDPlotWidget(QWidget):
                 plot.addItem(fill)
                 self._items.append(fill)
             edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
-            upper_item = plot.plot(
-                display_freqs, display_upper, pen=edge_pen, antialias=False
-            )
-            lower_item = plot.plot(
-                display_freqs, display_lower, pen=edge_pen, antialias=False
-            )
+            upper_item = plot.plot(display_freqs, display_upper, pen=edge_pen, antialias=False)
+            lower_item = plot.plot(display_freqs, display_lower, pen=edge_pen, antialias=False)
             self._items.extend([upper_item, lower_item])
             return [(freqs, upper), (freqs, lower)]
         bounds_color = self._display_color("#969696")
@@ -455,12 +456,8 @@ class RnDPlotWidget(QWidget):
         upper_pen.setAlpha(185)
         fill_color = QColor(bounds_color)
         fill_color.setAlpha(102)
-        upper_item = self._plot_curve(
-            plot, freqs, upper, pen=pg.mkPen(upper_pen, width=1.5)
-        )
-        lower_item = self._plot_curve(
-            plot, freqs, lower, pen=pg.mkPen(upper_pen, width=1.5)
-        )
+        upper_item = self._plot_curve(plot, freqs, upper, pen=pg.mkPen(upper_pen, width=1.5))
+        lower_item = self._plot_curve(plot, freqs, lower, pen=pg.mkPen(upper_pen, width=1.5))
         fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(fill_color))
         plot.addItem(fill)
         self._items.extend([upper_item, lower_item, fill])
@@ -479,9 +476,7 @@ class RnDPlotWidget(QWidget):
         glow_color.setAlpha(48)
         line_color = QColor(target_color)
         line_color.setAlpha(225)
-        glow = self._plot_curve(
-            plot, freqs, mag_db, pen=pg.mkPen(glow_color, width=5.0)
-        )
+        glow = self._plot_curve(plot, freqs, mag_db, pen=pg.mkPen(glow_color, width=5.0))
         item = self._plot_curve(
             plot,
             freqs,
@@ -676,10 +671,13 @@ class RnDWidget(QWidget):
         if group is None or not group.variation_enabled:
             return None
         measurements = self.selected_group_measurements()
-        return group_variation([
-            self._with_mag(measurement, self._display_mag(measurement, group))
-            for measurement in measurements
-        ], smoothing_fraction=int(self.session.smoothing_fraction or 48))
+        return group_variation(
+            [
+                self._with_mag(measurement, self._display_mag(measurement, group))
+                for measurement in measurements
+            ],
+            smoothing_fraction=int(self.session.smoothing_fraction or 48),
+        )
 
     def replace_session(self, session: RnDSession) -> None:
         self.session = session
@@ -885,12 +883,8 @@ class RnDWidget(QWidget):
         self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
-        self._tree.itemExpanded.connect(
-            lambda item: self._on_group_expansion_changed(item, True)
-        )
-        self._tree.itemCollapsed.connect(
-            lambda item: self._on_group_expansion_changed(item, False)
-        )
+        self._tree.itemExpanded.connect(lambda item: self._on_group_expansion_changed(item, True))
+        self._tree.itemCollapsed.connect(lambda item: self._on_group_expansion_changed(item, False))
         self._tree.structure_changed.connect(self._on_tree_structure_changed)
         data_layout.addWidget(self._tree, 1)
 
@@ -1061,7 +1055,9 @@ class RnDWidget(QWidget):
         layout.addSpacing(14)
         layout.addWidget(QLabel("Delta Mode"))
         self._delta_mode_toggle = ToggleSwitch()
-        self._delta_mode_toggle.setToolTip("Show bottom viewport curves as deltas from the first bottom item")
+        self._delta_mode_toggle.setToolTip(
+            "Show bottom viewport curves as deltas from the first bottom item"
+        )
         self._delta_mode_toggle.setChecked(self.session.delta_mode_enabled)
         self._delta_mode_toggle.stateChanged.connect(self._on_delta_mode_changed)
         layout.addWidget(self._delta_mode_toggle)
@@ -1076,18 +1072,14 @@ class RnDWidget(QWidget):
         intended_viewport_width = event.size().width() * self._splitter_ratio
         stacked = intended_viewport_width < 1100
         direction = (
-            QBoxLayout.Direction.TopToBottom
-            if stacked
-            else QBoxLayout.Direction.LeftToRight
+            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
         )
         self._top_toolbar_layout.setDirection(direction)
         stretch = 0 if stacked else 1
         self._top_toolbar_layout.setStretch(0, stretch)
         self._top_toolbar_layout.setStretch(1, stretch)
         self._top_toolbar_layout.setAlignment(
-            Qt.AlignmentFlag.AlignTop
-            if stacked
-            else Qt.AlignmentFlag.AlignVCenter
+            Qt.AlignmentFlag.AlignTop if stacked else Qt.AlignmentFlag.AlignVCenter
         )
         self._top_toolbar_layout.invalidate()
         self._top_toolbar.updateGeometry()
@@ -1155,11 +1147,7 @@ class RnDWidget(QWidget):
         # Drops land between rows, never on one: dropping onto an item is what
         # used to nest a group inside a group and empty it.
         item.setFlags(
-            (
-                item.flags()
-                | Qt.ItemFlag.ItemIsEditable
-                | Qt.ItemFlag.ItemIsDragEnabled
-            )
+            (item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled)
             & ~Qt.ItemFlag.ItemIsDropEnabled
         )
         item.setText(1, "")
@@ -1195,13 +1183,17 @@ class RnDWidget(QWidget):
             item.setToolTip(0, group.notes)
         return item
 
-    def _install_measurement_toggles(self, item: QTreeWidgetItem, measurement: RnDMeasurement) -> None:
+    def _install_measurement_toggles(
+        self, item: QTreeWidgetItem, measurement: RnDMeasurement
+    ) -> None:
         self._tree.setItemWidget(
             item,
             1,
             self._checkbox_cell(
                 measurement.top_visible,
-                lambda checked, measurement_id=measurement.id: self._set_measurement_top_visible(measurement_id, checked),
+                lambda checked, measurement_id=measurement.id: self._set_measurement_top_visible(
+                    measurement_id, checked
+                ),
                 "Show this measurement in View 1",
             ),
         )
@@ -1210,7 +1202,9 @@ class RnDWidget(QWidget):
             2,
             self._checkbox_cell(
                 measurement.pinned,
-                lambda checked, measurement_id=measurement.id: self._set_measurement_pinned(measurement_id, checked),
+                lambda checked, measurement_id=measurement.id: self._set_measurement_pinned(
+                    measurement_id, checked
+                ),
                 "Show this measurement in View 2",
             ),
         )
@@ -1219,7 +1213,9 @@ class RnDWidget(QWidget):
             4,
             self._checkbox_cell(
                 measurement.milestone,
-                lambda checked, measurement_id=measurement.id: self._set_measurement_milestone(measurement_id, checked),
+                lambda checked, measurement_id=measurement.id: self._set_measurement_milestone(
+                    measurement_id, checked
+                ),
                 "Mark this measurement as a milestone",
             ),
         )
@@ -1228,7 +1224,9 @@ class RnDWidget(QWidget):
             5,
             self._offset_cell(
                 measurement.vertical_offset_db,
-                lambda value, measurement_id=measurement.id: self._set_measurement_offset(measurement_id, value),
+                lambda value, measurement_id=measurement.id: self._set_measurement_offset(
+                    measurement_id, value
+                ),
             ),
         )
         self._tree.setItemWidget(item, 6, self._hrtf_cell(measurement))
@@ -1448,7 +1446,9 @@ class RnDWidget(QWidget):
         self._redraw()
         self.state_changed.emit()
 
-    def _on_selection_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
+    def _on_selection_changed(
+        self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None
+    ) -> None:
         if self._syncing:
             return
         self.session.selected_id = current.data(0, ROLE_ID) if current is not None else None
@@ -1510,13 +1510,22 @@ class RnDWidget(QWidget):
                 if image.isNull():
                     button.setText("Missing\nphoto")
                 else:
-                    button.setIcon(QIcon(QPixmap.fromImage(image).scaled(
-                        68, 68, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                    )))
+                    button.setIcon(
+                        QIcon(
+                            QPixmap.fromImage(image).scaled(
+                                68,
+                                68,
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation,
+                            )
+                        )
+                    )
                     button.setIconSize(QSize(68, 68))
                 button.setToolTip(photo.caption or photo.display_name)
                 button.setEnabled(not self._busy)
-                button.clicked.connect(lambda _checked=False, selected=photo: self._open_photo(selected))
+                button.clicked.connect(
+                    lambda _checked=False, selected=photo: self._open_photo(selected)
+                )
                 self._photo_strip_layout.addWidget(button)
         self._photo_strip_layout.addStretch(1)
 
@@ -1528,7 +1537,11 @@ class RnDWidget(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.image is None:
             return
         try:
-            photos.append(self.photo_store.add_image(dialog.image, display_name="Webcam photo", caption=dialog.caption))
+            photos.append(
+                self.photo_store.add_image(
+                    dialog.image, display_name="Webcam photo", caption=dialog.caption
+                )
+            )
         except Exception as exc:
             QMessageBox.warning(self, "Photo Capture Failed", str(exc))
             return
@@ -1540,7 +1553,10 @@ class RnDWidget(QWidget):
         if photos is None:
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import R&D Photo", "", "Image Files (*.jpg *.jpeg *.png *.bmp *.webp);;All Files (*)"
+            self,
+            "Import R&D Photo",
+            "",
+            "Image Files (*.jpg *.jpeg *.png *.bmp *.webp);;All Files (*)",
         )
         if not path:
             return
@@ -1558,7 +1574,11 @@ class RnDWidget(QWidget):
             return
         index = photos.index(photo)
         entries = [
-            (QImage(item.runtime_path) if item.runtime_path else None, item.caption, item.display_name)
+            (
+                QImage(item.runtime_path) if item.runtime_path else None,
+                item.caption,
+                item.display_name,
+            )
             for item in photos
         ]
         dialog = PhotoViewerDialog(entries, index, self)
@@ -1688,7 +1708,9 @@ class RnDWidget(QWidget):
         try:
             self._target_enabled.setChecked(self.session.target_visible)
             self._target_offset_spin.setValue(self.session.target_offset_db)
-            has_target = len(self.session.target_freqs) >= 2 and len(self.session.target_mag_db) >= 2
+            has_target = (
+                len(self.session.target_freqs) >= 2 and len(self.session.target_mag_db) >= 2
+            )
             self._target_offset_spin.setEnabled(has_target)
             self._target_label.setText(self.session.target_name or "No target")
             self._target_label.setToolTip(self.session.target_path)
@@ -1912,7 +1934,9 @@ class RnDWidget(QWidget):
                 item_id for item_id in group.measurement_ids if item_id not in selected
             ]
 
-    def _visible_measurements_for_group(self, group_id: str | None, *, top: bool) -> list[tuple[RnDMeasurement, np.ndarray]]:
+    def _visible_measurements_for_group(
+        self, group_id: str | None, *, top: bool
+    ) -> list[tuple[RnDMeasurement, np.ndarray]]:
         if group_id is None:
             ids = self.session.ungrouped_order
             group_visible = True
@@ -1966,8 +1990,7 @@ class RnDWidget(QWidget):
         top_variations = []
         bottom_variations = []
         bottom_items: list[tuple[str, object, object]] = [
-            ("measurement", measurement, (measurement.freqs, mag))
-            for measurement, mag in pinned
+            ("measurement", measurement, (measurement.freqs, mag)) for measurement, mag in pinned
         ]
         for group in self.session.groups:
             group_top = self._visible_measurements_for_group(group.id, top=True)
@@ -2009,7 +2032,11 @@ class RnDWidget(QWidget):
                     for measurement, mag in group_pinned
                 )
         target_curve = None
-        if self.session.target_visible and len(self.session.target_freqs) >= 2 and len(self.session.target_mag_db) >= 2:
+        if (
+            self.session.target_visible
+            and len(self.session.target_freqs) >= 2
+            and len(self.session.target_mag_db) >= 2
+        ):
             target_curve = (
                 self.session.target_name,
                 self.session.target_freqs,
@@ -2019,7 +2046,9 @@ class RnDWidget(QWidget):
         delta_variations = []
         delta_needs_more = False
         if self.session.delta_mode_enabled:
-            delta_measurements, delta_variations, delta_needs_more = self._bottom_delta_items(bottom_items)
+            delta_measurements, delta_variations, delta_needs_more = self._bottom_delta_items(
+                bottom_items
+            )
         self._plots.redraw(
             top_measurements=top,
             pinned_measurements=pinned,
@@ -2028,7 +2057,9 @@ class RnDWidget(QWidget):
             delta_mode_active=bool(self.session.delta_mode_enabled),
             delta_measurements=delta_measurements,
             delta_group_variations=delta_variations,
-            preference_bounds=self._preference_bounds if self.session.preference_bounds_enabled else None,
+            preference_bounds=self._preference_bounds
+            if self.session.preference_bounds_enabled
+            else None,
             target_curve=target_curve,
             review_curve=self._review_curve,
         )
@@ -2054,11 +2085,15 @@ class RnDWidget(QWidget):
         return self._smooth_curve(freqs, mag)
 
     def displayed_group_measurements(self, group: RnDGroup) -> list[RnDMeasurement]:
-        measurements = self.selected_group_measurements() if self.selected_group() is group else [
-            measurement
-            for measurement_id in group.measurement_ids
-            if (measurement := self.session.measurement_by_id(measurement_id)) is not None
-        ]
+        measurements = (
+            self.selected_group_measurements()
+            if self.selected_group() is group
+            else [
+                measurement
+                for measurement_id in group.measurement_ids
+                if (measurement := self.session.measurement_by_id(measurement_id)) is not None
+            ]
+        )
         return [
             self._with_mag(
                 measurement,
@@ -2072,7 +2107,12 @@ class RnDWidget(QWidget):
         items: list[tuple[str, object, object]],
     ) -> tuple[
         list[tuple[RnDMeasurement, np.ndarray, np.ndarray]],
-        list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
+        list[
+            tuple[
+                RnDGroup,
+                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            ]
+        ],
         bool,
     ]:
         if len(items) < 2:
@@ -2080,7 +2120,12 @@ class RnDWidget(QWidget):
         _ref_kind, _ref_owner, ref_curve = items[0]
         ref_freqs, ref_mag = self._delta_reference_curve(ref_curve)
         measurement_deltas: list[tuple[RnDMeasurement, np.ndarray, np.ndarray]] = []
-        variation_deltas: list[tuple[RnDGroup, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = []
+        variation_deltas: list[
+            tuple[
+                RnDGroup,
+                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+            ]
+        ] = []
         for kind, owner, curve in items[1:]:
             if kind == "measurement":
                 freqs, mag = curve
@@ -2089,10 +2134,12 @@ class RnDWidget(QWidget):
             else:
                 freqs, p10, p25, p75, p90, median = curve
                 ref = np.interp(freqs, ref_freqs, ref_mag)
-                variation_deltas.append((
-                    owner,
-                    (freqs, p10 - ref, p25 - ref, p75 - ref, p90 - ref, median - ref),
-                ))
+                variation_deltas.append(
+                    (
+                        owner,
+                        (freqs, p10 - ref, p25 - ref, p75 - ref, p90 - ref, median - ref),
+                    )
+                )
         return measurement_deltas, variation_deltas, False
 
     @staticmethod
@@ -2109,16 +2156,22 @@ class RnDWidget(QWidget):
             return freqs, mag_db
         return smooth_fractional_octave(freqs, mag_db, fraction=fraction)
 
-    def _display_mag(self, measurement: RnDMeasurement, group: RnDGroup | None = None) -> np.ndarray:
+    def _display_mag(
+        self, measurement: RnDMeasurement, group: RnDGroup | None = None
+    ) -> np.ndarray:
         mag = np.array(measurement.mag_db, dtype=float, copy=True)
         hrtf_path = self.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
         if hrtf_path:
             try:
                 mag = cached_hrtf_curve(hrtf_path).apply(measurement.freqs, mag)
             except Exception:
-                self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
+                self._missing_hrtf_names.add(
+                    self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name)
+                )
         elif measurement.hrtf_path or measurement.hrtf_name:
-            self._missing_hrtf_names.add(self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name))
+            self._missing_hrtf_names.add(
+                self._hrtf_label(measurement.hrtf_path, measurement.hrtf_name)
+            )
         offset = float(measurement.vertical_offset_db)
         if group is None:
             parent_id = self.session.parent_group_id(measurement.id)
@@ -2184,7 +2237,9 @@ class RnDWidget(QWidget):
             return label.removeprefix("Missing: ").strip()
         return label
 
-    def _ensure_hrtf_combo_option(self, combo: QComboBox, path: str | None, name: str | None) -> None:
+    def _ensure_hrtf_combo_option(
+        self, combo: QComboBox, path: str | None, name: str | None
+    ) -> None:
         requested_path = str(path or "")
         if not requested_path and not name:
             return
@@ -2250,4 +2305,3 @@ class RnDWidget(QWidget):
         while f"{base} ({index})" in existing:
             index += 1
         return f"{base} ({index})"
-

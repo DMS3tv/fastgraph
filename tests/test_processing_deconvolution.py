@@ -51,9 +51,7 @@ def _record(sweep: np.ndarray, tail_s: float = 0.5) -> np.ndarray:
 
 def _curve(recording: np.ndarray, sweep: np.ndarray, **kwargs):
     """The 600-point normalized curve the application would plot."""
-    freqs, mag_db = compute_frequency_response(
-        recording, sweep, FS, F_LOW, F_HIGH, **kwargs
-    )
+    freqs, mag_db = compute_frequency_response(recording, sweep, FS, F_LOW, F_HIGH, **kwargs)
     # A fixed grid so the windowed and legacy paths — whose first FFT bin
     # inside the band differs — land on exactly the same frequencies.
     return resample_log_band_average(
@@ -115,9 +113,7 @@ def test_harmonic_time_offsets_match_farina_formula() -> None:
     ratio = np.log(F_HIGH / F_LOW)
     assert offsets[1] == 0.0
     for order in (2, 3, 4, 5):
-        assert offsets[order] == pytest.approx(
-            DURATION * np.log(order) / ratio, rel=1e-12
-        )
+        assert offsets[order] == pytest.approx(DURATION * np.log(order) / ratio, rel=1e-12)
     # 2 s over three decades puts H2 about 200 ms before the linear response.
     assert offsets[2] == pytest.approx(0.2007, abs=1e-4)
     assert offsets[2] < offsets[3] < offsets[4] < offsets[5]
@@ -150,9 +146,7 @@ def test_window_post_length_capped_below_second_harmonic_delay() -> None:
 
     window = window_impulse_response(deconv)
 
-    delta_t2 = harmonic_time_offsets(
-        (2,), duration_s=DURATION, f_low=F_LOW, f_high=F_HIGH
-    )[2]
+    delta_t2 = harmonic_time_offsets((2,), duration_s=DURATION, f_low=F_LOW, f_high=F_HIGH)[2]
     expected_post = int(round(0.45 * delta_t2 * FS))
     assert window.size == int(round(0.005 * FS)) + expected_post + 1
     # 1000 ms of tail was available and 300 ms is the hard ceiling, so the
@@ -228,9 +222,7 @@ def test_deconvolution_handles_recording_shorter_than_sweep() -> None:
     truncated = _record(sweep)[: sweep.size // 2]
 
     try:
-        freqs, mag_db = compute_frequency_response(
-            truncated, sweep, FS, F_LOW, F_HIGH
-        )
+        freqs, mag_db = compute_frequency_response(truncated, sweep, FS, F_LOW, F_HIGH)
     except ValueError:
         return  # A clean refusal is an acceptable answer.
 

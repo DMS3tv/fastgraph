@@ -23,9 +23,11 @@ import gc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import contextlib
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent
@@ -33,7 +35,6 @@ from PyQt6.QtWidgets import QApplication
 
 import dms.calibration as calibration_module
 import dms.settings_manager as settings_module
-
 
 _LEAK_WARN_THRESHOLD = 50
 
@@ -130,15 +131,15 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     def _make(
         *,
-        theme: Optional[str] = None,
-        settings: Optional[dict[str, Any]] = None,
-        session: Optional[SessionData] = None,
+        theme: str | None = None,
+        settings: dict[str, Any] | None = None,
+        session: SessionData | None = None,
         stub_devices: bool = True,
         stub_level_monitor: bool = True,
         stub_update_check: bool = True,
         confirm_rnd_close: bool = True,
-        settings_manager: Optional[SettingsManager] = None,
-        theme_controller: Optional[ThemeController] = None,
+        settings_manager: SettingsManager | None = None,
+        theme_controller: ThemeController | None = None,
     ) -> Any:
         if stub_devices:
             monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
@@ -173,9 +174,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # Dropping the last reference lets sip destroy the whole tree together.
     while created:
         window = created.pop()
-        try:
+        with contextlib.suppress(Exception):
             window.close()
-        except Exception:
-            pass
         del window
     flush_deferred_deletes()

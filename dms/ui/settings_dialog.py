@@ -5,18 +5,18 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
-    QFileDialog,
     QMessageBox,
     QRadioButton,
     QVBoxLayout,
     QWidget,
-    QKeySequenceEdit,
 )
 
 from dms.brand_access import verify_brand_password
@@ -222,13 +222,9 @@ class SettingsWidget(QWidget):
         safety_layout = QVBoxLayout(self._safety_group)
         self._confirm_clear = QCheckBox("Confirm before clearing measurements")
         safety_layout.addWidget(self._confirm_clear)
-        self._confirm_clear_metadata = QCheckBox(
-            "Confirm before clearing headphone metadata"
-        )
+        self._confirm_clear_metadata = QCheckBox("Confirm before clearing headphone metadata")
         safety_layout.addWidget(self._confirm_clear_metadata)
-        self._save_failed_recordings = QCheckBox(
-            "Save failed recordings for diagnosis"
-        )
+        self._save_failed_recordings = QCheckBox("Save failed recordings for diagnosis")
         self._save_failed_recordings.setToolTip(
             "When a sweep is rejected, write the raw recording and a JSON sidecar "
             "to the application data folder (failed_recordings). Replay them with "
@@ -324,27 +320,19 @@ class SettingsWidget(QWidget):
         )
         self._latency.currentTextChanged.connect(self._save_latency)
         self._start_conf_min.editingFinished.connect(
-            lambda: self._save(
-                "start_alignment_confidence_min", self._start_conf_min.value()
-            )
+            lambda: self._save("start_alignment_confidence_min", self._start_conf_min.value())
         )
         self._noise_margin_min.editingFinished.connect(
-            lambda: self._save(
-                "sweep_noise_margin_min_db", self._noise_margin_min.value()
-            )
+            lambda: self._save("sweep_noise_margin_min_db", self._noise_margin_min.value())
         )
         self._snr_warn.editingFinished.connect(
             lambda: self._save("snr_warn_db", self._snr_warn.value())
         )
         self._end_conf_min.editingFinished.connect(
-            lambda: self._save(
-                "end_marker_confidence_min", self._end_conf_min.value()
-            )
+            lambda: self._save("end_marker_confidence_min", self._end_conf_min.value())
         )
         self._timing_drift_max_ms.editingFinished.connect(
-            lambda: self._save(
-                "timing_drift_max_ms", self._timing_drift_max_ms.value()
-            )
+            lambda: self._save("timing_drift_max_ms", self._timing_drift_max_ms.value())
         )
         self._confirm_clear.toggled.connect(
             lambda checked: self._save("confirm_clear_measurements", checked)
@@ -372,12 +360,13 @@ class SettingsWidget(QWidget):
         self._brand_mode.toggled.connect(self._on_brand_mode_toggled)
         for theme_key, button in self._theme_buttons.items():
             button.toggled.connect(
-                lambda checked, theme_key=theme_key: checked
-                and self._save("theme", theme_key)
+                lambda checked, theme_key=theme_key: checked and self._save("theme", theme_key)
             )
         for action, edit in self._shortcut_edits.items():
             edit.editingFinished.connect(
-                lambda action=action, edit=edit: self._save_shortcut(action, edit.keySequence().toString())
+                lambda action=action, edit=edit: self._save_shortcut(
+                    action, edit.keySequence().toString()
+                )
             )
         self._calibration_btn.clicked.connect(self.calibration_requested)
         self._test_level_btn.clicked.connect(self.test_level_requested)
@@ -508,19 +497,11 @@ class SettingsWidget(QWidget):
             self._start_conf_min.setValue(
                 float(self._settings.get("start_alignment_confidence_min"))
             )
-            self._noise_margin_min.setValue(
-                float(self._settings.get("sweep_noise_margin_min_db"))
-            )
+            self._noise_margin_min.setValue(float(self._settings.get("sweep_noise_margin_min_db")))
             self._snr_warn.setValue(float(self._settings.get("snr_warn_db")))
-            self._end_conf_min.setValue(
-                float(self._settings.get("end_marker_confidence_min"))
-            )
-            self._timing_drift_max_ms.setValue(
-                float(self._settings.get("timing_drift_max_ms"))
-            )
-            self._confirm_clear.setChecked(
-                bool(self._settings.get("confirm_clear_measurements"))
-            )
+            self._end_conf_min.setValue(float(self._settings.get("end_marker_confidence_min")))
+            self._timing_drift_max_ms.setValue(float(self._settings.get("timing_drift_max_ms")))
+            self._confirm_clear.setChecked(bool(self._settings.get("confirm_clear_measurements")))
             self._confirm_clear_metadata.setChecked(
                 bool(self._settings.get("confirm_clear_metadata"))
             )

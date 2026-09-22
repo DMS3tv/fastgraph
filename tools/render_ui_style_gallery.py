@@ -23,8 +23,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.theme import application_stylesheet, brand_application_stylesheet
 from dms.dither_fonts import configure_dither_typography
+from dms.theme import application_stylesheet, brand_application_stylesheet
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.style_tokens import mode_tokens
@@ -116,9 +116,7 @@ def build_gallery(mode: str) -> QWidget:
     section_header.setCheckable(True)
     section_header.setChecked(True)
     section_header.setArrowType(Qt.ArrowType.DownArrow)
-    section_header.setToolButtonStyle(
-        Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    )
+    section_header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     section_header.setMinimumWidth(320)
     layout.addWidget(section_header)
 
@@ -155,9 +153,7 @@ def build_gallery(mode: str) -> QWidget:
     scroll.setWidget(scroll_content)
     layout.addWidget(scroll)
 
-    status = QLabel(
-        f"Accent {tokens.accent}  |  Button radius {tokens.geometry.radius_button}px"
-    )
+    status = QLabel(f"Accent {tokens.accent}  |  Button radius {tokens.geometry.radius_button}px")
     status.setProperty("typographyRole", "caption")
     status.setAlignment(Qt.AlignmentFlag.AlignRight)
     layout.addWidget(status)
@@ -182,9 +178,7 @@ def main() -> int:
     ):
         app.setProperty("fastgraphVisualMode", mode)
         app.setStyleSheet(
-            brand_application_stylesheet()
-            if mode == "brand"
-            else application_stylesheet(mode)
+            brand_application_stylesheet() if mode == "brand" else application_stylesheet(mode)
         )
         gallery = build_gallery(mode)
         configure_dither_typography(app, mode_tokens(mode).flat_controls)

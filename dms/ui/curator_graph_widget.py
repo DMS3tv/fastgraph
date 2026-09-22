@@ -26,7 +26,6 @@ from dms.theme import (
 from dms.ui.style_tokens import tokens_for
 from dms.ui.theme_surface import aperiodic_dither_band_item
 
-
 FREQ_MIN = 20.0
 FREQ_MAX = 20000.0
 X_RANGE_LEFT_MARGIN = 0.006
@@ -346,12 +345,8 @@ class GraphWidget(LockedPlotWidget):
                 self.addItem(fill)
                 self._items.append(fill)
             edge_pen = pg.mkPen(QColor(tokens.muted), width=1)
-            upper_item = self.plot(
-                freqs, upper_mag, pen=edge_pen, antialias=False
-            )
-            lower_item = self.plot(
-                freqs, lower_mag, pen=edge_pen, antialias=False
-            )
+            upper_item = self.plot(freqs, upper_mag, pen=edge_pen, antialias=False)
+            lower_item = self.plot(freqs, lower_mag, pen=edge_pen, antialias=False)
             self._items.extend([upper_item, lower_item])
             return
         bounds_color = self._display_color("#969696")
@@ -443,7 +438,9 @@ def _has_variation(curve: CurveData) -> bool:
     )
 
 
-def _trim_series(freqs: np.ndarray, values: np.ndarray, progress: float) -> tuple[np.ndarray, np.ndarray]:
+def _trim_series(
+    freqs: np.ndarray, values: np.ndarray, progress: float
+) -> tuple[np.ndarray, np.ndarray]:
     trimmed = _trim_series_group(freqs, (values,), progress)
     return trimmed[0], trimmed[1]
 

@@ -1,10 +1,10 @@
 import pytest
-
 from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
+import dms.dither_fonts as dither_fonts
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
 from dms.theme import (
@@ -20,18 +20,17 @@ from dms.theme import (
     brand_theme_colors,
     theme_colors,
 )
-import dms.dither_fonts as dither_fonts
 from dms.ui.modern_button import ModernButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import (
     DARK_TOKENS,
     DITHER_TOKENS,
+    FASTGRAPH_95_DARK_TOKENS,
+    FASTGRAPH_95_TOKENS,
+    HACKERMAN_95_TOKENS,
     BRAND_TOKENS,
     LIGHT_TOKENS,
-    FASTGRAPH_95_TOKENS,
-    FASTGRAPH_95_DARK_TOKENS,
-    HACKERMAN_95_TOKENS,
     theme_definitions,
     tokens_for,
 )

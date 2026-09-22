@@ -1,10 +1,10 @@
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
 
 from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
-
 
 _DEFAULTS: dict[str, Any] = {
     "settings_schema_version": 2,
@@ -281,10 +281,8 @@ class SettingsManager:
         # settings.json holds the encrypted Squiglink credentials, so it is
         # written owner-only and swapped in atomically: a crash mid-write can
         # no longer truncate the user's saved folders, shortcuts and login.
-        try:
+        with contextlib.suppress(Exception):
             atomic_write_json(self._path, self._data, mode=0o600)
-        except Exception:
-            pass
 
 
 def _config_dir() -> Path:

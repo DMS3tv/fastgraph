@@ -229,7 +229,9 @@ def test_save_as_to_another_session_keeps_that_sessions_photos(tmp_path: Path) -
     existing.measurements[0].photos.append(store.add_image(image, display_name="Pads"))
     destination = tmp_path / "existing.fastgraph-rnd.json"
     save_rnd_session(existing, store, destination)
-    stranger_photo = attachment_directory(destination) / existing.measurements[0].photos[0].file_name
+    stranger_photo = (
+        attachment_directory(destination) / existing.measurements[0].photos[0].file_name
+    )
     assert stranger_photo.is_file()
 
     incoming = _session("Incoming")

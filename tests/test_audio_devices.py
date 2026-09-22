@@ -361,7 +361,5 @@ def test_level_monitor_rejects_invalid_channel(monkeypatch, channel_index) -> No
     )
 
     assert stream_calls == []
-    assert errors == [
-        f"Channel {channel_index} not available on pipewire (ALSA)"
-    ]
+    assert errors == [f"Channel {channel_index} not available on pipewire (ALSA)"]
     assert monitor._running is False

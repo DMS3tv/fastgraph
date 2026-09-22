@@ -3,11 +3,12 @@ Audio engine: device enumeration, level monitoring, sweep play/record.
 Thread-safe; all callbacks communicate via Qt signals.
 """
 
-import time
-import threading
+import contextlib
 import os
+import threading
+import time
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import sounddevice as sd
@@ -20,7 +21,6 @@ from dms.measurement_alignment import (
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
 from dms.recording_dump import save_failed_recording
-
 
 # ---------------------------------------------------------------------------
 # Device helpers
@@ -66,7 +66,7 @@ def _device_descriptor(
     index: int,
     device: dict,
     hostapi_names: dict[int, str],
-    kind: Optional[str] = None,
+    kind: str | None = None,
 ) -> dict[str, Any]:
     hostapi = int(device.get("hostapi", -1))
     descriptor = {
@@ -114,7 +114,7 @@ def _windows_hostapi_rank(hostapi_name: str) -> tuple[int, str]:
 def preferred_windows_hostapi(
     input_devices: list[dict],
     output_devices: list[dict],
-) -> Optional[int]:
+) -> int | None:
     input_hostapis = {int(d.get("hostapi", -1)) for d in input_devices}
     output_hostapis = {int(d.get("hostapi", -1)) for d in output_devices}
     compatible_hostapis = input_hostapis & output_hostapis
@@ -135,15 +135,15 @@ def preferred_windows_hostapi(
     return min(candidates)[1]
 
 
-def filter_devices_by_hostapi(devices: list[dict], hostapi: Optional[int]) -> list[dict]:
+def filter_devices_by_hostapi(devices: list[dict], hostapi: int | None) -> list[dict]:
     if hostapi is None:
         return list(devices)
     return [d for d in devices if int(d.get("hostapi", -1)) == int(hostapi)]
 
 
 def is_compatible_device_pair(
-    input_device: Optional[dict],
-    output_device: Optional[dict],
+    input_device: dict | None,
+    output_device: dict | None,
 ) -> bool:
     if input_device is None or output_device is None:
         return False
@@ -152,7 +152,7 @@ def is_compatible_device_pair(
     return int(input_device.get("hostapi", -1)) == int(output_device.get("hostapi", -1))
 
 
-def device_label(device: dict, duplicates: Optional[set[str]] = None) -> str:
+def device_label(device: dict, duplicates: set[str] | None = None) -> str:
     name = str(device.get("name") or "")
     if duplicates is not None and name not in duplicates:
         return name
@@ -183,8 +183,8 @@ def device_setting(device: dict, kind: str) -> dict[str, Any]:
 def resolve_device_selection(
     selection: Any,
     kind: str,
-    devices: Optional[list[dict]] = None,
-) -> tuple[Optional[dict], bool]:
+    devices: list[dict] | None = None,
+) -> tuple[dict | None, bool]:
     devices = list(devices if devices is not None else _devices_for_kind(kind))
     if selection is None:
         return None, False
@@ -209,15 +209,17 @@ def resolve_device_selection(
                         continue
                     if want_name and str(device["name"]) != want_name:
                         continue
-                    if want_hostapi is not None and int(device.get("hostapi", -1)) != int(want_hostapi):
+                    if want_hostapi is not None and int(device.get("hostapi", -1)) != int(
+                        want_hostapi
+                    ):
                         continue
                     return device, False
 
         if want_name and want_hostapi is not None:
             matches = [
-                d for d in devices
-                if str(d["name"]) == want_name
-                and int(d.get("hostapi", -1)) == int(want_hostapi)
+                d
+                for d in devices
+                if str(d["name"]) == want_name and int(d.get("hostapi", -1)) == int(want_hostapi)
             ]
             if len(matches) == 1:
                 return matches[0], False
@@ -247,12 +249,16 @@ def resolve_device_selection(
     return None, False
 
 
-def device_by_index(index: int, kind: Optional[str] = None) -> Optional[dict]:
+def device_by_index(index: int, kind: str | None = None) -> dict | None:
     try:
-        devices = _devices_for_kind(kind) if kind else [
-            _device_descriptor(idx, d, _hostapi_names())
-            for idx, d in enumerate(sd.query_devices())
-        ]
+        devices = (
+            _devices_for_kind(kind)
+            if kind
+            else [
+                _device_descriptor(idx, d, _hostapi_names())
+                for idx, d in enumerate(sd.query_devices())
+            ]
+        )
         for device in devices:
             if int(device["index"]) == int(index):
                 return device
@@ -261,7 +267,7 @@ def device_by_index(index: int, kind: Optional[str] = None) -> Optional[dict]:
     return None
 
 
-def device_by_name(name: str, kind: Optional[str] = None) -> Optional[dict]:
+def device_by_name(name: str, kind: str | None = None) -> dict | None:
     device, ambiguous = resolve_device_selection(name, kind or "input")
     if ambiguous:
         return None
@@ -295,7 +301,7 @@ LEVEL_EMIT_INTERVAL_MS = 50
 
 def _block_dbfs(block: np.ndarray) -> float:
     """RMS of one mono block in dBFS. Cheap enough for a realtime callback."""
-    rms = float(np.sqrt(np.mean(block ** 2)))
+    rms = float(np.sqrt(np.mean(block**2)))
     if rms <= 0.0:
         return SILENCE_DBFS
     return 20.0 * float(np.log10(rms))
@@ -305,10 +311,10 @@ class LevelMonitor(QObject):
     level_updated = pyqtSignal(float)  # RMS in dBFS (-inf … 0)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._stream: Optional[sd.InputStream] = None
-        self._device: Optional[int] = None
+        self._stream: sd.InputStream | None = None
+        self._device: int | None = None
         self._channel: int = 0
         self._running = False
         self._lock = threading.Lock()
@@ -331,16 +337,12 @@ class LevelMonitor(QObject):
     def _start_emit_timer(self) -> None:
         if QCoreApplication.instance() is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._emit_timer.start()
-        except Exception:
-            pass
 
     def _stop_emit_timer(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._emit_timer.stop()
-        except Exception:
-            pass
 
     def start(
         self,
@@ -367,9 +369,7 @@ class LevelMonitor(QObject):
             if channel_index < 0 or channel_index >= n_ch:
                 with self._lock:
                     self._running = False
-                self.error_occurred.emit(
-                    f"Channel {channel_index} not available on {device_label}"
-                )
+                self.error_occurred.emit(f"Channel {channel_index} not available on {device_label}")
                 return
 
             self._stream = sd.InputStream(
@@ -404,8 +404,7 @@ class LevelMonitor(QObject):
             except Exception:
                 pass
 
-    def _callback(self, indata: np.ndarray, frames: int,
-                  time_info, status) -> None:
+    def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         with self._lock:
             if not self._running:
                 return
@@ -425,9 +424,9 @@ class DualLevelMonitor(QObject):
     levels_updated = pyqtSignal(float, float)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._stream: Optional[sd.InputStream] = None
+        self._stream: sd.InputStream | None = None
         self._running = False
         self._lock = threading.Lock()
         self._latest_pair = (SILENCE_DBFS, SILENCE_DBFS)
@@ -447,16 +446,12 @@ class DualLevelMonitor(QObject):
     def _start_emit_timer(self) -> None:
         if QCoreApplication.instance() is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._emit_timer.start()
-        except Exception:
-            pass
 
     def _stop_emit_timer(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._emit_timer.stop()
-        except Exception:
-            pass
 
     def start(self, device_index: int, device_label: str, fs: int, buffer_size: int) -> None:
         self.stop()
@@ -539,11 +534,11 @@ class _DevicePollWorker(QObject):
     def __init__(self, interval_ms: int, report_initial: bool = False) -> None:
         super().__init__()
         self._interval_ms = int(interval_ms)
-        self._timer: Optional[QTimer] = None
+        self._timer: QTimer | None = None
         self._paused = False
         self._stopped = False
         self._silent_first = not report_initial
-        self._last: Optional[tuple[list, list]] = None
+        self._last: tuple[list, list] | None = None
 
     def set_paused(self, paused: bool) -> None:
         # A single bool assignment; safe to call from the GUI thread.
@@ -601,14 +596,14 @@ class DevicePoller(QObject):
     def __init__(
         self,
         interval_ms: int = DEVICE_POLL_INTERVAL_MS,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
         report_initial: bool = False,
     ) -> None:
         super().__init__(parent)
         self._interval_ms = int(interval_ms)
         self._report_initial = bool(report_initial)
-        self._thread: Optional[QThread] = None
-        self._worker: Optional[_DevicePollWorker] = None
+        self._thread: QThread | None = None
+        self._worker: _DevicePollWorker | None = None
         self._paused = False
         # A QThread that refused to join is never destroyed; deleting a
         # running QThread aborts the process.
@@ -648,10 +643,8 @@ class DevicePoller(QObject):
         self._worker = None
         if worker is not None:
             worker.request_stop()
-            try:
+            with contextlib.suppress(Exception):
                 worker.devices_changed.disconnect(self._on_devices_changed)
-            except Exception:
-                pass
         if thread is None:
             return
         try:
@@ -669,14 +662,17 @@ class DevicePoller(QObject):
 # Sweep worker — runs measurement in background thread
 # ---------------------------------------------------------------------------
 
+
 class SweepWorker(QObject):
-    finished = pyqtSignal(np.ndarray, np.ndarray)   # recording, sweep
+    finished = pyqtSignal(np.ndarray, np.ndarray)  # recording, sweep
     error = pyqtSignal(str)
-    progress = pyqtSignal(float)                     # 0.0 … 1.0
-    timing_quality = pyqtSignal(float, float, float, float)  # start_conf, end_conf, drift_ms, snr_db
+    progress = pyqtSignal(float)  # 0.0 … 1.0
+    timing_quality = pyqtSignal(
+        float, float, float, float
+    )  # start_conf, end_conf, drift_ms, snr_db
     measurement_diagnostics = pyqtSignal(object)
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._abort = threading.Event()
 
@@ -711,14 +707,27 @@ class SweepWorker(QObject):
         self._abort.clear()
         try:
             self._run_inner(
-                sweep, output_device, input_device, input_channel,
-                fs, buffer_size, pre_silence, post_silence, latency,
-                output_device_label, input_device_label,
+                sweep,
+                output_device,
+                input_device,
+                input_channel,
+                fs,
+                buffer_size,
+                pre_silence,
+                post_silence,
+                latency,
+                output_device_label,
+                input_device_label,
                 bluetooth_headphone_mode,
-                start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+                start_alignment_confidence_min,
+                end_marker_confidence_min,
+                timing_drift_max_ms,
                 output_channel,
-                sweep_noise_margin_min_db, snr_warn_db,
-                failed_recording_dir, sweep_f_low, sweep_f_high,
+                sweep_noise_margin_min_db,
+                snr_warn_db,
+                failed_recording_dir,
+                sweep_f_low,
+                sweep_f_high,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -726,10 +735,22 @@ class SweepWorker(QObject):
             self.error.emit(f"Sweep error: {e}")
 
     def _run_inner(
-        self, sweep, output_device, input_device, input_channel,
-        fs, buffer_size, pre_silence, post_silence, latency,
-        output_device_label, input_device_label, bluetooth_headphone_mode,
-        start_alignment_confidence_min, end_marker_confidence_min, timing_drift_max_ms,
+        self,
+        sweep,
+        output_device,
+        input_device,
+        input_channel,
+        fs,
+        buffer_size,
+        pre_silence,
+        post_silence,
+        latency,
+        output_device_label,
+        input_device_label,
+        bluetooth_headphone_mode,
+        start_alignment_confidence_min,
+        end_marker_confidence_min,
+        timing_drift_max_ms,
         output_channel=None,
         sweep_noise_margin_min_db=3.0,
         snr_warn_db=10.0,
@@ -753,16 +774,12 @@ class SweepWorker(QObject):
 
         if input_channel >= n_in_ch:
             self.error.emit(
-                f"Input channel {input_channel} not available "
-                f"(device has {n_in_ch} ch)."
+                f"Input channel {input_channel} not available (device has {n_in_ch} ch)."
             )
             return
-        if output_channel is not None and (
-            output_channel < 0 or output_channel >= n_out_ch
-        ):
+        if output_channel is not None and (output_channel < 0 or output_channel >= n_out_ch):
             self.error.emit(
-                f"Output channel {output_channel} not available "
-                f"(device has {n_out_ch} ch)."
+                f"Output channel {output_channel} not available (device has {n_out_ch} ch)."
             )
             return
 
@@ -803,10 +820,8 @@ class SweepWorker(QObject):
         start = time.monotonic()
         while True:
             if self._abort.is_set():
-                try:
+                with contextlib.suppress(Exception):
                     sd.stop()
-                except Exception:
-                    pass
                 return
             elapsed = time.monotonic() - start
             self.progress.emit(min(elapsed / total_time, 0.99))
@@ -814,10 +829,8 @@ class SweepWorker(QObject):
                 break
             time.sleep(0.05)
 
-        try:
+        with contextlib.suppress(Exception):
             sd.wait()
-        except Exception:
-            pass
 
         self.progress.emit(1.0)
 
@@ -842,7 +855,8 @@ class SweepWorker(QObject):
         except MeasurementAlignmentError as exc:
             diagnostics = replace(exc.diagnostics, buffer_size=int(buffer_size))
             if failed_recording_dir:
-                try:
+                # Diagnostics must never turn a failed sweep into a crash.
+                with contextlib.suppress(Exception):
                     save_failed_recording(
                         failed_recording_dir,
                         rec_mono,
@@ -865,9 +879,6 @@ class SweepWorker(QObject):
                             "buffer_size": int(buffer_size),
                         },
                     )
-                except Exception:
-                    # Diagnostics must never turn a failed sweep into a crash.
-                    pass
             self.measurement_diagnostics.emit(diagnostics)
             self.error.emit(str(exc))
             return

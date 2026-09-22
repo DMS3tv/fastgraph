@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import dms.comparison as comparison
 from dms.comparison import (
     COMMON_GRID,
     DEFAULT_BANDS,
@@ -32,9 +33,6 @@ from dms.comparison import (
 )
 from dms.processing import compute_rms_average
 
-import dms.comparison as comparison
-
-
 GRID = np.asarray(COMMON_GRID, dtype=float)
 
 
@@ -50,6 +48,7 @@ def _flat_delta(values: np.ndarray) -> DeltaResult:
 # ---------------------------------------------------------------------------
 # Target loading
 # ---------------------------------------------------------------------------
+
 
 def test_load_target_two_column_normalizes_at_1khz(tmp_path: Path) -> None:
     path = _write(
@@ -125,6 +124,7 @@ def test_load_target_warns_when_1khz_is_outside_the_file(tmp_path: Path) -> None
 # The common grid
 # ---------------------------------------------------------------------------
 
+
 def test_common_grid_matches_the_rms_average_grid() -> None:
     freqs, _ = compute_rms_average([(np.array([20.0, 20000.0]), np.array([0.0, 0.0]))])
 
@@ -164,6 +164,7 @@ def test_resample_to_common_sorts_unordered_input() -> None:
 # ---------------------------------------------------------------------------
 # Delta
 # ---------------------------------------------------------------------------
+
 
 def test_delta_is_measurement_minus_target() -> None:
     """A measurement 3 dB louder than the target reads +3, not -3."""
@@ -211,10 +212,12 @@ def test_delta_rejects_an_unknown_offset_mode() -> None:
 def test_delta_smoothing_removes_fine_ripple() -> None:
     ripple = 2.0 * np.sin(2.0 * np.pi * np.log2(GRID) * 8.0)  # 1/8-octave period
 
-    rough = delta_curve(GRID, ripple, GRID, np.zeros_like(GRID),
-                        smoothing_fraction=None, offset_mode="none")
-    smooth = delta_curve(GRID, ripple, GRID, np.zeros_like(GRID),
-                         smoothing_fraction=12, offset_mode="none")
+    rough = delta_curve(
+        GRID, ripple, GRID, np.zeros_like(GRID), smoothing_fraction=None, offset_mode="none"
+    )
+    smooth = delta_curve(
+        GRID, ripple, GRID, np.zeros_like(GRID), smoothing_fraction=12, offset_mode="none"
+    )
 
     assert np.max(np.abs(rough.delta_db)) == pytest.approx(2.0, abs=0.05)
     # A 1/12-octave Gaussian leaves about a fifth of a 1/8-octave ripple.
@@ -232,8 +235,9 @@ def test_delta_smoothing_is_linear_over_the_subtraction() -> None:
     measurement = np.cumsum(rng.normal(0.0, 0.05, GRID.size))
     target = 3.0 * np.log10(GRID / 1000.0)
 
-    combined = delta_curve(GRID, measurement, GRID, target,
-                           smoothing_fraction=12, offset_mode="none")
+    combined = delta_curve(
+        GRID, measurement, GRID, target, smoothing_fraction=12, offset_mode="none"
+    )
     from dms.processing import smooth_fractional_octave
 
     _, smooth_measure = smooth_fractional_octave(GRID, measurement, fraction=12)
@@ -245,6 +249,7 @@ def test_delta_smoothing_is_linear_over_the_subtraction() -> None:
 # ---------------------------------------------------------------------------
 # Deviation scoring
 # ---------------------------------------------------------------------------
+
 
 def _shelf_and_dip() -> np.ndarray:
     """+6 dB below 200 Hz, -3 dB from 2 kHz to 10 kHz, flat elsewhere."""
@@ -289,9 +294,7 @@ def test_match_percent_falls_as_deviation_grows() -> None:
     assert small.match_percent < perfect.match_percent
     assert large.match_percent < small.match_percent
     # The heuristic: 10 points per dB of overall RMS deviation.
-    assert small.match_percent == pytest.approx(
-        100.0 - 10.0 * small.overall_rms_db, abs=1e-9
-    )
+    assert small.match_percent == pytest.approx(100.0 - 10.0 * small.overall_rms_db, abs=1e-9)
 
 
 def test_match_percent_is_clamped_to_zero() -> None:
@@ -324,6 +327,7 @@ def test_format_deviation_summary_has_one_line_per_band() -> None:
 # ---------------------------------------------------------------------------
 # EQ suggestion
 # ---------------------------------------------------------------------------
+
 
 def test_eq_recovers_a_known_single_filter() -> None:
     known = PeakingFilter(freq_hz=3000.0, gain_db=5.0, q=2.0)
@@ -485,6 +489,7 @@ def test_format_eq_table_says_so_when_nothing_is_suggested() -> None:
 # A/B reference layers
 # ---------------------------------------------------------------------------
 
+
 def test_load_reference_from_txt(tmp_path: Path) -> None:
     path = _write(tmp_path / "Sennheiser HD600.txt", "20\t9\n1000\t4\n20000\t1\n")
 
@@ -519,7 +524,7 @@ def _measure_session_payload() -> dict:
 
 
 #: Power mean of 0 dB and 6 dB.
-_POWER_MEAN_0_AND_6 = 10.0 * np.log10((1.0 + 10.0 ** 0.6) / 2.0)
+_POWER_MEAN_0_AND_6 = 10.0 * np.log10((1.0 + 10.0**0.6) / 2.0)
 
 
 def test_load_reference_from_measure_session(tmp_path: Path) -> None:
@@ -566,6 +571,7 @@ def test_load_reference_from_measure_session_rejects_an_empty_session(
 # ---------------------------------------------------------------------------
 # End to end
 # ---------------------------------------------------------------------------
+
 
 def test_measurement_against_target_scores_and_corrects(tmp_path: Path) -> None:
     """A file-loaded target, a synthetic measurement, and the whole pipeline."""

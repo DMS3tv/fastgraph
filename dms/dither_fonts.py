@@ -8,7 +8,6 @@ from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QGroupBox, QTabBar, QWidget
 
-
 HEADING_FAMILY = "DIN Condensed"
 HEADING_FALLBACKS = (
     "DIN Condensed",

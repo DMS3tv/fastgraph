@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class QueueState(str, Enum):
@@ -95,7 +95,7 @@ class QueueDecision:
     message: str = ""
     #: For :attr:`Effect.PROMPT_RETRY`: the 1-based number of the attempt the
     #: operator is being offered, i.e. the "X" in "Retry attempt X of 3".
-    retry_attempt: Optional[int] = None
+    retry_attempt: int | None = None
     #: For :attr:`Effect.PROMPT_RETRY`: whether the retry re-measures a whole
     #: two-channel pair rather than a single sweep.
     retry_is_pair: bool = False
@@ -137,7 +137,7 @@ class MeasurementQueue:
     pending_pair_first_raw: Any = None
     pending_pair_first_diagnostics: Any = None
 
-    last_timing_quality: Optional[tuple[float, float, float, float]] = None
+    last_timing_quality: tuple[float, float, float, float] | None = None
     last_diagnostics: Any = None
     last_distortion: Any = None
 
@@ -250,7 +250,7 @@ class MeasurementQueue:
         *,
         curve: Any,
         diagnostics: Any = None,
-        timing: Optional[tuple[float, float, float, float]] = None,
+        timing: tuple[float, float, float, float] | None = None,
     ) -> QueueDecision:
         """Accept one processed sweep result.
 
@@ -318,14 +318,8 @@ class MeasurementQueue:
         ``f"Retry attempt {self._current_sweep_attempts + 1} of
         {_MAX_SWEEP_ATTEMPTS}?"`` in ``_on_sweep_error``.
         """
-        retryable = bool(timing_failure) or (
-            self.two_channel and not bool(device_failure)
-        )
-        if (
-            self.is_active()
-            and retryable
-            and self.attempts < self.max_attempts
-        ):
+        retryable = bool(timing_failure) or (self.two_channel and not bool(device_failure))
+        if self.is_active() and retryable and self.attempts < self.max_attempts:
             retry_is_pair = self.two_channel
             self.reset(keep_counters=True)
             self.state = QueueState.QUEUE_RUNNING

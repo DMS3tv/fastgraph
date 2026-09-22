@@ -21,9 +21,7 @@ from dms.ui.main_window import AppState, MainWindow
 
 
 def _automation_window(make_main_window, tmp_path: Path):
-    return make_main_window(
-        settings={"automation_directory": str(tmp_path / "automations")}
-    )
+    return make_main_window(settings={"automation_directory": str(tmp_path / "automations")})
 
 
 def test_automation_round_trip_and_schema_validation(tmp_path: Path) -> None:
@@ -77,12 +75,18 @@ def test_automation_tab_splitter_and_library(make_main_window, tmp_path: Path) -
     window = _automation_window(make_main_window, tmp_path)
 
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "R&&D", "Curator", "Automation", "Settings"
+        "Measure",
+        "R&&D",
+        "Curator",
+        "Automation",
+        "Settings",
     ]
     assert isinstance(window._automation_widget, AutomationWidget)
     assert window._automation_widget.splitter.count() == 2
     assert window._automation_widget.guide_button.objectName() == "btn_danger"
-    run_buttons = window._automation_widget.events.findChildren(type(window._automation_widget.guide_button), "btn_export")
+    run_buttons = window._automation_widget.events.findChildren(
+        type(window._automation_widget.guide_button), "btn_export"
+    )
     assert any(button.text() == "Run" for button in run_buttons)
     assert window._automation_widget.left_stack.currentWidget() is window._automation_widget.console
     window._automation_widget.guide_button.click()
@@ -95,7 +99,9 @@ def test_automation_tab_splitter_and_library(make_main_window, tmp_path: Path) -
     assert window._settings_widget._automation_dir.text() == str(tmp_path / "automations")
 
 
-def test_manual_automation_switches_tabs_and_runs_console_command(make_main_window, tmp_path: Path) -> None:
+def test_manual_automation_switches_tabs_and_runs_console_command(
+    make_main_window, tmp_path: Path
+) -> None:
     window = _automation_window(make_main_window, tmp_path)
     automation = AutomationDefinition(
         name="Manual",
@@ -112,7 +118,9 @@ def test_manual_automation_switches_tabs_and_runs_console_command(make_main_wind
     assert any("State:" in event.message for event in window._console_events.events())
 
 
-def test_manual_automation_switches_input_device_and_channel(make_main_window, tmp_path: Path) -> None:
+def test_manual_automation_switches_input_device_and_channel(
+    make_main_window, tmp_path: Path
+) -> None:
     window = _automation_window(make_main_window, tmp_path)
     window._state = AppState.IDLE
     window._input_devices_by_index = {
@@ -190,8 +198,9 @@ def test_console_command_steps_are_treated_as_risky(make_main_window, tmp_path: 
         asked.append(text)
         return QMessageBox.StandardButton.No
 
-    with patch.object(main_window_module.QMessageBox, "question", refuse), patch.object(
-        main_window_module.QMessageBox, "warning", lambda *a, **k: None
+    with (
+        patch.object(main_window_module.QMessageBox, "question", refuse),
+        patch.object(main_window_module.QMessageBox, "warning", lambda *a, **k: None),
     ):
         window._run_automation(automation)
 

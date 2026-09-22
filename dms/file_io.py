@@ -19,12 +19,12 @@ is the general-purpose version for the small configuration stores.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
 
 __all__ = [
     "atomic_write_json",
@@ -54,11 +54,9 @@ def _fsync_directory(directory: Path) -> None:
 def _apply_mode(path: Path, mode: int | None) -> None:
     if mode is None:
         return
-    try:
+    # Windows and some network filesystems do not implement POSIX modes.
+    with contextlib.suppress(OSError, NotImplementedError):
         os.chmod(path, mode)
-    except (OSError, NotImplementedError):
-        # Windows and some network filesystems do not implement POSIX modes.
-        pass
 
 
 def atomic_write_text(

@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 import sounddevice as sd
-from dms import channel_balance
 
+from dms import channel_balance
 from dms.channel_balance import (
     ChannelBalanceEngine,
     db_to_gain,

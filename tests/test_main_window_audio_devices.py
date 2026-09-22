@@ -1,8 +1,7 @@
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
 
-from dms.ui.main_window import MainWindow
-from dms.ui.main_window import AppState
 from dms import audio_engine
+from dms.ui.main_window import AppState, MainWindow
 
 
 class _Settings:
@@ -127,7 +126,7 @@ def _devices():
             "hostapi_name": "Windows WDM-KS",
             "max_input_channels": 0,
             "max_output_channels": 2,
-        }
+        },
     ]
     inputs = [
         {
@@ -308,7 +307,9 @@ def test_windows_mismatched_backends_block_queue_start(qapp, monkeypatch) -> Non
     assert harness.start_next_sweep_count == 0
 
 
-def test_windows_default_non_bluetooth_latency_is_high_until_user_override(qapp, monkeypatch) -> None:
+def test_windows_default_non_bluetooth_latency_is_high_until_user_override(
+    qapp, monkeypatch
+) -> None:
     settings = _Settings(
         {
             "latency": "low",

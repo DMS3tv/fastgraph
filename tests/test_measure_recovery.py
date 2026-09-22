@@ -31,9 +31,7 @@ def _session(model: str = "First", two_channel: bool = False) -> MeasureSession:
     )
     session.add_sweep(*_curve(), note=model)
     if two_channel:
-        session.add_pair(
-            TwoChannelCurvePair(channel_1=_curve(1.0), channel_2=_curve(-1.0))
-        )
+        session.add_pair(TwoChannelCurvePair(channel_1=_curve(1.0), channel_2=_curve(-1.0)))
     return session
 
 

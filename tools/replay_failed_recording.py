@@ -39,9 +39,7 @@ from dms.recording_dump import load_failed_recording  # noqa: E402
 def settings_from_payload(payload: dict) -> AlignmentSettings:
     stored = dict(payload.get("alignment_settings") or {})
     known = {
-        name: stored[name]
-        for name in AlignmentSettings.__dataclass_fields__
-        if name in stored
+        name: stored[name] for name in AlignmentSettings.__dataclass_fields__ if name in stored
     }
     return AlignmentSettings(**known)
 

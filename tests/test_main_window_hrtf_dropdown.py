@@ -2,7 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel
 
 import dms.ui.main_window as main_window_module

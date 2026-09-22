@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtTest import QTest
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QGroupBox, QToolButton
 
 from dms.curator.transforms import apply_layer_transform
@@ -21,7 +21,11 @@ def _window(make_main_window):
 def test_curator_is_middle_tab(make_main_window) -> None:
     window = _window(make_main_window)
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
-        "Measure", "R&&D", "Curator", "Automation", "Settings"
+        "Measure",
+        "R&&D",
+        "Curator",
+        "Automation",
+        "Settings",
     ]
     assert window._queue_level_persist_toggle.minimumSizeHint().width() >= 54
 
@@ -95,9 +99,7 @@ def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(make_main_window)
     assert window._queue_progress_bar.parent() is window._queue_progress_widget
 
 
-def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(
-    qapp,
-    make_main_window) -> None:
+def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_main_window) -> None:
     window = _window(make_main_window)
     window.resize(1280, 800)
     window.show()
@@ -293,7 +295,9 @@ def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> No
     assert window._settings.get("confirm_clear_measurements") is True
 
 
-def test_send_average_offsets_display_and_preserves_editable_hrtf(make_main_window, tmp_path: Path) -> None:
+def test_send_average_offsets_display_and_preserves_editable_hrtf(
+    make_main_window, tmp_path: Path
+) -> None:
     window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n10000 3\n", encoding="utf-8")
@@ -325,7 +329,9 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(make_main_wind
     assert not np.allclose(layer.curve.mag_db, source_mag)
 
 
-def test_send_variation_offsets_display_with_editable_hrtf(make_main_window, tmp_path: Path) -> None:
+def test_send_variation_offsets_display_with_editable_hrtf(
+    make_main_window, tmp_path: Path
+) -> None:
     window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
@@ -344,7 +350,13 @@ def test_send_variation_offsets_display_with_editable_hrtf(make_main_window, tmp
     assert layer.name == "DMS Demo COMP VAR"
     median_offset = -float(np.interp(1000.0, freqs, expected[-1]))
     for actual, wanted in zip(
-        (displayed.p10_db, displayed.p25_db, displayed.p75_db, displayed.p90_db, displayed.median_db),
+        (
+            displayed.p10_db,
+            displayed.p25_db,
+            displayed.p75_db,
+            displayed.p90_db,
+            displayed.median_db,
+        ),
         expected,
     ):
         assert np.allclose(actual, wanted + median_offset)
@@ -363,8 +375,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     window = _window(make_main_window)
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
-        "100 1 2 3 4 5\n"
-        "1000 10 20 30 40 50\n",
+        "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
         encoding="utf-8",
     )
     window._hrtf = HRTFCurve(str(hrtf_path))
@@ -423,7 +434,9 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_
     assert len(window._curator_widget._graph._items) > 3
 
 
-def test_curator_console_commands_update_workspace_and_log(make_main_window, tmp_path: Path) -> None:
+def test_curator_console_commands_update_workspace_and_log(
+    make_main_window, tmp_path: Path
+) -> None:
     window = _window(make_main_window)
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")

@@ -157,9 +157,7 @@ def test_settings_manager_reports_a_corrupt_file_and_keeps_a_backup(
     assert json.loads((tmp_path / "settings.json").read_text())["sample_rate"] == 44100
 
 
-def test_settings_manager_has_no_load_error_for_a_healthy_file(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_settings_manager_has_no_load_error_for_a_healthy_file(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     SettingsManager().set("theme", "light")
     reloaded = SettingsManager()

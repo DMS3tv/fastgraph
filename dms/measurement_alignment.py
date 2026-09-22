@@ -7,7 +7,6 @@ behavior can be characterized with synthetic Bluetooth-like recordings.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -60,7 +59,7 @@ class MeasurementWarningReason:
 class StartAlignmentResult:
     selected_sweep_start: int
     sweep_correlation_candidate: int
-    marker_locked_candidate: Optional[int]
+    marker_locked_candidate: int | None
     start_confidence: float
     start_marker_confidence: float
     # Peak-to-background confidence of the sweep correlation. This is the
@@ -93,10 +92,10 @@ class EndMarkerResult:
     timing_error_samples: int
     timing_error_ms: float
     spacing_error_samples: int
-    raw_marker_confidence: Optional[float] = None
-    marker_agreement: Optional[float] = None
-    marker_identity_ratio: Optional[float] = None
-    marker_template_stretch: Optional[float] = None
+    raw_marker_confidence: float | None = None
+    marker_agreement: float | None = None
+    marker_identity_ratio: float | None = None
+    marker_template_stretch: float | None = None
 
 
 @dataclass(frozen=True)
@@ -107,35 +106,35 @@ class MeasurementDiagnostics:
     start_alignment_confidence_min: float
     end_marker_confidence_min: float
     timing_drift_max_ms: float
-    selected_sweep_start: Optional[int] = None
-    sweep_correlation_candidate: Optional[int] = None
-    marker_locked_candidate: Optional[int] = None
-    start_confidence: Optional[float] = None
-    start_marker_confidence: Optional[float] = None
-    marker_1_start: Optional[int] = None
-    marker_2_start: Optional[int] = None
-    marker_confidence: Optional[float] = None
-    timing_error_samples: Optional[int] = None
-    timing_error_ms: Optional[float] = None
-    spacing_error_samples: Optional[int] = None
-    raw_marker_confidence: Optional[float] = None
-    marker_agreement: Optional[float] = None
-    marker_identity_ratio: Optional[float] = None
-    marker_template_stretch: Optional[float] = None
-    snr_db: Optional[float] = None
-    failure_reason: Optional[str] = None
-    failure_message: Optional[str] = None
-    warning_reason: Optional[str] = None
-    warning_message: Optional[str] = None
-    buffer_size: Optional[int] = None
-    alignment_mode: Optional[str] = None
-    marker_failure_reason: Optional[str] = None
-    peak_correlation: Optional[float] = None
-    start_background_confidence: Optional[float] = None
-    start_nextbest_confidence: Optional[float] = None
-    midband_margin_db: Optional[float] = None
-    coverage_db: Optional[tuple[float, ...]] = None
-    sweep_noise_margin_min_db: Optional[float] = None
+    selected_sweep_start: int | None = None
+    sweep_correlation_candidate: int | None = None
+    marker_locked_candidate: int | None = None
+    start_confidence: float | None = None
+    start_marker_confidence: float | None = None
+    marker_1_start: int | None = None
+    marker_2_start: int | None = None
+    marker_confidence: float | None = None
+    timing_error_samples: int | None = None
+    timing_error_ms: float | None = None
+    spacing_error_samples: int | None = None
+    raw_marker_confidence: float | None = None
+    marker_agreement: float | None = None
+    marker_identity_ratio: float | None = None
+    marker_template_stretch: float | None = None
+    snr_db: float | None = None
+    failure_reason: str | None = None
+    failure_message: str | None = None
+    warning_reason: str | None = None
+    warning_message: str | None = None
+    buffer_size: int | None = None
+    alignment_mode: str | None = None
+    marker_failure_reason: str | None = None
+    peak_correlation: float | None = None
+    start_background_confidence: float | None = None
+    start_nextbest_confidence: float | None = None
+    midband_margin_db: float | None = None
+    coverage_db: tuple[float, ...] | None = None
+    sweep_noise_margin_min_db: float | None = None
 
 
 class MeasurementAlignmentError(ValueError):
@@ -187,16 +186,16 @@ _MARKER_MIN_IDENTITY_RATIO = 1.02
 def _diagnostics_from_results(
     layout: MeasurementSignalLayout,
     settings: AlignmentSettings,
-    start: Optional[StartAlignmentResult] = None,
-    end: Optional[EndMarkerResult] = None,
-    snr_db: Optional[float] = None,
-    failure_reason: Optional[str] = None,
-    failure_message: Optional[str] = None,
-    warning_reason: Optional[str] = None,
-    warning_message: Optional[str] = None,
-    alignment_mode: Optional[str] = None,
-    marker_failure_reason: Optional[str] = None,
-    integrity: Optional[SweepIntegrity] = None,
+    start: StartAlignmentResult | None = None,
+    end: EndMarkerResult | None = None,
+    snr_db: float | None = None,
+    failure_reason: str | None = None,
+    failure_message: str | None = None,
+    warning_reason: str | None = None,
+    warning_message: str | None = None,
+    alignment_mode: str | None = None,
+    marker_failure_reason: str | None = None,
+    integrity: SweepIntegrity | None = None,
 ) -> MeasurementDiagnostics:
     selected_sweep_start = None
     if end is not None:
@@ -211,42 +210,26 @@ def _diagnostics_from_results(
         fs=int(layout.fs),
         bluetooth_headphone_mode=bool(settings.bluetooth_headphone_mode),
         latency=str(settings.latency),
-        start_alignment_confidence_min=float(
-            settings.start_alignment_confidence_min
-        ),
+        start_alignment_confidence_min=float(settings.start_alignment_confidence_min),
         end_marker_confidence_min=float(settings.end_marker_confidence_min),
         timing_drift_max_ms=float(settings.timing_drift_max_ms),
         selected_sweep_start=selected_sweep_start,
         sweep_correlation_candidate=(
             start.sweep_correlation_candidate if start is not None else None
         ),
-        marker_locked_candidate=(
-            start.marker_locked_candidate if start is not None else None
-        ),
+        marker_locked_candidate=(start.marker_locked_candidate if start is not None else None),
         start_confidence=start.start_confidence if start is not None else None,
-        start_marker_confidence=(
-            start.start_marker_confidence if start is not None else None
-        ),
+        start_marker_confidence=(start.start_marker_confidence if start is not None else None),
         marker_1_start=end.marker_1_start if end is not None else None,
         marker_2_start=end.marker_2_start if end is not None else None,
         marker_confidence=end.marker_confidence if end is not None else None,
-        timing_error_samples=(
-            end.timing_error_samples if end is not None else None
-        ),
+        timing_error_samples=(end.timing_error_samples if end is not None else None),
         timing_error_ms=end.timing_error_ms if end is not None else None,
-        spacing_error_samples=(
-            end.spacing_error_samples if end is not None else None
-        ),
-        raw_marker_confidence=(
-            end.raw_marker_confidence if end is not None else None
-        ),
+        spacing_error_samples=(end.spacing_error_samples if end is not None else None),
+        raw_marker_confidence=(end.raw_marker_confidence if end is not None else None),
         marker_agreement=end.marker_agreement if end is not None else None,
-        marker_identity_ratio=(
-            end.marker_identity_ratio if end is not None else None
-        ),
-        marker_template_stretch=(
-            end.marker_template_stretch if end is not None else None
-        ),
+        marker_identity_ratio=(end.marker_identity_ratio if end is not None else None),
+        marker_template_stretch=(end.marker_template_stretch if end is not None else None),
         snr_db=snr_db,
         failure_reason=failure_reason,
         failure_message=failure_message,
@@ -254,22 +237,14 @@ def _diagnostics_from_results(
         warning_message=warning_message,
         alignment_mode=alignment_mode,
         marker_failure_reason=marker_failure_reason,
-        peak_correlation=(
-            float(start.peak_correlation) if start is not None else None
-        ),
+        peak_correlation=(float(start.peak_correlation) if start is not None else None),
         start_background_confidence=(
             float(start.background_confidence) if start is not None else None
         ),
-        start_nextbest_confidence=(
-            float(start.nextbest_confidence) if start is not None else None
-        ),
-        midband_margin_db=(
-            float(integrity.midband_margin_db) if integrity is not None else None
-        ),
+        start_nextbest_confidence=(float(start.nextbest_confidence) if start is not None else None),
+        midband_margin_db=(float(integrity.midband_margin_db) if integrity is not None else None),
         coverage_db=(
-            tuple(float(v) for v in integrity.coverage_db)
-            if integrity is not None
-            else None
+            tuple(float(v) for v in integrity.coverage_db) if integrity is not None else None
         ),
         sweep_noise_margin_min_db=float(settings.sweep_noise_margin_min_db),
     )
@@ -280,10 +255,10 @@ def _raise_alignment_error(
     reason: str,
     layout: MeasurementSignalLayout,
     settings: AlignmentSettings,
-    start: Optional[StartAlignmentResult] = None,
-    end: Optional[EndMarkerResult] = None,
-    snr_db: Optional[float] = None,
-    integrity: Optional[SweepIntegrity] = None,
+    start: StartAlignmentResult | None = None,
+    end: EndMarkerResult | None = None,
+    snr_db: float | None = None,
+    integrity: SweepIntegrity | None = None,
 ) -> None:
     raise MeasurementAlignmentError(
         message,
@@ -302,10 +277,10 @@ def _raise_alignment_error(
 
 
 def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
-    def fmt_int(value: Optional[int]) -> str:
+    def fmt_int(value: int | None) -> str:
         return "n/a" if value is None else str(value)
 
-    def fmt_float(value: Optional[float], suffix: str = "") -> str:
+    def fmt_float(value: float | None, suffix: str = "") -> str:
         return "n/a" if value is None else f"{value:.1f}{suffix}"
 
     lines = [
@@ -332,9 +307,7 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
         ]
     )
     if diagnostics.peak_correlation is not None:
-        lines.append(
-            f"- Sweep correlation peak: {diagnostics.peak_correlation:.3f}"
-        )
+        lines.append(f"- Sweep correlation peak: {diagnostics.peak_correlation:.3f}")
     if diagnostics.start_nextbest_confidence is not None:
         lines.append(
             f"- Next-best alignment ratio: {diagnostics.start_nextbest_confidence:.1f} "
@@ -365,20 +338,12 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
     lines.append(f"- SNR: {fmt_float(diagnostics.snr_db, ' dB')}")
     if diagnostics.marker_agreement is not None:
         if diagnostics.raw_marker_confidence is not None:
-            lines.append(
-                f"- Raw end confidence: {diagnostics.raw_marker_confidence:.1f}"
-            )
-        lines.append(
-            f"- Marker chip agreement: {diagnostics.marker_agreement:.2f}"
-        )
+            lines.append(f"- Raw end confidence: {diagnostics.raw_marker_confidence:.1f}")
+        lines.append(f"- Marker chip agreement: {diagnostics.marker_agreement:.2f}")
     if diagnostics.marker_identity_ratio is not None:
-        lines.append(
-            f"- Marker identity ratio: {diagnostics.marker_identity_ratio:.2f}"
-        )
+        lines.append(f"- Marker identity ratio: {diagnostics.marker_identity_ratio:.2f}")
     if diagnostics.marker_template_stretch is not None:
-        lines.append(
-            f"- Marker template stretch: {diagnostics.marker_template_stretch:.3f}x"
-        )
+        lines.append(f"- Marker template stretch: {diagnostics.marker_template_stretch:.3f}x")
     if diagnostics.failure_message:
         lines.append(f"- Message: {diagnostics.failure_message}")
     if diagnostics.warning_message:
@@ -388,7 +353,7 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
 
 def is_retryable_timing_failure(
     message: str,
-    failure_reason: Optional[str],
+    failure_reason: str | None,
 ) -> bool:
     """Return whether a measurement failure should trigger timing retry UI."""
     if failure_reason is not None:
@@ -431,7 +396,7 @@ _DEVICE_FAILURE_TOKENS = (
 
 def is_device_failure(
     message: str,
-    failure_reason: Optional[str],
+    failure_reason: str | None,
 ) -> bool:
     """Return whether a sweep failure came from the audio device, not the data.
 
@@ -460,7 +425,7 @@ def normalized_corr_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray
         np.fft.rfft(sig, n=nfft) * np.fft.rfft(pat[::-1], n=nfft),
         n=nfft,
     )[:full_len]
-    return corr_full[len(pat) - 1: len(sig)]
+    return corr_full[len(pat) - 1 : len(sig)]
 
 
 def normalized_corrcoef_valid(signal: np.ndarray, pattern: np.ndarray) -> np.ndarray:
@@ -568,7 +533,7 @@ def _marker_component_agreement(
     if len(sig) < len(pat) or len(pat) < chip_count:
         return 0.0
 
-    sig = sig[:len(pat)]
+    sig = sig[: len(pat)]
     edges = np.linspace(0, len(pat), chip_count + 1, dtype=int)
     agreements = []
     for idx in range(chip_count):
@@ -592,7 +557,7 @@ def _marker_component_agreement(
 def _marker_identity_ratio(
     signal_window: np.ndarray,
     marker: np.ndarray,
-    alternate_marker: Optional[np.ndarray],
+    alternate_marker: np.ndarray | None,
 ) -> float:
     """Return intended-marker match strength relative to the alternate marker."""
     if alternate_marker is None:
@@ -602,7 +567,7 @@ def _marker_identity_ratio(
     alt = np.asarray(alternate_marker).astype(np.float64, copy=False)
     if len(sig) < len(pat) or len(pat) != len(alt):
         return 0.0
-    sig = sig[:len(pat)]
+    sig = sig[: len(pat)]
     sig_norm = float(np.sqrt(np.sum(np.square(sig))))
     pat_norm = float(np.sqrt(np.sum(np.square(pat))))
     alt_norm = float(np.sqrt(np.sum(np.square(alt))))
@@ -627,9 +592,9 @@ def _stretched_marker(marker: np.ndarray, stretch: float) -> np.ndarray:
 
 def _marker_template_variants(
     marker: np.ndarray,
-    alternate_marker: Optional[np.ndarray],
+    alternate_marker: np.ndarray | None,
     bluetooth_headphone_mode: bool,
-) -> list[tuple[np.ndarray, Optional[np.ndarray], float]]:
+) -> list[tuple[np.ndarray, np.ndarray | None, float]]:
     """
     Return marker templates used for detection.
 
@@ -641,7 +606,7 @@ def _marker_template_variants(
         return [(np.asarray(marker), alternate_marker, 1.0)]
 
     stretch_factors = (1.0, 0.99, 1.01, 0.98, 1.02, 0.965, 1.035, 0.95, 1.05)
-    variants: list[tuple[np.ndarray, Optional[np.ndarray], float]] = []
+    variants: list[tuple[np.ndarray, np.ndarray | None, float]] = []
     seen_lengths: set[int] = set()
     for stretch in stretch_factors:
         stretched = _stretched_marker(marker, stretch)
@@ -649,9 +614,7 @@ def _marker_template_variants(
             continue
         seen_lengths.add(len(stretched))
         stretched_alt = (
-            _stretched_marker(alternate_marker, stretch)
-            if alternate_marker is not None
-            else None
+            _stretched_marker(alternate_marker, stretch) if alternate_marker is not None else None
         )
         variants.append((stretched, stretched_alt, float(stretch)))
     return variants
@@ -661,7 +624,7 @@ def _marker_peak_candidates(
     corr: np.ndarray,
     marker_region: np.ndarray,
     marker: np.ndarray,
-    alternate_marker: Optional[np.ndarray],
+    alternate_marker: np.ndarray | None,
     search_start: int,
     expected_start: int,
     fs: int,
@@ -703,11 +666,11 @@ def _marker_peak_candidates(
             continue
         seen.add(idx)
         agreement = _marker_component_agreement(
-            np.asarray(marker_region)[idx:idx + len(marker)],
+            np.asarray(marker_region)[idx : idx + len(marker)],
             marker,
         )
         identity_ratio = _marker_identity_ratio(
-            np.asarray(marker_region)[idx:idx + len(marker)],
+            np.asarray(marker_region)[idx : idx + len(marker)],
             marker,
             alternate_marker,
         )
@@ -747,9 +710,7 @@ def find_start_alignment(
     max_extra_latency_s = 2.0 if str(settings.latency).lower() == "high" else 1.2
     start_search_radius = int(round(max_extra_latency_s * layout.fs))
     start_search_lo = max(0, layout.excitation_start_sample - start_search_radius)
-    start_search_hi = min(
-        len(corr_valid), layout.excitation_start_sample + start_search_radius
-    )
+    start_search_hi = min(len(corr_valid), layout.excitation_start_sample + start_search_radius)
     if start_search_hi - start_search_lo < 32:
         start_search_lo = 0
         start_search_hi = len(corr_valid)
@@ -777,9 +738,7 @@ def find_start_alignment(
     if bluetooth_mode and len(layout.start_marker) > 0:
         start_marker_search = int(round(0.35 * layout.fs))
         sm_lo = max(0, start_idx - start_marker_search)
-        sm_hi = min(
-            len(rec), start_idx + start_marker_search + len(layout.start_marker)
-        )
+        sm_hi = min(len(rec), start_idx + start_marker_search + len(layout.start_marker))
         sm_region = rec[sm_lo:sm_hi]
         start_marker_match = None
         for marker_template, _alternate_template, marker_stretch in _marker_template_variants(
@@ -954,8 +913,8 @@ def _bluetooth_sweep_fallback_result(
     settings: AlignmentSettings,
     start_result: StartAlignmentResult,
     marker_failure_reason: str,
-    end_result: Optional[EndMarkerResult] = None,
-) -> Optional[MeasurementAlignmentResult]:
+    end_result: EndMarkerResult | None = None,
+) -> MeasurementAlignmentResult | None:
     if not bool(settings.bluetooth_headphone_mode):
         return None
 
@@ -1035,12 +994,10 @@ def _bluetooth_sweep_fallback_result(
     )
 
     sweep_conf_ok = (
-        fallback_start_result.start_confidence
-        >= _BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE
+        fallback_start_result.start_confidence >= _BLUETOOTH_FALLBACK_MIN_SWEEP_CONFIDENCE
     )
     start_evidence_ok = (
-        fallback_start_result.start_confidence
-        >= _BLUETOOTH_FALLBACK_STRONG_SWEEP_CONFIDENCE
+        fallback_start_result.start_confidence >= _BLUETOOTH_FALLBACK_STRONG_SWEEP_CONFIDENCE
         or fallback_start_result.marker_locked_candidate is not None
         or fallback_start_result.start_marker_confidence
         >= _BLUETOOTH_FALLBACK_MIN_START_MARKER_CONFIDENCE
@@ -1050,16 +1007,13 @@ def _bluetooth_sweep_fallback_result(
         or not start_evidence_ok
         or snr_db < _BLUETOOTH_FALLBACK_MIN_SNR_DB
         or sweep_rms < _BLUETOOTH_FALLBACK_MIN_SWEEP_RMS
-        or fallback_start_result.peak_correlation
-        < _BLUETOOTH_FALLBACK_MIN_PEAK_CORRELATION
+        or fallback_start_result.peak_correlation < _BLUETOOTH_FALLBACK_MIN_PEAK_CORRELATION
     ):
         return None
 
     # The fallback SNR uses marker-aware noise windows; derive the noise floor
     # from it so the integrity metrics stay comparable with the other paths.
-    fallback_noise_rms = (
-        sweep_rms / (10.0 ** (snr_db / 20.0)) if 0.0 < snr_db < 120.0 else 0.0
-    )
+    fallback_noise_rms = sweep_rms / (10.0 ** (snr_db / 20.0)) if 0.0 < snr_db < 120.0 else 0.0
     integrity = compute_sweep_integrity(sweep_rec, fallback_noise_rms)
     _enforce_sweep_integrity(
         layout,
@@ -1141,9 +1095,7 @@ def find_end_markers(
     max_reasonable_spacing_error = int(round(960.0 * float(layout.fs) / 48000.0))
     for cand in candidates:
         expected_marker_1 = cand + sweep_n + layout.end_marker_gap_samples
-        expected_marker_2 = (
-            expected_marker_1 + len(marker_1) + layout.end_marker_pair_gap_samples
-        )
+        expected_marker_2 = expected_marker_1 + len(marker_1) + layout.end_marker_pair_gap_samples
 
         search_start_1 = max(0, expected_marker_1 - marker_search)
         search_stop_1 = min(len(rec), expected_marker_1 + marker_search + len(marker_1))
@@ -1220,9 +1172,13 @@ def find_end_markers(
                 agreement = min(agreement_1, agreement_2)
                 identity_ratio = min(identity_1, identity_2)
                 identity_penalty = max(0.0, 1.2 - identity_ratio) * 8.0
-                score = marker_conf - (timing_err / penalty_unit) - (
-                    spacing_err / penalty_unit
-                ) + (2.0 * agreement) - identity_penalty
+                score = (
+                    marker_conf
+                    - (timing_err / penalty_unit)
+                    - (spacing_err / penalty_unit)
+                    + (2.0 * agreement)
+                    - identity_penalty
+                )
                 result = (
                     score,
                     cand,
@@ -1249,7 +1205,8 @@ def find_end_markers(
 
     best_result = max(pair_results, key=lambda result: result[0])
     viable_results = [
-        result for result in pair_results
+        result
+        for result in pair_results
         if (
             result[5] >= max(1.8, end_conf_min * 0.85)
             and result[7] >= _MARKER_MIN_AGREEMENT
@@ -1260,8 +1217,7 @@ def find_end_markers(
     if viable_results:
         max_viable_conf = max(result[5] for result in viable_results)
         strong_results = [
-            result for result in viable_results
-            if result[5] >= max(1.8, 0.60 * max_viable_conf)
+            result for result in viable_results if result[5] >= max(1.8, 0.60 * max_viable_conf)
         ]
         best_err_result = min(
             strong_results,
@@ -1333,10 +1289,8 @@ def noise_floor_rms(
     """RMS of the silence just before the sweep and just after it."""
     noise_win_n = int(round(0.12 * fs))
     rec = np.asarray(rec_mono)
-    pre_noise = rec[max(0, start_idx - noise_win_n):start_idx]
-    post_noise = rec[
-        post_noise_start:min(len(rec), post_noise_start + noise_win_n)
-    ]
+    pre_noise = rec[max(0, start_idx - noise_win_n) : start_idx]
+    post_noise = rec[post_noise_start : min(len(rec), post_noise_start + noise_win_n)]
     noise_parts = [seg for seg in (pre_noise, post_noise) if len(seg) > 8]
     if not noise_parts:
         return 0.0
@@ -1384,7 +1338,7 @@ def compute_sweep_integrity(
     midband_rms = _rms(aligned[lo:hi])
     edges = np.linspace(0, n, segments + 1, dtype=int)
     coverage = tuple(
-        _ratio_db(_rms(aligned[edges[i]:edges[i + 1]]), noise_rms)
+        _ratio_db(_rms(aligned[edges[i] : edges[i + 1]]), noise_rms)
         if edges[i + 1] > edges[i]
         else 0.0
         for i in range(segments)
@@ -1403,7 +1357,7 @@ def _enforce_sweep_integrity(
     start_result: StartAlignmentResult,
     integrity: SweepIntegrity,
     snr_db: float,
-    end_result: Optional[EndMarkerResult] = None,
+    end_result: EndMarkerResult | None = None,
 ) -> None:
     """
     Reject a recording only when both the alignment confidence and the
@@ -1441,7 +1395,7 @@ def _enforce_sweep_integrity(
 def _low_snr_warning(
     settings: AlignmentSettings,
     snr_db: float,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     warn_db = float(settings.snr_warn_db)
     if warn_db > 0.0 and snr_db < warn_db:
         return (
@@ -1463,11 +1417,9 @@ def _estimate_bluetooth_fallback_snr_db(
     rec = np.asarray(rec_mono)
     pre_noise_stop = max(
         0,
-        int(start_idx)
-        - int(layout.start_marker_gap_samples)
-        - len(layout.start_marker),
+        int(start_idx) - int(layout.start_marker_gap_samples) - len(layout.start_marker),
     )
-    pre_noise = rec[max(0, pre_noise_stop - noise_win_n):pre_noise_stop]
+    pre_noise = rec[max(0, pre_noise_stop - noise_win_n) : pre_noise_stop]
     post_noise_start = (
         int(start_idx)
         + layout.sweep_samples
@@ -1476,9 +1428,7 @@ def _estimate_bluetooth_fallback_snr_db(
         + layout.end_marker_pair_gap_samples
         + len(getattr(layout, "end_marker_2", layout.end_marker))
     )
-    post_noise = rec[
-        post_noise_start:min(len(rec), post_noise_start + noise_win_n)
-    ]
+    post_noise = rec[post_noise_start : min(len(rec), post_noise_start + noise_win_n)]
     noise_parts = [seg for seg in (pre_noise, post_noise) if len(seg) > 8]
     if noise_parts:
         noise_concat = np.concatenate(noise_parts)
@@ -1526,15 +1476,11 @@ def align_recording_to_layout(
         noise_rms = noise_floor_rms(rec, end_idx, start_idx, layout.fs)
         snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
         integrity = compute_sweep_integrity(sweep_rec, noise_rms)
-        _enforce_sweep_integrity(
-            layout, settings, start_result, integrity, snr_db
-        )
+        _enforce_sweep_integrity(layout, settings, start_result, integrity, snr_db)
         warning_reason, warning_message = _low_snr_warning(settings, snr_db)
         return MeasurementAlignmentResult(
             aligned_recording=sweep_rec,
-            aligned_recording_tail=_tail_after_sweep(
-                rec, end_idx, layout, settings
-            ),
+            aligned_recording_tail=_tail_after_sweep(rec, end_idx, layout, settings),
             start=start_result,
             end=end_result,
             snr_db=float(snr_db),
@@ -1585,17 +1531,12 @@ def align_recording_to_layout(
         end_conf_min = min(end_conf_min, 2.5)
     marker_conf = end_result.marker_confidence
     max_spacing_error_samples = int(round(960.0 * float(layout.fs) / 48000.0))
-    max_drift_samples = int(
-        round((float(settings.timing_drift_max_ms) / 1000.0) * layout.fs)
-    )
+    max_drift_samples = int(round((float(settings.timing_drift_max_ms) / 1000.0) * layout.fs))
     marginal_ceiling_samples = int(round(0.160 * layout.fs))
     bluetooth_marginal_floor = 2.0
-    bluetooth_start_evidence_ok = (
-        start_result.start_confidence >= 3.0
-        and (
-            start_result.marker_locked_candidate is not None
-            or start_result.start_marker_confidence >= 3.5
-        )
+    bluetooth_start_evidence_ok = start_result.start_confidence >= 3.0 and (
+        start_result.marker_locked_candidate is not None
+        or start_result.start_marker_confidence >= 3.5
     )
     can_accept_bluetooth_marginal = (
         bluetooth_mode
@@ -1603,10 +1544,7 @@ def align_recording_to_layout(
         and bluetooth_start_evidence_ok
         and end_result.spacing_error_samples <= max_spacing_error_samples
         and marker_conf >= bluetooth_marginal_floor
-        and (
-            end_result.timing_error_samples > max_drift_samples
-            or marker_conf < end_conf_min
-        )
+        and (end_result.timing_error_samples > max_drift_samples or marker_conf < end_conf_min)
     )
     if marker_conf < end_conf_min and not can_accept_bluetooth_marginal:
         fallback = _bluetooth_sweep_fallback_result(
@@ -1632,10 +1570,7 @@ def align_recording_to_layout(
             integrity=integrity,
         )
 
-    if (
-        bluetooth_mode
-        and end_result.spacing_error_samples > max_spacing_error_samples
-    ):
+    if bluetooth_mode and end_result.spacing_error_samples > max_spacing_error_samples:
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
         fallback = _bluetooth_sweep_fallback_result(
             rec=rec,

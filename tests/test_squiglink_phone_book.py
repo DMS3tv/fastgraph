@@ -39,7 +39,7 @@ def test_build_upload_name_stem_normalizes_modifier() -> None:
 def test_build_upload_name_stem_requires_channel_side() -> None:
     try:
         build_upload_name_stem(_session(channel_side=""), "")
-        assert False, "expected ValueError"
+        raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "channel side" in str(exc).lower()
 
@@ -183,9 +183,9 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
 
 
 FAKE_KEY_BYTES = b"ssh-ed25519 fake key bytes"
-FAKE_FINGERPRINT = (
-    "sha256:" + base64.b64encode(hashlib.sha256(FAKE_KEY_BYTES).digest()).decode().rstrip("=")
-)
+FAKE_FINGERPRINT = "sha256:" + base64.b64encode(
+    hashlib.sha256(FAKE_KEY_BYTES).digest()
+).decode().rstrip("=")
 
 
 class _FakeKey:
@@ -366,9 +366,7 @@ def test_connection_failure_scrubs_the_password_from_diagnostics(monkeypatch, tm
     install_fake_transport(monkeypatch, {})
     monkeypatch.setattr(
         "dms.squiglink.paramiko.SFTPClient.from_transport",
-        lambda _transport: (_ for _ in ()).throw(
-            RuntimeError("server said: bad password hunter2")
-        ),
+        lambda _transport: (_ for _ in ()).throw(RuntimeError("server said: bad password hunter2")),
     )
     details: list[dict] = []
 

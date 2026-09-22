@@ -71,7 +71,11 @@ class RnDPhotoStore:
             destination = self.root / file_name
             # A merge can theoretically contain two photos with the same UUID.
             # Keep both by assigning the incoming photo a fresh managed name.
-            if source.is_file() and destination.is_file() and source.read_bytes() != destination.read_bytes():
+            if (
+                source.is_file()
+                and destination.is_file()
+                and source.read_bytes() != destination.read_bytes()
+            ):
                 photo.id = uuid4().hex
                 photo.file_name = f"{photo.id}.jpg"
                 destination = self.root / photo.file_name
@@ -99,5 +103,9 @@ class RnDPhotoStore:
             shutil.copy2(source, destination)
         if destination_dir.exists():
             for child in destination_dir.iterdir():
-                if child.is_file() and _MANAGED_JPEG.match(child.name) and child.name not in expected:
+                if (
+                    child.is_file()
+                    and _MANAGED_JPEG.match(child.name)
+                    and child.name not in expected
+                ):
                     child.unlink()

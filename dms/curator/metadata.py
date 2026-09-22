@@ -10,7 +10,6 @@ from dms import brand_brand
 from dms.curator.models import GraphState, LayerState
 from dms.curator.transforms import visible_display_layers
 
-
 FIELD_ALIASES = {
     "rig": "rig",
     "brand": "brand",
@@ -140,7 +139,9 @@ def automatic_export_values(
 
 def metadata_has_identity(metadata: Mapping[str, Any] | None) -> bool:
     normalized = canonicalize_metadata(metadata)
-    return any(str(normalized.get(key) or "").strip() for key in ("brand", "model", "asset_tag", "rig"))
+    return any(
+        str(normalized.get(key) or "").strip() for key in ("brand", "model", "asset_tag", "rig")
+    )
 
 
 def _key_token(value: object) -> str:

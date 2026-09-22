@@ -14,7 +14,6 @@ from dms.theme import ensure_graph_color, normalize_theme
 from dms.ui.style_tokens import ThemeTokens, tokens_for
 from dms.ui.theme_surface import paint_aperiodic_dither_band
 
-
 FREQ_MIN = 20.0
 FREQ_MAX = 20000.0
 ACCENT_COLOR = "#FCBE11"
@@ -96,7 +95,9 @@ def _draw_poster(
     else:
         fg = QColor(tokens.text if classic else ("#20252d" if light_background else "#f2f5f4"))
         accent = QColor(ACCENT_COLOR)
-        muted = QColor(tokens.plot_fg if classic else ("#5f6977" if light_background else "#8f98a8"))
+        muted = QColor(
+            tokens.plot_fg if classic else ("#5f6977" if light_background else "#8f98a8")
+        )
 
     if classic:
         painter.fillRect(QRectF(0, 0, width, height), QColor(tokens.panel))
@@ -114,11 +115,7 @@ def _draw_poster(
         painter.drawRect(QRectF(0, 0, width, 96))
 
     if not dither:
-        title_color = (
-            QColor(tokens.text if tokens.dark_bevel else "#FFFFFF")
-            if classic
-            else fg
-        )
+        title_color = QColor(tokens.text if tokens.dark_bevel else "#FFFFFF") if classic else fg
         painter.setPen(title_color)
         title_rect = QRectF(44 if classic else 72, 18 if classic else 16, width - 280, 58)
         title, title_font = fit_title(text.title.strip() or "Curator", title_rect.width())
@@ -128,9 +125,7 @@ def _draw_poster(
         painter.setFont(title_font)
         painter.drawText(
             title_rect,
-            Qt.AlignmentFlag.AlignLeft
-            | Qt.AlignmentFlag.AlignVCenter
-            | Qt.TextFlag.TextSingleLine,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
             title,
         )
         painter.setFont(
@@ -272,9 +267,7 @@ def _draw_dither_footer(
     )
     painter.fillRect(footer_rect, QColor(tokens.text))
 
-    footer = "    ".join(
-        item for item in (text.hrtf_note.strip(), text.notes.strip()) if item
-    )
+    footer = "    ".join(item for item in (text.hrtf_note.strip(), text.notes.strip()) if item)
     if not footer:
         return
 
@@ -294,9 +287,7 @@ def _draw_dither_footer(
     painter.setPen(QColor(tokens.background))
     painter.drawText(
         text_rect,
-        Qt.AlignmentFlag.AlignLeft
-        | Qt.AlignmentFlag.AlignVCenter
-        | Qt.TextFlag.TextSingleLine,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
         footer,
     )
 
@@ -348,9 +339,7 @@ def _draw_dither_masthead(painter: QPainter, text, width: int, tokens: ThemeToke
     painter.setFont(title_font)
     painter.drawText(
         title_rect,
-        Qt.AlignmentFlag.AlignLeft
-        | Qt.AlignmentFlag.AlignVCenter
-        | Qt.TextFlag.TextSingleLine,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
         title,
     )
 
@@ -380,9 +369,7 @@ def _draw_classic_bevel(
 ) -> None:
     dark_variant = tokens.dark_bevel
     highlight = QColor(
-        tokens.accent
-        if tokens.terminal_chrome
-        else ("#8F8F8F" if dark_variant else "#FFFFFF")
+        tokens.accent if tokens.terminal_chrome else ("#8F8F8F" if dark_variant else "#FFFFFF")
     )
     shadow = QColor(tokens.border)
     top_left = shadow if recessed else highlight
@@ -582,9 +569,7 @@ def _draw_bounds(
         return
     freqs, upper_values, lower_values = aligned_bounds(upper, lower)
     if retro:
-        freqs, upper_values, lower_values = retro_step_group(
-            freqs, (upper_values, lower_values)
-        )
+        freqs, upper_values, lower_values = retro_step_group(freqs, (upper_values, lower_values))
     upper_path = _curve_path(rect, freqs, upper_values, state.y_min, state.y_max)
     lower_path = _curve_path(rect, freqs, lower_values, state.y_min, state.y_max)
     fill = QPainterPath(upper_path)
@@ -707,9 +692,7 @@ def _draw_variation_band(
     p75 = curve.p75_db
     p90 = curve.p90_db
     if retro:
-        freqs, p10, p25, median, p75, p90 = retro_step_group(
-            freqs, (p10, p25, median, p75, p90)
-        )
+        freqs, p10, p25, median, p75, p90 = retro_step_group(freqs, (p10, p25, median, p75, p90))
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     _fill_between(painter, rect, freqs, p90, p10, color, 50, y_min, y_max)

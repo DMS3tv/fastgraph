@@ -5,7 +5,6 @@ import pytest
 from PyQt6.QtCore import Qt
 
 from dms import audio_engine
-
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.style_tokens import (
     DARK_TOKENS,

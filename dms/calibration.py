@@ -1,4 +1,4 @@
-from typing import Optional
+import contextlib
 
 from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.settings_manager import _config_dir
@@ -11,10 +11,10 @@ class CalibrationStore:
         self._path = _config_dir() / "calibration.json"
         self._data: dict[str, float] = {}
         # Set when calibration.json was damaged and moved aside.
-        self.load_error: Optional[str] = None
+        self.load_error: str | None = None
         self._load()
 
-    def get_sensitivity(self, device_name: str) -> Optional[float]:
+    def get_sensitivity(self, device_name: str) -> float | None:
         """Return Pa/FS sensitivity for device, or None if uncalibrated."""
         return self._data.get(device_name)
 
@@ -30,7 +30,7 @@ class CalibrationStore:
         self._data.pop(device_name, None)
         self._save()
 
-    def rms_to_dbspl(self, device_name: str, rms_fs: float) -> Optional[float]:
+    def rms_to_dbspl(self, device_name: str, rms_fs: float) -> float | None:
         """Convert normalized RMS (0-1 FS) to dB SPL. Returns None if not calibrated."""
         sens = self.get_sensitivity(device_name)
         if sens is None or rms_fs <= 0:
@@ -55,7 +55,5 @@ class CalibrationStore:
         self._data = clean
 
     def _save(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             atomic_write_json(self._path, self._data, mode=0o600)
-        except Exception:
-            pass

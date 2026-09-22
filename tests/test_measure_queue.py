@@ -23,7 +23,6 @@ from dms.measurement_alignment import (
     is_retryable_timing_failure,
 )
 
-
 CURVE = ("freqs", "mags")
 PAIR = ("pair",)
 TIMING = (12.0, 9.0, 1.5, 22.0)
@@ -74,9 +73,15 @@ TRANSITION_ROWS = [
         id="row02-begin-ignored-unless-idle",
     ),
     pytest.param(
-        lambda: running(target=3, index=1, attempts=1, two_channel=True,
-                        pending_pair=PAIR, pending_pair_first_raw=CURVE,
-                        last_diagnostics="stale"),
+        lambda: running(
+            target=3,
+            index=1,
+            attempts=1,
+            two_channel=True,
+            pending_pair=PAIR,
+            pending_pair_first_raw=CURVE,
+            last_diagnostics="stale",
+        ),
         lambda q: q.begin_sweep(),
         QueueState.SWEEPING,
         (Effect.STOP_BALANCE, Effect.START_SWEEP),
@@ -109,13 +114,11 @@ TRANSITION_ROWS = [
         id="row05-begin-sweep-without-queue-idles",
     ),
     pytest.param(
-        lambda: running(two_channel=True, attempts=1, stage=1,
-                        pending_pair_first_raw=CURVE),
+        lambda: running(two_channel=True, attempts=1, stage=1, pending_pair_first_raw=CURVE),
         lambda q: q.begin_sweep(second_stage=True),
         QueueState.SWEEPING,
         (Effect.START_SWEEP,),
-        lambda q: q.stage == 2 and q.attempts == 1
-        and q.pending_pair_first_raw is CURVE,
+        lambda q: q.stage == 2 and q.attempts == 1 and q.pending_pair_first_raw is CURVE,
         id="row06-second-stage-keeps-attempts-and-first-channel",
     ),
     pytest.param(
@@ -129,8 +132,9 @@ TRANSITION_ROWS = [
         id="row07-single-channel-result-goes-to-review",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.SWEEPING, target=3, index=0, attempts=1,
-                         two_channel=True, stage=1),
+        lambda: queue_in(
+            QueueState.SWEEPING, target=3, index=0, attempts=1, two_channel=True, stage=1
+        ),
         lambda q: q.on_stage_result(curve=CURVE, diagnostics="diag1", timing=TIMING),
         QueueState.QUEUE_RUNNING,
         (Effect.START_SECOND_STAGE,),
@@ -141,31 +145,43 @@ TRANSITION_ROWS = [
         id="row08-first-channel-parks-and-requests-second",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.SWEEPING, target=3, index=0, attempts=1,
-                         two_channel=True, stage=2,
-                         pending_pair_first_raw=CURVE,
-                         pending_pair_first_diagnostics="diag1"),
+        lambda: queue_in(
+            QueueState.SWEEPING,
+            target=3,
+            index=0,
+            attempts=1,
+            two_channel=True,
+            stage=2,
+            pending_pair_first_raw=CURVE,
+            pending_pair_first_diagnostics="diag1",
+        ),
         lambda q: q.on_stage_result(curve=PAIR, diagnostics="diag2", timing=TIMING),
         QueueState.PASS_FAIL,
         (Effect.SHOW_REVIEW, Effect.REDRAW),
-        lambda q: q.pending_pair is PAIR and q.stage == 2
-        and q.pending_pair_first_raw is CURVE,
+        lambda q: q.pending_pair is PAIR and q.stage == 2 and q.pending_pair_first_raw is CURVE,
         id="row09-second-channel-completes-the-pair",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.SWEEPING, target=3, index=0, attempts=1,
-                         two_channel=True, stage=2, pending_pair_first_raw=None),
+        lambda: queue_in(
+            QueueState.SWEEPING,
+            target=3,
+            index=0,
+            attempts=1,
+            two_channel=True,
+            stage=2,
+            pending_pair_first_raw=None,
+        ),
         lambda q: q.on_stage_result(curve=PAIR, diagnostics="diag2", timing=TIMING),
         QueueState.IDLE,
         (Effect.SHOW_ERROR,),
-        lambda q: (q.target, q.index, q.attempts) == (0, 0, 0)
-        and q.pending_pair is None,
+        lambda q: (q.target, q.index, q.attempts) == (0, 0, 0) and q.pending_pair is None,
         id="row10-missing-first-channel-is-terminal",
     ),
     pytest.param(
         lambda: running(target=3, index=1, attempts=1),
-        lambda q: q.on_error(message="timing drift too large",
-                             timing_failure=True, device_failure=False),
+        lambda q: q.on_error(
+            message="timing drift too large", timing_failure=True, device_failure=False
+        ),
         QueueState.QUEUE_RUNNING,
         (Effect.PROMPT_RETRY,),
         lambda q: (q.target, q.index, q.attempts) == (3, 1, 1),
@@ -173,12 +189,12 @@ TRANSITION_ROWS = [
     ),
     pytest.param(
         lambda: running(target=3, index=1, attempts=1, pending_curve=CURVE),
-        lambda q: q.on_error(message="PortAudio error: no device",
-                             timing_failure=False, device_failure=True),
+        lambda q: q.on_error(
+            message="PortAudio error: no device", timing_failure=False, device_failure=True
+        ),
         QueueState.IDLE,
         (Effect.SHOW_ERROR, Effect.RESUME_MONITOR),
-        lambda q: (q.target, q.index, q.attempts) == (0, 0, 0)
-        and q.pending_curve is None,
+        lambda q: (q.target, q.index, q.attempts) == (0, 0, 0) and q.pending_curve is None,
         id="row12-terminal-error-clears-everything",
     ),
     pytest.param(
@@ -198,24 +214,32 @@ TRANSITION_ROWS = [
         id="row14-retry-declined-cancels-the-queue",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.PASS_FAIL, target=3, index=0, attempts=2,
-                         pending_curve=CURVE),
+        lambda: queue_in(QueueState.PASS_FAIL, target=3, index=0, attempts=2, pending_curve=CURVE),
         lambda q: q.on_keep(kept_total=1),
         QueueState.QUEUE_RUNNING,
         (Effect.REDRAW, Effect.START_SWEEP),
         lambda q: (q.index, q.attempts, q.target) == (1, 0, 3)
-        and q.pending_curve is None and q.stage == 0,
+        and q.pending_curve is None
+        and q.stage == 0,
         id="row15a-keep-advances-the-index",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.PASS_FAIL, target=2, index=1, attempts=2,
-                         two_channel=True, stage=2, pending_pair=PAIR,
-                         pending_pair_first_raw=CURVE),
+        lambda: queue_in(
+            QueueState.PASS_FAIL,
+            target=2,
+            index=1,
+            attempts=2,
+            two_channel=True,
+            stage=2,
+            pending_pair=PAIR,
+            pending_pair_first_raw=CURVE,
+        ),
         lambda q: q.on_keep(kept_total=2),
         QueueState.IDLE,
         (Effect.REDRAW, Effect.FINISH),
         lambda q: (q.index, q.attempts, q.target) == (0, 0, 0)
-        and q.pending_pair is None and q.pending_pair_first_raw is None,
+        and q.pending_pair is None
+        and q.pending_pair_first_raw is None,
         id="row15b-keep-on-last-index-finishes",
     ),
     pytest.param(
@@ -227,14 +251,23 @@ TRANSITION_ROWS = [
         id="row16-keep-without-pending-is-a-noop",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.PASS_FAIL, target=3, index=1, attempts=2,
-                         pending_curve=CURVE, two_channel=True, stage=2,
-                         pending_pair=PAIR),
+        lambda: queue_in(
+            QueueState.PASS_FAIL,
+            target=3,
+            index=1,
+            attempts=2,
+            pending_curve=CURVE,
+            two_channel=True,
+            stage=2,
+            pending_pair=PAIR,
+        ),
         lambda q: q.on_fail(),
         QueueState.QUEUE_RUNNING,
         (Effect.REDRAW, Effect.START_SWEEP),
         lambda q: (q.index, q.attempts, q.target) == (1, 0, 3)
-        and q.pending_curve is None and q.pending_pair is None and q.stage == 0,
+        and q.pending_curve is None
+        and q.pending_pair is None
+        and q.stage == 0,
         id="row17-fail-repeats-index-with-fresh-budget",
     ),
     pytest.param(
@@ -246,9 +279,16 @@ TRANSITION_ROWS = [
         id="row18-fail-outside-review-is-a-noop",
     ),
     pytest.param(
-        lambda: queue_in(QueueState.SWEEPING, target=3, index=1, attempts=2,
-                         two_channel=True, stage=2, pending_pair=PAIR,
-                         pending_pair_first_raw=CURVE),
+        lambda: queue_in(
+            QueueState.SWEEPING,
+            target=3,
+            index=1,
+            attempts=2,
+            two_channel=True,
+            stage=2,
+            pending_pair=PAIR,
+            pending_pair_first_raw=CURVE,
+        ),
         lambda q: q.cancel(),
         QueueState.IDLE,
         (Effect.RESUME_MONITOR, Effect.REDRAW),
@@ -343,8 +383,13 @@ def test_reset_clears_every_field():
 
 def test_reset_keep_counters_preserves_the_three_counters():
     queue = MeasurementQueue(
-        target=4, index=2, attempts=2, stage=2,
-        pending_curve=CURVE, pending_pair=PAIR, last_diagnostics="diag",
+        target=4,
+        index=2,
+        attempts=2,
+        stage=2,
+        pending_curve=CURVE,
+        pending_pair=PAIR,
+        last_diagnostics="diag",
     )
     queue.reset(keep_counters=True)
     assert (queue.target, queue.index, queue.attempts) == (4, 2, 2)
@@ -357,8 +402,11 @@ def test_reset_keep_counters_preserves_the_three_counters():
 def test_fail_resets_attempt_budget_and_repeats_index():
     """B5: a manual Fail must give the repeated index its full retry budget."""
     queue = queue_in(
-        QueueState.PASS_FAIL, target=3, index=1,
-        attempts=MAX_SWEEP_ATTEMPTS, pending_curve=CURVE,
+        QueueState.PASS_FAIL,
+        target=3,
+        index=1,
+        attempts=MAX_SWEEP_ATTEMPTS,
+        pending_curve=CURVE,
     )
     decision = queue.on_fail()
     assert decision.state == QueueState.QUEUE_RUNNING
@@ -375,9 +423,16 @@ def test_fail_resets_attempt_budget_and_repeats_index():
 def test_cancel_clears_two_channel_pending_state():
     """B6: cancel must not leave pair state behind for Clear All to find."""
     queue = queue_in(
-        QueueState.SWEEPING, target=3, index=1, attempts=1, two_channel=True,
-        stage=2, pending_pair=PAIR, pending_pair_first_raw=CURVE,
-        pending_pair_first_diagnostics="diag1", start_second_stage=True,
+        QueueState.SWEEPING,
+        target=3,
+        index=1,
+        attempts=1,
+        two_channel=True,
+        stage=2,
+        pending_pair=PAIR,
+        pending_pair_first_raw=CURVE,
+        pending_pair_first_diagnostics="diag1",
+        start_second_stage=True,
         pending_curve=CURVE,
     )
     queue.cancel()
@@ -536,7 +591,10 @@ def test_stage_result_outside_sweeping_is_a_noop():
 
 def test_missing_first_channel_message():
     queue = queue_in(
-        QueueState.SWEEPING, target=3, two_channel=True, stage=0,
+        QueueState.SWEEPING,
+        target=3,
+        two_channel=True,
+        stage=0,
     )
     decision = queue.on_stage_result(curve=PAIR, diagnostics="d", timing=TIMING)
     assert decision.effects == (Effect.SHOW_ERROR,)
@@ -595,10 +653,13 @@ def test_is_device_failure_false(message):
 def test_is_device_failure_false_when_failure_reason_present():
     # A measurement-quality failure is never a device failure, whatever the
     # message text happens to contain.
-    assert is_device_failure(
-        message="PortAudio error: Invalid device",
-        failure_reason=MeasurementFailureReason.LOW_START_CONFIDENCE,
-    ) is False
+    assert (
+        is_device_failure(
+            message="PortAudio error: Invalid device",
+            failure_reason=MeasurementFailureReason.LOW_START_CONFIDENCE,
+        )
+        is False
+    )
 
 
 def test_device_and_timing_classifiers_do_not_overlap():

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -46,8 +48,7 @@ class RecoveryCandidate:
         if self.error:
             return f"{kind} — {stamp} — {self.error}"
         return (
-            f"{kind} — {stamp} — {self.measurement_count} measurements, "
-            f"{self.group_count} groups"
+            f"{kind} — {stamp} — {self.measurement_count} measurements, {self.group_count} groups"
         )
 
 
@@ -292,7 +293,5 @@ class RnDRecoveryManager(QObject):
 
     @staticmethod
     def _remove_empty_parent(path: Path) -> None:
-        try:
+        with contextlib.suppress(OSError):
             path.rmdir()
-        except OSError:
-            pass

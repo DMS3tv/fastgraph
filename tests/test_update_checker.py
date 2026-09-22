@@ -117,7 +117,7 @@ def test_parse_update_feed_rejects_a_non_object_payload(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "current, remote, newer",
     [
-        ("0.4.2", "0.4.10", True),   # the old digit-tuple compare got this right
+        ("0.4.2", "0.4.10", True),  # the old digit-tuple compare got this right
         ("0.4.2", "0.10.0", True),
         ("0.9.0", "0.10.0", True),
         ("0.4.2", "0.4.2", False),

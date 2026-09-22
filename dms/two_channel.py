@@ -10,7 +10,6 @@ from scipy.interpolate import interp1d
 
 from dms.processing import compute_rms_average
 
-
 Curve = tuple[np.ndarray, np.ndarray]
 Variation = tuple[
     np.ndarray,

@@ -41,7 +41,8 @@ class HistoryLineEdit(QLineEdit):
         if event.key() == Qt.Key.Key_Down and self._history:
             self._history_index = min(len(self._history), self._history_index + 1)
             self.setText(
-                "" if self._history_index == len(self._history)
+                ""
+                if self._history_index == len(self._history)
                 else self._history[self._history_index]
             )
             return
@@ -154,9 +155,7 @@ class ConsoleWidget(QWidget):
         if source != "All" and event.source != source:
             return False
         search = self._search.text().strip().lower()
-        if search and search not in event.format().lower():
-            return False
-        return True
+        return not (search and search not in event.format().lower())
 
     def _refresh(self) -> None:
         """Rebuild the whole view. Only for filter changes, Clear and startup."""
@@ -166,9 +165,7 @@ class ConsoleWidget(QWidget):
 
     def _scroll_to_end_if_following(self) -> None:
         if self._auto_scroll.isChecked():
-            self._output.verticalScrollBar().setValue(
-                self._output.verticalScrollBar().maximum()
-            )
+            self._output.verticalScrollBar().setValue(self._output.verticalScrollBar().maximum())
 
     def _on_event_added(self, event: ConsoleEvent) -> None:
         """Append one line instead of re-rendering the whole 5,000-event store.
@@ -215,6 +212,7 @@ class ConsoleWidget(QWidget):
         if not text:
             text = self._store.formatted(self.filtered_events())
         from PyQt6.QtWidgets import QApplication
+
         QApplication.clipboard().setText(text)
 
     def _system_info(self) -> None:
@@ -225,7 +223,10 @@ class ConsoleWidget(QWidget):
 
     def _save_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Console Log", "fastgraph-console.log", "Log Files (*.log *.txt);;All Files (*)"
+            self,
+            "Export Console Log",
+            "fastgraph-console.log",
+            "Log Files (*.log *.txt);;All Files (*)",
         )
         if not path:
             return

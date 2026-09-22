@@ -7,7 +7,6 @@ measurement timing assumptions testable without hardware.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -31,7 +30,7 @@ class MeasurementSignalLayout:
     start_marker: np.ndarray
     end_marker: np.ndarray
     end_marker_2: np.ndarray
-    wake_primer: Optional[np.ndarray]
+    wake_primer: np.ndarray | None
     excitation: np.ndarray
 
 
@@ -106,9 +105,7 @@ def build_coded_timing_marker(fs: int, code_id: str) -> np.ndarray:
             pattern = (seed + 3 * chip_idx + 5 * tone_idx + chip_idx * tone_idx) % 7
             sign = 1.0 if pattern in {0, 1, 3} else -1.0
             phase_offset = 0.41 * tone_idx + 0.29 * chip_idx + 0.17 * seed
-            chip += weights[tone_idx] * np.sin(
-                2.0 * np.pi * freq * chip_t + phase_offset
-            ) * sign
+            chip += weights[tone_idx] * np.sin(2.0 * np.pi * freq * chip_t + phase_offset) * sign
         chip /= max(float(np.max(np.abs(chip))), 1e-12)
         marker[lo:hi] = chip
 
@@ -259,7 +256,7 @@ def build_output_signal(
     channels = 2 if int(output_channels) >= 2 else 1
     out_signal = np.zeros((layout.total_samples, channels), dtype=np.float32)
     if layout.wake_primer is not None:
-        out_signal[:len(layout.wake_primer), :] = layout.wake_primer[:, None]
+        out_signal[: len(layout.wake_primer), :] = layout.wake_primer[:, None]
     start = layout.excitation_start_sample
     stop = start + len(layout.excitation)
     out_signal[start:stop, :] = layout.excitation[:, None]

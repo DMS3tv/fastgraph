@@ -39,7 +39,6 @@ from dms.ui.console_widget import ConsoleWidget
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.theme_surface import DitherSurface
 
-
 #: One column per step field, in table order.
 _STEP_COLUMNS = (
     "If",
@@ -364,8 +363,7 @@ class EventsWidget(DitherSurface):
         self._steps.setItem(row, _COL_VALUE, QTableWidgetItem(step.value))
         ask = QCheckBox("Ask")
         ask.setToolTip(
-            "Saved with the step: this step may ask before it runs. "
-            "Use Skip to bypass the prompt."
+            "Saved with the step: this step may ask before it runs. Use Skip to bypass the prompt."
         )
         ask.setChecked(step.confirm_risky)
         self._steps.setCellWidget(row, _COL_CONFIRM, ask)
@@ -382,23 +380,29 @@ class EventsWidget(DitherSurface):
             ask_widget = self._steps.cellWidget(row, _COL_CONFIRM)
             skip_widget = self._steps.cellWidget(row, _COL_SKIP)
             condition = AutomationCondition(
-                kind=condition_widget.currentText() if isinstance(condition_widget, QComboBox) else "always",
+                kind=condition_widget.currentText()
+                if isinstance(condition_widget, QComboBox)
+                else "always",
                 left=self._item_text(row, _COL_LEFT),
                 operator=self._item_text(row, _COL_OPERATOR) or "equals",
                 value=self._item_text(row, _COL_CONDITION_VALUE),
             )
-            steps.append(AutomationStep(
-                action=action_widget.currentText() if isinstance(action_widget, QComboBox) else "navigate",
-                target=self._item_text(row, _COL_TARGET),
-                value=self._item_text(row, _COL_VALUE),
-                condition=condition,
-                confirm_risky=(
-                    ask_widget.isChecked() if isinstance(ask_widget, QCheckBox) else True
-                ),
-                skip_risky_confirmation=(
-                    skip_widget.isChecked() if isinstance(skip_widget, QCheckBox) else False
-                ),
-            ))
+            steps.append(
+                AutomationStep(
+                    action=action_widget.currentText()
+                    if isinstance(action_widget, QComboBox)
+                    else "navigate",
+                    target=self._item_text(row, _COL_TARGET),
+                    value=self._item_text(row, _COL_VALUE),
+                    condition=condition,
+                    confirm_risky=(
+                        ask_widget.isChecked() if isinstance(ask_widget, QCheckBox) else True
+                    ),
+                    skip_risky_confirmation=(
+                        skip_widget.isChecked() if isinstance(skip_widget, QCheckBox) else False
+                    ),
+                )
+            )
         return steps
 
     def _item_text(self, row: int, column: int) -> str:

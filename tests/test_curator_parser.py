@@ -9,12 +9,7 @@ from dms.curator.parser import parse_measurement_txt
 def test_parse_two_column_fr_sorts_and_skips_headers(tmp_path: Path) -> None:
     path = tmp_path / "curve.txt"
     path.write_text(
-        "* Brand: Example\n"
-        "# comment\n"
-        "1000\t2\n"
-        "20, -4\n"
-        "not data\n"
-        "100 0\n",
+        "* Brand: Example\n# comment\n1000\t2\n20, -4\nnot data\n100 0\n",
         encoding="utf-8",
     )
 

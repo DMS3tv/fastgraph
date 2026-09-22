@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
+import platform
+import sys
+import traceback
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
-from importlib import import_module
-from importlib import metadata
-import platform
+from importlib import import_module, metadata
 from pathlib import Path
-import sys
 from threading import RLock
-import traceback
-from typing import Any, Iterable
+from typing import Any
 from uuid import uuid4
 
 from PyQt6.QtCore import QObject, pyqtSignal
-
 
 _SECRET_PARTS = ("password", "credential", "encrypted", "secret", "token")
 _MAX_LOG_BYTES = 2 * 1024 * 1024
@@ -91,9 +90,7 @@ class ConsoleEvent:
         )
         if not self.details:
             return prefix
-        rendered = ", ".join(
-            f"{key}={value!r}" for key, value in sorted(self.details.items())
-        )
+        rendered = ", ".join(f"{key}={value!r}" for key, value in sorted(self.details.items()))
         return f"{prefix} | {rendered}"
 
 

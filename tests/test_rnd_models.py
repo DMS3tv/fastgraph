@@ -2,18 +2,18 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PyQt6.QtGui import QImage
 
 from dms.rnd.models import (
-    RnDPhoto,
     RnDGroup,
     RnDMeasurement,
+    RnDPhoto,
     RnDSession,
     UnsupportedSessionVersion,
     generate_measurement_name,
     group_variation,
 )
 from dms.rnd.photos import RnDPhotoStore, attachment_directory
-from PyQt6.QtGui import QImage
 from dms.session import SessionData
 
 
@@ -40,7 +40,11 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
     first.hrtf_path = "old/path/Fixture A.txt"
     session = RnDSession(
         measurements=[first, second],
-        groups=[RnDGroup(id="g", name="Group", pinned=True, vertical_offset_db=-2.0, measurement_ids=["b"])],
+        groups=[
+            RnDGroup(
+                id="g", name="Group", pinned=True, vertical_offset_db=-2.0, measurement_ids=["b"]
+            )
+        ],
         ungrouped_order=["a"],
         selected_id="b",
         hrtf_name="Fixture A",
@@ -155,7 +159,9 @@ def test_rnd_photo_round_trip_and_legacy_default() -> None:
     assert RnDSession.from_dict(legacy).measurements[0].photos == []
 
 
-def test_rnd_photo_store_saves_sidecar_hydrates_and_preserves_unrelated_files(tmp_path: Path) -> None:
+def test_rnd_photo_store_saves_sidecar_hydrates_and_preserves_unrelated_files(
+    tmp_path: Path,
+) -> None:
     store = RnDPhotoStore()
     image = QImage(1800, 900, QImage.Format.Format_RGB32)
     photo = store.add_image(image, display_name="Webcam")

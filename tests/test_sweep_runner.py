@@ -7,6 +7,7 @@ These use a fake worker with the same five signals and the same
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 
@@ -61,9 +62,7 @@ class FakeSweepWorker(QObject):
             self.progress.emit(0.5)
             self.timing_quality.emit(12.0, 9.0, 1.5, 22.0)
             self.measurement_diagnostics.emit({"failure_reason": None})
-            self.finished.emit(
-                np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32)
-            )
+            self.finished.emit(np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32))
 
 
 def pump_until(qapp, predicate, timeout: float = 5.0) -> bool:
@@ -221,12 +220,10 @@ def test_signals_stop_after_the_thread_is_released(qapp, runner):
     qapp.processEvents()
     before = len(progress)
 
-    try:
+    # The worker's C++ object may already be released by the runner, which is
+    # the strongest possible form of "it can no longer reach a listener".
+    with contextlib.suppress(RuntimeError):
         worker.progress.emit(0.99)
-    except RuntimeError:
-        # The worker's C++ object was already released by the runner, which is
-        # the strongest possible form of "it can no longer reach a listener".
-        pass
     qapp.processEvents()
     assert len(progress) == before
 

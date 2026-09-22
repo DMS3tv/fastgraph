@@ -22,7 +22,9 @@ tests can inject a fake worker without any audio hardware.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Optional
+import contextlib
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -57,9 +59,9 @@ class _SweepThread(QThread):
 class SweepRunner(QObject):
     """Start, abort and join the sweep thread; re-emit the worker's signals."""
 
-    finished = pyqtSignal(np.ndarray, np.ndarray)   # recording, sweep
+    finished = pyqtSignal(np.ndarray, np.ndarray)  # recording, sweep
     error = pyqtSignal(str)
-    progress = pyqtSignal(float)                     # 0.0 … 1.0
+    progress = pyqtSignal(float)  # 0.0 … 1.0
     timing_quality = pyqtSignal(float, float, float, float)
     measurement_diagnostics = pyqtSignal(object)
     #: Emitted once the thread has been joined and its objects released.
@@ -67,13 +69,13 @@ class SweepRunner(QObject):
 
     def __init__(
         self,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
         *,
         wait_ms: int = DEFAULT_WAIT_MS,
     ) -> None:
         super().__init__(parent)
         self._wait_ms = int(wait_ms)
-        self._thread: Optional[_SweepThread] = None
+        self._thread: _SweepThread | None = None
         self._worker: Any = None
 
     # ------------------------------------------------------------------
@@ -91,7 +93,7 @@ class SweepRunner(QObject):
 
     def start(
         self,
-        worker_factory: "Callable[[], SweepWorker]",
+        worker_factory: Callable[[], SweepWorker],
         **worker_kwargs: Any,
     ) -> bool:
         """Start a sweep, joining any previous thread first.
@@ -153,10 +155,8 @@ class SweepRunner(QObject):
         thread = self._thread
         if thread is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             thread.abort()
-        except Exception:
-            pass
 
     def _release(self, *, wait_ms: int) -> bool:
         """Abort and join the current thread. ``False`` if it will not stop."""
@@ -177,7 +177,7 @@ class SweepRunner(QObject):
             return
         self._finalize(self._thread)
 
-    def _finalize(self, thread: Optional[_SweepThread]) -> None:
+    def _finalize(self, thread: _SweepThread | None) -> None:
         """Disconnect, drop and delete a terminated thread and its worker."""
         if thread is None or thread is not self._thread:
             return
@@ -185,10 +185,8 @@ class SweepRunner(QObject):
         self._thread = None
         self._worker = None
 
-        try:
+        with contextlib.suppress(TypeError, RuntimeError):
             thread.finished.disconnect(self._on_thread_finished)
-        except (TypeError, RuntimeError):
-            pass
         if worker is not None:
             for signal, slot in (
                 (worker.finished, self.finished),
@@ -197,16 +195,10 @@ class SweepRunner(QObject):
                 (worker.timing_quality, self.timing_quality),
                 (worker.measurement_diagnostics, self.measurement_diagnostics),
             ):
-                try:
+                with contextlib.suppress(TypeError, RuntimeError):
                     signal.disconnect(slot)
-                except (TypeError, RuntimeError):
-                    pass
-            try:
+            with contextlib.suppress(RuntimeError):
                 worker.deleteLater()
-            except RuntimeError:
-                pass
-        try:
+        with contextlib.suppress(RuntimeError):
             thread.deleteLater()
-        except RuntimeError:
-            pass
         self.idle.emit()

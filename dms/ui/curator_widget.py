@@ -4,9 +4,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QRect, QTimer, Qt
+from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QColorDialog,
     QComboBox,
     QFileDialog,
@@ -17,7 +18,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QAbstractItemView,
     QMenu,
     QMessageBox,
     QScrollArea,
@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms import brand_brand
+from dms.console import ConsoleEventStore
 from dms.curator.bounds import load_preference_bounds
 from dms.curator.export_image import export_graph_image
 from dms.curator.export_brand import draw_brand_poster, brand_export_warnings
@@ -41,15 +42,7 @@ from dms.curator.transforms import (
     combine_variation_layers,
     normalization_offset_at_1khz_with_warning,
 )
-from dms.ui.modern_button import ModernButton as QPushButton
-from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
-from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import theme_definitions
-from dms.ui.theme_surface import DitherSurface
 from dms.brand_fonts import brand_font_status
-from dms.ui.curator_graph_widget import AspectRatioWidget, BoundsSnapshot, GraphWidget, LayerSnapshot
-from dms.ui.toggle_switch import ToggleSwitch
-from dms.console import ConsoleEventStore
 from dms.theme import (
     DARK,
     ensure_graph_color,
@@ -57,7 +50,18 @@ from dms.theme import (
     theme_colors,
     theme_trace_palette,
 )
-
+from dms.ui.curator_graph_widget import (
+    AspectRatioWidget,
+    BoundsSnapshot,
+    GraphWidget,
+    LayerSnapshot,
+)
+from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
+from dms.ui.rounded_viewport import RoundedViewportFrame
+from dms.ui.style_tokens import theme_definitions
+from dms.ui.theme_surface import DitherSurface
+from dms.ui.toggle_switch import ToggleSwitch
 
 ACCENT_COLOR = "#FCBE11"
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -73,8 +77,7 @@ _STANDARD_SWATCH_PREFIX_SIZE = max(
     *(len(definition.tokens.trace_palette) for definition in theme_definitions()),
 )
 _DEFAULT_STANDARD_SWATCHES = tuple(
-    QColor(QColorDialog.standardColor(index))
-    for index in range(_STANDARD_SWATCH_PREFIX_SIZE)
+    QColor(QColorDialog.standardColor(index)) for index in range(_STANDARD_SWATCH_PREFIX_SIZE)
 )
 
 
@@ -101,7 +104,9 @@ class LayerListRow(QWidget):
         self.visible_check = ToggleSwitch()
         self.visible_check.setChecked(layer.visible)
         self.visible_check.stateChanged.connect(
-            lambda _state, layer_id=layer.id: on_visible_changed(layer_id, self.visible_check.isChecked())
+            lambda _state, layer_id=layer.id: on_visible_changed(
+                layer_id, self.visible_check.isChecked()
+            )
         )
         top.addWidget(self.visible_check)
 
@@ -123,13 +128,14 @@ class LayerListRow(QWidget):
         self.name_edit.setStyleSheet("font-weight: 600;")
         self.name_edit.setToolTip("Rename this graph layer")
         self.name_edit.editingFinished.connect(
-            lambda layer_id=layer.id: on_name_changed(layer_id, self.name_edit.text(), self.name_edit)
+            lambda layer_id=layer.id: on_name_changed(
+                layer_id, self.name_edit.text(), self.name_edit
+            )
         )
         top.addWidget(self.name_edit, 1)
 
-        displays_variation = (
-            layer.curve.kind == "variation"
-            or getattr(layer.hrtf, "is_variation", False)
+        displays_variation = layer.curve.kind == "variation" or getattr(
+            layer.hrtf, "is_variation", False
         )
         kind = QLabel("VAR" if displays_variation else "FR")
         kind.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: 700;")
@@ -185,7 +191,9 @@ class LayerListRow(QWidget):
             self.hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
         self.hrtf_combo.blockSignals(False)
         self.hrtf_combo.currentIndexChanged.connect(
-            lambda _index, layer_id=layer.id: on_hrtf_changed(layer_id, self.hrtf_combo.currentData())
+            lambda _index, layer_id=layer.id: on_hrtf_changed(
+                layer_id, self.hrtf_combo.currentData()
+            )
         )
         controls.addWidget(self.hrtf_combo, 1)
         layout.addLayout(controls)
@@ -334,7 +342,9 @@ class CuratorWidget(QWidget):
         self._primary_metadata_layer_id: str | None = None
         self._applying_auto_text = False
         self._state = GraphState(variation_combination=str(variation_combination))
-        self._state.background = brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
+        self._state.background = (
+            brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
+        )
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
         self._last_import_warnings: list[str] = []
@@ -445,9 +455,7 @@ class CuratorWidget(QWidget):
 
     def offset_layer_to_zero_at_1khz(self, layer: LayerState) -> None:
         """Normalize the displayed layer with an offset, preserving source arrays."""
-        transformed = apply_layer_transform(
-            layer, self._state.variation_combination
-        )
+        transformed = apply_layer_transform(layer, self._state.variation_combination)
         offset, warning = normalization_offset_at_1khz_with_warning(transformed)
         if warning is not None:
             self._show_status(f"{layer.name}: {warning}", severity="WARNING")
@@ -562,7 +570,8 @@ class CuratorWidget(QWidget):
             self._sync_ui()
             return
         matches = [
-            path for label, path in self._hrtf_options
+            path
+            for label, path in self._hrtf_options
             if path and path != "__combined__" and label.lower() == requested.lower()
         ]
         if len(matches) != 1:
@@ -678,9 +687,7 @@ class CuratorWidget(QWidget):
         controls_scroll = QScrollArea()
         controls_scroll.setObjectName("curatorControlsScroll")
         controls_scroll.setWidgetResizable(True)
-        controls_scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         controls_scroll.setMinimumWidth(410)
         controls_scroll.setWidget(self._build_panel())
@@ -689,7 +696,6 @@ class CuratorWidget(QWidget):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([1100, 500])
-
 
     def _build_panel(self) -> QWidget:
         panel = DitherSurface()
@@ -788,16 +794,10 @@ class CuratorWidget(QWidget):
         brand_form.setContentsMargins(12, 12, 12, 12)
         brand_form.setHorizontalSpacing(12)
         brand_form.setVerticalSpacing(8)
-        brand_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
+        brand_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         brand_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-        brand_form.setFormAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
-        )
-        brand_form.setLabelAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        brand_form.setFormAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        brand_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._brand_metadata_source_combo = QComboBox()
         self._brand_metadata_source_combo.currentIndexChanged.connect(
             self._on_metadata_source_changed
@@ -809,9 +809,7 @@ class CuratorWidget(QWidget):
         brand_form.addRow("Automatic text", self._brand_fill_metadata_btn)
 
         self._brand_clean_slate_enabled = ToggleSwitch()
-        self._brand_clean_slate_enabled.stateChanged.connect(
-            self._on_brand_clean_slate_changed
-        )
+        self._brand_clean_slate_enabled.stateChanged.connect(self._on_brand_clean_slate_changed)
         self._brand_clean_slate_enabled.setToolTip(
             "Hide all BRAND poster text and guide boxes. Keep the graph, BRAND logo, "
             "and optional layer names."
@@ -832,10 +830,7 @@ class CuratorWidget(QWidget):
                 f"{status.mono_family} body."
             )
         else:
-            font_text = (
-                f"Fonts: {status.heading_family} headings, "
-                f"{status.mono_family} body text."
-            )
+            font_text = f"Fonts: {status.heading_family} headings, {status.mono_family} body text."
         self._brand_font_status = QLabel(font_text)
         self._brand_font_status.setObjectName("brandFontStatus")
         self._brand_font_status.setWordWrap(True)
@@ -849,7 +844,9 @@ class CuratorWidget(QWidget):
         self._brand_footer1_edit = QLineEdit(self._state.export_text.brand_footer_left_1)
         self._brand_footer2_edit = QLineEdit(self._state.export_text.brand_footer_left_2)
         self._brand_legend_bounds_edit = QLineEdit(self._state.export_text.brand_legend_bounds_label)
-        self._brand_legend_variation_edit = QLineEdit(self._state.export_text.brand_legend_variation_label)
+        self._brand_legend_variation_edit = QLineEdit(
+            self._state.export_text.brand_legend_variation_label
+        )
         self._brand_footer1_edit.textChanged.connect(self._on_brand_text_changed)
         self._brand_footer2_edit.textChanged.connect(self._on_brand_text_changed)
         self._brand_legend_bounds_edit.textChanged.connect(self._on_brand_text_changed)
@@ -888,9 +885,7 @@ class CuratorWidget(QWidget):
         toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         def on_toggle(expanded: bool) -> None:
-            toggle.setArrowType(
-                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
-            )
+            toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
             content.setVisible(expanded)
 
         toggle.toggled.connect(on_toggle)
@@ -977,9 +972,7 @@ class CuratorWidget(QWidget):
             self._brand_metadata_status.setText(
                 f"Field status: {len(manual)} manual, {automatic_count} automatic."
             )
-            self._brand_metadata_status.setToolTip(
-                "Manual fields: " + ", ".join(manual) + "."
-            )
+            self._brand_metadata_status.setToolTip("Manual fields: " + ", ".join(manual) + ".")
         else:
             self._brand_metadata_status.setText("Field status: All fields are automatic.")
             self._brand_metadata_status.setToolTip(
@@ -1056,14 +1049,12 @@ class CuratorWidget(QWidget):
             else 0
         )
         selected_ids = {
-            item.data(256)
-            for item in self._layer_list.selectedItems()
-            if item.data(256)
+            item.data(256) for item in self._layer_list.selectedItems() if item.data(256)
         }
         self._refresh_stale_flags()
-        swatch_border = (
-            brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
-        )["border"]
+        swatch_border = (brand_theme_colors() if self._brand_mode else theme_colors(self._theme))[
+            "border"
+        ]
         self._layer_list.blockSignals(True)
         self._layer_list.clear()
         selected_row = -1
@@ -1078,9 +1069,7 @@ class CuratorWidget(QWidget):
                 self._set_layer_name,
                 self._set_layer_offset,
                 self._set_layer_hrtf,
-                swatch_color=ensure_graph_color(
-                    layer.color, self._state.background
-                ).name(),
+                swatch_color=ensure_graph_color(layer.color, self._state.background).name(),
                 swatch_border=swatch_border,
             )
             item.setSizeHint(row.sizeHint())
@@ -1205,7 +1194,9 @@ class CuratorWidget(QWidget):
         if paths:
             self.import_files(paths)
 
-    def _on_layer_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+    def _on_layer_selected(
+        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
+    ) -> None:
         self._selected_layer_id = current.data(256) if current else None
         self._sync_combine_button()
 
@@ -1225,9 +1216,7 @@ class CuratorWidget(QWidget):
             for layer in targets
             if (snapshot := self._graph.snapshot_visible_layer(layer.id)) is not None
         ]
-        self._state.layers = [
-            item for item in self._state.layers if item.id not in removed_ids
-        ]
+        self._state.layers = [item for item in self._state.layers if item.id not in removed_ids]
         if self._primary_metadata_layer_id in removed_ids:
             self._primary_metadata_layer_id = None
         self._selected_layer_id = self._state.layers[-1].id if self._state.layers else None
@@ -1247,10 +1236,7 @@ class CuratorWidget(QWidget):
                 recorded = layer.source_signature
                 stale = any(
                     source_id not in signatures
-                    or (
-                        source_id in recorded
-                        and signatures[source_id] != recorded[source_id]
-                    )
+                    or (source_id in recorded and signatures[source_id] != recorded[source_id])
                     for source_id in layer.source_layer_ids
                 )
             if stale != layer.stale:
@@ -1317,9 +1303,7 @@ class CuratorWidget(QWidget):
 
     def _selected_layers(self) -> list[LayerState]:
         selected_ids = {
-            item.data(256)
-            for item in self._layer_list.selectedItems()
-            if item.data(256)
+            item.data(256) for item in self._layer_list.selectedItems() if item.data(256)
         }
         return [layer for layer in self._state.layers if layer.id in selected_ids]
 
@@ -1347,9 +1331,7 @@ class CuratorWidget(QWidget):
     def _combine_layers(self, selected: list[LayerState]) -> LayerState:
         if not can_combine_layers(selected):
             raise ValueError("Select at least two complete variation layers to combine.")
-        combined_curve = combine_variation_layers(
-            selected, self._state.variation_combination
-        )
+        combined_curve = combine_variation_layers(selected, self._state.variation_combination)
 
         exiting_layers = [
             snapshot
@@ -1371,9 +1353,7 @@ class CuratorWidget(QWidget):
             hrtf=None,
             is_combined=True,
             source_layer_ids=[layer.id for layer in selected],
-            source_signature={
-                layer.id: _layer_signature(layer) for layer in selected
-            },
+            source_signature={layer.id: _layer_signature(layer) for layer in selected},
         )
         self._state.layers.append(combined)
         self._selected_layer_id = combined.id
@@ -1420,8 +1400,10 @@ class CuratorWidget(QWidget):
         self._sync_ui()
         self._redraw()
         self._log(
-            "INFO", "Layer color changed",
-            layer=self._layer_number(layer), color=layer.color,
+            "INFO",
+            "Layer color changed",
+            layer=self._layer_number(layer),
+            color=layer.color,
         )
 
     def _set_layer_name(self, layer_id: str, value: str, editor: QLineEdit | None = None) -> None:
@@ -1463,16 +1445,20 @@ class CuratorWidget(QWidget):
             self._apply_auto_export_text()
             self._redraw()
             self._log(
-                "INFO", "Layer HRTF changed",
-                layer=self._layer_number(layer), hrtf=None,
+                "INFO",
+                "Layer HRTF changed",
+                layer=self._layer_number(layer),
+                hrtf=None,
             )
             return
         try:
             layer.hrtf = load_hrtf_txt(path)
         except Exception as exc:
             self._log(
-                "ERROR", "Layer HRTF failed",
-                layer=self._layer_number(layer), error=str(exc),
+                "ERROR",
+                "Layer HRTF failed",
+                layer=self._layer_number(layer),
+                error=str(exc),
             )
             QMessageBox.warning(self, "HRTF Error", str(exc))
             layer.hrtf = None
@@ -1482,8 +1468,10 @@ class CuratorWidget(QWidget):
         self._apply_auto_export_text()
         self._redraw()
         self._log(
-            "INFO", "Layer HRTF changed",
-            layer=self._layer_number(layer), hrtf=layer.hrtf.name,
+            "INFO",
+            "Layer HRTF changed",
+            layer=self._layer_number(layer),
+            hrtf=layer.hrtf.name,
         )
 
     def _clear_layer_hrtf(self) -> None:
@@ -1500,7 +1488,8 @@ class CuratorWidget(QWidget):
 
     def _layer_number(self, layer: LayerState) -> int:
         return next(
-            index for index, candidate in enumerate(self._state.layers, 1)
+            index
+            for index, candidate in enumerate(self._state.layers, 1)
             if candidate.id == layer.id
         )
 
@@ -1531,13 +1520,9 @@ class CuratorWidget(QWidget):
     def _on_bounds_enabled_changed(self, _state: int) -> None:
         enabling = self._bounds_enabled.isChecked()
         exiting_bounds = self._graph.snapshot_bounds() if not enabling else None
-        if enabling and (
-            self._state.bounds.upper is None or self._state.bounds.lower is None
-        ):
+        if enabling and (self._state.bounds.upper is None or self._state.bounds.lower is None):
             self._load_default_bounds()
-        if enabling and (
-            self._state.bounds.upper is None or self._state.bounds.lower is None
-        ):
+        if enabling and (self._state.bounds.upper is None or self._state.bounds.lower is None):
             # Nothing to draw: refuse to latch instead of showing an ON toggle
             # over an empty graph.
             self._state.bounds.enabled = False
@@ -1602,7 +1587,9 @@ class CuratorWidget(QWidget):
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        local_paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
+        local_paths = [
+            Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()
+        ]
         txt_paths = [path for path in local_paths if path.suffix.lower() == ".txt"]
         unsupported = [path.name for path in local_paths if path.suffix.lower() != ".txt"]
         self._last_import_warnings = []

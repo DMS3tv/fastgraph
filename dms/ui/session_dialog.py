@@ -73,14 +73,10 @@ class SessionEditor(QWidget):
 
         self._form_factor = QComboBox()
         self._form_factor.addItems(["over-ear", "on-ear", "in-ear"])
-        self._form_factor.currentTextChanged.connect(
-            self._sync_in_ear_fitment_visibility
-        )
+        self._form_factor.currentTextChanged.connect(self._sync_in_ear_fitment_visibility)
 
         self._in_ear_fitment = QComboBox()
-        self._in_ear_fitment.addItems(
-            ["shallow fitment", "mid fitment", "deep fitment"]
-        )
+        self._in_ear_fitment.addItems(["shallow fitment", "mid fitment", "deep fitment"])
 
         self._open_back = QComboBox()
         self._open_back.addItems(["open back", "closed back", "semi-open"])
@@ -166,16 +162,12 @@ class SessionEditor(QWidget):
             self._firmware.setText(session.firmware)
             self._eq.setChecked(session.eq_applied)
             self._anc.setChecked(session.anc_mode)
-            self._transparency.setChecked(
-                getattr(session, "transparency_mode", False)
-            )
+            self._transparency.setChecked(getattr(session, "transparency_mode", False))
             self._form_factor.setCurrentText(session.form_factor)
             fitment = getattr(session, "in_ear_fitment", "")
             if fitment:
                 self._in_ear_fitment.setCurrentText(fitment)
-            self._open_back.setCurrentText(
-                "open back" if session.open_back else "closed back"
-            )
+            self._open_back.setCurrentText("open back" if session.open_back else "closed back")
             self._pads.setText(session.pads_notes)
             self._connection.setCurrentText(session.connection)
             self._channel_side.setCurrentText(
@@ -246,8 +238,7 @@ class SessionDialog(QDialog):
         outer.addWidget(self._editor, 1)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)

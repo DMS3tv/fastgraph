@@ -10,10 +10,10 @@ from dms.settings_manager import SettingsManager
 from dms.theme import (
     DARK,
     DITHER,
-    LIGHT,
     FASTGRAPH_95,
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
+    LIGHT,
     ThemeController,
     _status_accent_colors,
     application_stylesheet,
@@ -24,9 +24,9 @@ from dms.theme import (
     normalize_theme,
     theme_trace_palette,
 )
-from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.settings_dialog import SettingsWidget
+from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
 from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
 
 
@@ -40,7 +40,7 @@ def test_theme_defaults_and_validation() -> None:
     assert normalize_theme("Dither") == DITHER
     assert tokens_for("dither") is DITHER_TOKENS
     assert "#f3f5f8" in application_stylesheet(LIGHT)
-    assert "QWidget[ditherSurface=\"true\"]" in application_stylesheet(FASTGRAPH_95)
+    assert 'QWidget[ditherSurface="true"]' in application_stylesheet(FASTGRAPH_95)
     assert "border-top: 2px solid #ffffff" in application_stylesheet(FASTGRAPH_95)
     dark_classic = application_stylesheet(FASTGRAPH_95_DARK)
     assert "border-top: 2px solid #8f8f8f" in dark_classic
@@ -59,10 +59,7 @@ def test_dither_trace_palette_has_contrast_and_distinct_entries() -> None:
     assert palette[0] == "#E9E2D4"
     assert len(palette) == 8
     assert len(set(palette)) == 8
-    assert all(
-        graph_contrast_ratio(color, DITHER_TOKENS.plot_bg) >= 4.5
-        for color in palette
-    )
+    assert all(graph_contrast_ratio(color, DITHER_TOKENS.plot_bg) >= 4.5 for color in palette)
 
 
 def test_status_accent_colors_use_dither_rust_and_keep_dark_blue() -> None:

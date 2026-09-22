@@ -10,14 +10,13 @@ Bottom viewport:
 
 """
 
-from typing import Optional
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QRect, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QMenu, QWidget, QVBoxLayout
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent
 import pyqtgraph.exporters
+from PyQt6.QtCore import QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PyQt6.QtWidgets import QFileDialog, QMenu, QVBoxLayout, QWidget
+
 from dms import brand_brand
 from dms.graph_display import (
     retro_step_group,
@@ -36,7 +35,6 @@ from dms.theme import (
 )
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import tokens_for
-
 
 pg.setConfigOption("background", "#1a1a1a")
 pg.setConfigOption("foreground", "#888888")
@@ -173,15 +171,15 @@ def _make_plot_widget(title: str) -> pg.PlotWidget:
 class DualPlotWidget(QWidget):
     measurement_files_dropped = pyqtSignal(list)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._theme = "dark"
         self._brand_mode = False
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
-        self._last_average: Optional[tuple[np.ndarray, np.ndarray]] = None
-        self._last_variation: Optional[
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        ] = None
+        self._last_average: tuple[np.ndarray, np.ndarray] | None = None
+        self._last_variation: (
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
+        ) = None
         self._last_bottom_mode = "average"
 
         layout = QVBoxLayout(self)
@@ -201,30 +199,30 @@ class DualPlotWidget(QWidget):
         self._bot_frame = RoundedViewportFrame(self._bot_plot)
         layout.addWidget(self._top_frame, 1)
         layout.addWidget(self._bot_frame, 1)
-        self._header_widget: Optional[QWidget] = None
-        self._between_plots_widget: Optional[QWidget] = None
-        self._footer_widget: Optional[QWidget] = None
+        self._header_widget: QWidget | None = None
+        self._between_plots_widget: QWidget | None = None
+        self._footer_widget: QWidget | None = None
 
         self._top_items: list[pg.PlotDataItem] = []
-        self._bot_item: Optional[pg.PlotDataItem] = None
+        self._bot_item: pg.PlotDataItem | None = None
         self._bot_extra_items: list[object] = []
         # The distortion overlay lives in its own ViewBox, so its items are
         # tracked separately from ``_bot_extra_items``: removing them from the
         # bottom PlotWidget would not detach them from that ViewBox.
-        self._distortion_vb: Optional[pg.ViewBox] = None
+        self._distortion_vb: pg.ViewBox | None = None
         self._distortion_items: list[object] = []
-        self._last_distortion: Optional[tuple[np.ndarray, dict]] = None
+        self._last_distortion: tuple[np.ndarray, dict] | None = None
         # Target comparison. These live on the bottom PlotWidget but outside
         # ``_bot_extra_items`` so a plain redraw of the average or the
         # variation band does not take them down with it.
-        self._target_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._target_curve: tuple[np.ndarray, np.ndarray] | None = None
         self._reference_layers: list[tuple[str, np.ndarray, np.ndarray, str]] = []
         self._compare_items: list[object] = []
-        self._compare_legend: Optional[pg.LegendItem] = None
+        self._compare_legend: pg.LegendItem | None = None
         self._delta_mode = False
-        self._delta_zero_line: Optional[pg.InfiniteLine] = None
-        self._reveal_item: Optional[pg.PlotDataItem] = None
-        self._reveal_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._delta_zero_line: pg.InfiniteLine | None = None
+        self._reveal_item: pg.PlotDataItem | None = None
+        self._reveal_curve: tuple[np.ndarray, np.ndarray] | None = None
         self._reveal_progress = 0.0
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setInterval(10)
@@ -301,8 +299,10 @@ class DualPlotWidget(QWidget):
         for index, item in enumerate(self._top_items):
             is_last = index == len(self._top_items) - 1
             if is_last:
-                color = (0, 0, 128, 235) if self._theme == FASTGRAPH_95 else (
-                    (35, 135, 128, 235) if light_plot else _TEAL
+                color = (
+                    (0, 0, 128, 235)
+                    if self._theme == FASTGRAPH_95
+                    else ((35, 135, 128, 235) if light_plot else _TEAL)
                 )
                 width = 1.7 if light_plot else 1.5
             else:
@@ -332,8 +332,9 @@ class DualPlotWidget(QWidget):
     def update_curves(
         self,
         kept: list[tuple[np.ndarray, np.ndarray]],
-        average: Optional[tuple[np.ndarray, np.ndarray]],
-        variation: Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = None,
+        average: tuple[np.ndarray, np.ndarray] | None,
+        variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        | None = None,
         bottom_mode: str = "average",
         animate_last: bool = False,
     ) -> None:
@@ -382,8 +383,8 @@ class DualPlotWidget(QWidget):
 
     def set_target_curve(
         self,
-        freqs: Optional[np.ndarray],
-        mag_db: Optional[np.ndarray] = None,
+        freqs: np.ndarray | None,
+        mag_db: np.ndarray | None = None,
     ) -> None:
         """Draw a target curve behind the average, or remove it with ``None``."""
         if freqs is None or mag_db is None or len(np.asarray(freqs)) == 0:
@@ -397,7 +398,7 @@ class DualPlotWidget(QWidget):
 
     def set_reference_layers(
         self,
-        layers: Optional[list[tuple[str, np.ndarray, np.ndarray, str]]],
+        layers: list[tuple[str, np.ndarray, np.ndarray, str]] | None,
     ) -> None:
         """Draw ``(name, freqs, mag_db, colour)`` A/B layers, or clear them."""
         cleaned: list[tuple[str, np.ndarray, np.ndarray, str]] = []
@@ -433,9 +434,7 @@ class DualPlotWidget(QWidget):
                 )
                 self._bot_plot.addItem(line)
                 self._delta_zero_line = line
-            self._bot_plot.setYRange(
-                -_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0
-            )
+            self._bot_plot.setYRange(-_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0)
         else:
             view_box.setAspectLocked(lock=True, ratio=25.0)
             if self._delta_zero_line is not None:
@@ -478,9 +477,7 @@ class DualPlotWidget(QWidget):
                 width=_TARGET_WIDTH,
                 style=Qt.PenStyle.DashLine,
             )
-            item = self._bot_plot.plot(
-                display_freqs, display_mag, pen=pen, antialias=True
-            )
+            item = self._bot_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
             item.setZValue(-2)
             self._compare_items.append(item)
             entries.append((item, "Target"))
@@ -491,9 +488,7 @@ class DualPlotWidget(QWidget):
                 color=ensure_graph_color(color, background),
                 width=_REFERENCE_WIDTH,
             )
-            item = self._bot_plot.plot(
-                display_freqs, display_mag, pen=pen, antialias=True
-            )
+            item = self._bot_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
             item.setZValue(-1)
             self._compare_items.append(item)
             entries.append((item, name))
@@ -516,8 +511,8 @@ class DualPlotWidget(QWidget):
 
     def set_distortion_overlay(
         self,
-        freqs: Optional[np.ndarray],
-        series: Optional[dict[str, np.ndarray]],
+        freqs: np.ndarray | None,
+        series: dict[str, np.ndarray] | None,
     ) -> None:
         """Draw THD/H2/H3 in dB relative to the fundamental, or hide them.
 
@@ -714,8 +709,10 @@ class DualPlotWidget(QWidget):
                 pen = pg.mkPen(color=color, width=1.7 if is_last else 1.15)
             elif is_last:
                 light_plot = self._uses_light_plot()
-                color = (0, 0, 128, 235) if self._theme == FASTGRAPH_95 else (
-                    (35, 135, 128, 235) if light_plot else _TEAL
+                color = (
+                    (0, 0, 128, 235)
+                    if self._theme == FASTGRAPH_95
+                    else ((35, 135, 128, 235) if light_plot else _TEAL)
                 )
                 pen = pg.mkPen(color=color, width=1.7 if light_plot else 1.5)
             else:
@@ -742,10 +739,9 @@ class DualPlotWidget(QWidget):
 
     def _redraw_bottom(
         self,
-        average: Optional[tuple[np.ndarray, np.ndarray]],
-        variation: Optional[
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        ],
+        average: tuple[np.ndarray, np.ndarray] | None,
+        variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        | None,
         mode: str,
     ) -> None:
         self._clear_bottom_items()
@@ -765,9 +761,7 @@ class DualPlotWidget(QWidget):
                 self._bot_item = self._bot_plot.plot(
                     display_freqs, display_mag, pen=pen, antialias=True
                 )
-            self._bot_plot.setYRange(
-                -_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0
-            )
+            self._bot_plot.setYRange(-_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0)
             return
 
         if mode == "variation":
@@ -792,9 +786,8 @@ class DualPlotWidget(QWidget):
 
     def _draw_variation_bottom(
         self,
-        variation: Optional[
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        ],
+        variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        | None,
     ) -> None:
         if variation is None:
             return
@@ -848,7 +841,9 @@ class DualPlotWidget(QWidget):
             pen=pg.mkPen(color=median_color, width=1.8),
             antialias=antialias,
         )
-        self._bot_extra_items.extend([upper90, lower10, fill90, upper75, lower25, fill75, median_item])
+        self._bot_extra_items.extend(
+            [upper90, lower10, fill90, upper75, lower25, fill75, median_item]
+        )
         self._auto_center_y(self._bot_plot, [(freqs, p10), (freqs, p90)])
 
     def _auto_center_y(

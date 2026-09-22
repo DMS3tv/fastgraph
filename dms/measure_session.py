@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 
@@ -44,7 +45,6 @@ from dms.two_channel import (
     combined_pair_curves,
 )
 from dms.version import __version__ as APP_VERSION
-
 
 MEASURE_SESSION_SCHEMA_VERSION = 1
 MEASURE_SESSION_EXTENSION = ".fastgraph-measure.json"
@@ -91,7 +91,7 @@ class UnsupportedMeasureSessionVersion(ValueError):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _array_to_list(values: Any) -> list[float]:
@@ -107,7 +107,7 @@ def _array_from_list(values: Any) -> np.ndarray:
     return np.asarray(values, dtype=float).ravel()
 
 
-def _optional_str(value: Any) -> Optional[str]:
+def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
@@ -135,7 +135,7 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def diagnostics_to_dict(value: Any) -> Optional[dict[str, Any]]:
+def diagnostics_to_dict(value: Any) -> dict[str, Any] | None:
     """Return alignment diagnostics as a plain JSON-safe dictionary.
 
     Accepts a :class:`~dms.measurement_alignment.MeasurementDiagnostics` (or
@@ -146,17 +146,13 @@ def diagnostics_to_dict(value: Any) -> Optional[dict[str, Any]]:
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {
-            str(key): _json_safe(item)
-            for key, item in dataclasses.asdict(value).items()
-        }
+        return {str(key): _json_safe(item) for key, item in dataclasses.asdict(value).items()}
     raise TypeError(
-        "Diagnostics must be a dataclass, a dictionary or None, "
-        f"not {type(value).__name__}."
+        f"Diagnostics must be a dataclass, a dictionary or None, not {type(value).__name__}."
     )
 
 
-def distortion_summary(value: Any) -> Optional[dict[str, float]]:
+def distortion_summary(value: Any) -> dict[str, float] | None:
     """Reduce a harmonic analysis to the three numbers the Measure tab shows.
 
     Accepts a :class:`~dms.processing.HarmonicAnalysis` (anything carrying
@@ -222,14 +218,12 @@ def session_data_from_dict(data: Any) -> SessionData:
     return SessionData(**kwargs)
 
 
-def _timing_quality(value: Any) -> Optional[TimingQuality]:
+def _timing_quality(value: Any) -> TimingQuality | None:
     if value is None:
         return None
     items = [float(item) for item in value]
     if len(items) != 4:
-        raise ValueError(
-            "timing_quality must be (start_conf, end_conf, drift_ms, snr_db)."
-        )
+        raise ValueError("timing_quality must be (start_conf, end_conf, drift_ms, snr_db).")
     return (items[0], items[1], items[2], items[3])
 
 
@@ -240,9 +234,9 @@ class KeptSweep:
     freqs: np.ndarray
     mag_db: np.ndarray
     kept_at: str = field(default_factory=_now)
-    diagnostics: Optional[dict[str, Any]] = None
-    timing_quality: Optional[TimingQuality] = None
-    distortion_summary: Optional[dict[str, float]] = None
+    diagnostics: dict[str, Any] | None = None
+    timing_quality: TimingQuality | None = None
+    distortion_summary: dict[str, float] | None = None
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -273,7 +267,7 @@ class KeptSweep:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "KeptSweep":
+    def from_dict(cls, data: Any) -> KeptSweep:
         payload = dict(data or {})
         return cls(
             freqs=_array_from_list(payload.get("freqs")),
@@ -302,7 +296,7 @@ class KeptPair:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "KeptPair":
+    def from_dict(cls, data: Any) -> KeptPair:
         payload = dict(data or {})
         return cls(
             channel_1=KeptSweep.from_dict(payload.get("channel_1")),
@@ -326,7 +320,7 @@ def _as_kept_sweep(
     diagnostics: Any = None,
     timing_quality: Any = None,
     distortion: Any = None,
-    kept_at: Optional[str] = None,
+    kept_at: str | None = None,
 ) -> KeptSweep:
     """Coerce a curve tuple or an existing sweep into a :class:`KeptSweep`."""
     if isinstance(value, KeptSweep):
@@ -350,8 +344,8 @@ class MeasureSession:
     two_channel: bool = False
     bottom_mode: str = "combined"
     level_mode: str = "ref_1khz"
-    hrtf_path: Optional[str] = None
-    hrtf_name: Optional[str] = None
+    hrtf_path: str | None = None
+    hrtf_name: str | None = None
     hrtf_enabled: bool = False
     sweeps: list[KeptSweep] = field(default_factory=list)
     pairs: list[KeptPair] = field(default_factory=list)
@@ -361,13 +355,11 @@ class MeasureSession:
     created_at: str = field(default_factory=_now)
     #: Runtime-only: the file this session was loaded from or last saved to.
     #: Deliberately not serialized so a session file stays portable.
-    source_path: Optional[str] = None
+    source_path: str | None = None
 
     def __post_init__(self) -> None:
         self.two_channel = bool(self.two_channel)
-        self.bottom_mode = (
-            "separate" if str(self.bottom_mode) == "separate" else "combined"
-        )
+        self.bottom_mode = "separate" if str(self.bottom_mode) == "separate" else "combined"
         self.level_mode = "dbspl" if str(self.level_mode) == "dbspl" else "ref_1khz"
         self.hrtf_path = _optional_str(self.hrtf_path)
         self.hrtf_name = _optional_str(self.hrtf_name)
@@ -394,7 +386,7 @@ class MeasureSession:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "MeasureSession":
+    def from_dict(cls, data: Any) -> MeasureSession:
         payload = dict(data or {})
         version = int(payload.get("schema_version") or 0)
         if version > MEASURE_SESSION_SCHEMA_VERSION:
@@ -470,7 +462,7 @@ class MeasureSession:
         timing_quality: Any = None,
         distortion: Any = None,
         note: str = "",
-        kept_at: Optional[str] = None,
+        kept_at: str | None = None,
     ) -> KeptSweep:
         """Append one kept sweep, stamping ``kept_at`` unless one is supplied."""
         sweep = KeptSweep(
@@ -496,7 +488,7 @@ class MeasureSession:
         channel_2_timing_quality: Any = None,
         channel_1_distortion: Any = None,
         channel_2_distortion: Any = None,
-        kept_at: Optional[str] = None,
+        kept_at: str | None = None,
     ) -> KeptPair:
         """Append one kept pair.
 
@@ -542,21 +534,21 @@ class MeasureSession:
         cls,
         *,
         session_data: SessionData,
-        kept_curves: Optional[Sequence[Curve]] = None,
-        pairs: Optional[Iterable[Any]] = None,
+        kept_curves: Sequence[Curve] | None = None,
+        pairs: Iterable[Any] | None = None,
         two_channel: bool = False,
         bottom_mode: str = "combined",
         level_mode: str = "ref_1khz",
-        hrtf_path: Optional[str] = None,
-        hrtf_name: Optional[str] = None,
+        hrtf_path: str | None = None,
+        hrtf_name: str | None = None,
         hrtf_enabled: bool = False,
-        sweep_diagnostics: Optional[Sequence[Any]] = None,
-        sweep_timing_quality: Optional[Sequence[Any]] = None,
-        sweep_distortion: Optional[Sequence[Any]] = None,
+        sweep_diagnostics: Sequence[Any] | None = None,
+        sweep_timing_quality: Sequence[Any] | None = None,
+        sweep_distortion: Sequence[Any] | None = None,
         notes: str = "",
-        created_at: Optional[str] = None,
-        source_path: Optional[str] = None,
-    ) -> "MeasureSession":
+        created_at: str | None = None,
+        source_path: str | None = None,
+    ) -> MeasureSession:
         """Build a session from the Measure tab's plain runtime state.
 
         Everything is a plain argument so the UI wiring stays a one-liner and
@@ -577,7 +569,7 @@ class MeasureSession:
             source_path=source_path,
         )
 
-        def _at(sequence: Optional[Sequence[Any]], index: int) -> Any:
+        def _at(sequence: Sequence[Any] | None, index: int) -> Any:
             if not sequence or index >= len(sequence):
                 return None
             return sequence[index]

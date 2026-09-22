@@ -15,9 +15,7 @@ def test_band_average_matches_interpolation_for_smooth_curve() -> None:
     mag_db = 6.0 * np.log10(freqs / 1000.0) - 2.0 * np.sin(np.log(freqs))
 
     _, averaged = resample_log_band_average(freqs, mag_db, normalize_ref=False)
-    _, sampled = downsample_to_log_points(
-        freqs, mag_db, normalize_ref=False, band_average=False
-    )
+    _, sampled = downsample_to_log_points(freqs, mag_db, normalize_ref=False, band_average=False)
 
     # A cell is ~1.2 % wide, so a smooth curve cannot move inside it.
     assert np.max(np.abs(averaged - sampled)) < 0.05
@@ -33,9 +31,7 @@ def test_band_average_suppresses_single_noisy_bin() -> None:
     mag_db[spike_bin] = 40.0
 
     _, averaged = resample_log_band_average(freqs, mag_db, normalize_ref=False)
-    _, sampled = downsample_to_log_points(
-        freqs, mag_db, normalize_ref=False, band_average=False
-    )
+    _, sampled = downsample_to_log_points(freqs, mag_db, normalize_ref=False, band_average=False)
 
     # Point sampling lands on the bad bin and reports it at full height.
     assert np.max(sampled) > 30.0
@@ -85,7 +81,7 @@ def test_band_average_is_power_mean_not_db_mean() -> None:
     )
 
     assert target[1] == pytest.approx(1000.0)
-    power_mean = 10.0 * np.log10((10 ** 0.0 + 10 ** 2.0) / 2.0)
+    power_mean = 10.0 * np.log10((10**0.0 + 10**2.0) / 2.0)
     assert power_mean == pytest.approx(17.0329, abs=1e-3)
     assert out[1] == pytest.approx(power_mean, abs=1e-9)
     # The arithmetic mean of the dB values would have said 10 dB.

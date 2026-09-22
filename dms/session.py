@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -51,9 +51,7 @@ class SessionData:
         lines.append(f"* Form Factor: {self.form_factor}")
         if self.form_factor == "in-ear" and self.in_ear_fitment:
             lines.append(f"* In-ear Fitment: {self.in_ear_fitment}")
-        lines.append(
-            f"* Acoustic Type: {'Open Back' if self.open_back else 'Closed Back'}"
-        )
+        lines.append(f"* Acoustic Type: {'Open Back' if self.open_back else 'Closed Back'}")
         if self.pads_notes:
             lines.append(f"* Pads/Tips Notes: {self.pads_notes}")
         lines.append(f"* Connection: {self.connection}")

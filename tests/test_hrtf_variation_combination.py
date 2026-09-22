@@ -27,9 +27,7 @@ def _mono_hrtf(tmp_path: Path) -> HRTFCurve:
     return HRTFCurve(str(path))
 
 
-def _normal_band(
-    freqs: np.ndarray, median: float, sigma: float
-) -> tuple[np.ndarray, ...]:
+def _normal_band(freqs: np.ndarray, median: float, sigma: float) -> tuple[np.ndarray, ...]:
     ones = np.ones_like(freqs)
     return (
         ones * (median - _Z_P90 * sigma),
@@ -72,9 +70,7 @@ def test_worst_case_flag_reproduces_legacy_output(tmp_path: Path) -> None:
     freqs = np.array([100.0, 1000.0, 10000.0])
     p10, p25, median, p75, p90 = _normal_band(freqs, 4.0, 1.5)
 
-    out = hrtf.apply_to_variation(
-        freqs, p10, p25, median, p75, p90, combination="worst_case"
-    )
+    out = hrtf.apply_to_variation(freqs, p10, p25, median, p75, p90, combination="worst_case")
 
     comp_p10, comp_p25, comp_median, comp_p75, comp_p90 = hrtf.evaluate_variation(freqs)
     legacy = (
@@ -99,8 +95,13 @@ def test_mono_hrtf_path_is_unchanged_by_either_mode(tmp_path: Path) -> None:
     )
 
     correction = hrtf.evaluate(freqs)
-    expected = (p10 - correction, p25 - correction, median - correction,
-                p75 - correction, p90 - correction)
+    expected = (
+        p10 - correction,
+        p25 - correction,
+        median - correction,
+        p75 - correction,
+        p90 - correction,
+    )
     for produced, other, want in zip(independent, worst_case, expected):
         np.testing.assert_array_equal(produced, want)
         np.testing.assert_array_equal(other, want)

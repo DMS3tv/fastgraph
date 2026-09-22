@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from dms.file_io import atomic_write_json
-
 
 SCHEMA_VERSION = 1
 AUTOMATION_SUFFIX = ".fastgraph-automation.json"
@@ -82,7 +81,7 @@ class AutomationCondition:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "AutomationCondition":
+    def from_dict(cls, data: dict[str, Any] | None) -> AutomationCondition:
         if not data:
             return cls()
         kind = str(data.get("kind") or "always")
@@ -116,7 +115,7 @@ class AutomationStep:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AutomationStep":
+    def from_dict(cls, data: dict[str, Any]) -> AutomationStep:
         action = str(data.get("action") or "navigate")
         if action not in ACTIONS:
             raise ValueError(f"Unsupported automation action: {action}")
@@ -141,8 +140,8 @@ class AutomationDefinition:
     steps: list[AutomationStep] = field(default_factory=list)
     created_app_version: str = ""
     updated_app_version: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,7 +161,7 @@ class AutomationDefinition:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AutomationDefinition":
+    def from_dict(cls, data: dict[str, Any]) -> AutomationDefinition:
         version = int(data.get("schema_version") or 0)
         if version != SCHEMA_VERSION:
             raise ValueError(f"Unsupported automation schema version: {version}")
@@ -180,8 +179,8 @@ class AutomationDefinition:
             steps=[AutomationStep.from_dict(item) for item in data.get("steps") or []],
             created_app_version=str(data.get("created_app_version") or ""),
             updated_app_version=str(data.get("updated_app_version") or ""),
-            created_at=str(data.get("created_at") or datetime.now(timezone.utc).isoformat()),
-            updated_at=str(data.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+            created_at=str(data.get("created_at") or datetime.now(UTC).isoformat()),
+            updated_at=str(data.get("updated_at") or datetime.now(UTC).isoformat()),
         )
 
 

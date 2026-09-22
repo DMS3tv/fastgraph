@@ -56,9 +56,7 @@ def test_variation_hrtf_band_keeps_its_width_below_the_file_range(
 
     curve = HRTFCurve(str(path))
     freqs = np.array([20.0, 100.0, 1000.0, 20000.0])
-    p10, _p25, median, _p75, p90 = curve.apply_to_magnitude_as_variation(
-        freqs, np.zeros(4)
-    )
+    p10, _p25, median, _p75, p90 = curve.apply_to_magnitude_as_variation(freqs, np.zeros(4))
 
     assert median.tolist() == [0.0, 0.0, 0.0, 0.0]
     # The band must stay 8 dB wide outside the file, not collapse to 0 dB.

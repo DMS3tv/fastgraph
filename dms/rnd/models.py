@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +10,6 @@ import numpy as np
 from dms.brand_brand import NON_BRAND_DEFAULT_COLORS as DEFAULT_COLORS
 from dms.processing import compute_rms_average, smooth_fractional_octave
 from dms.session import SessionData
-
 
 SCHEMA_VERSION = 1
 
@@ -36,7 +35,7 @@ class RnDMeasurement:
     input_channel_label: str
     output_device_label: str
     id: str = field(default_factory=lambda: uuid4().hex)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     notes: str = ""
     change_status: str = "no_change"
     milestone: bool = False
@@ -46,7 +45,7 @@ class RnDMeasurement:
     hrtf_path: str = ""
     hrtf_name: str = ""
     vertical_offset_db: float = 0.0
-    photos: list["RnDPhoto"] = field(default_factory=list)
+    photos: list[RnDPhoto] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,7 +73,7 @@ class RnDMeasurement:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RnDMeasurement":
+    def from_dict(cls, data: dict[str, Any]) -> RnDMeasurement:
         return cls(
             id=str(data.get("id") or uuid4().hex),
             name=str(data.get("name") or "R&D Measurement"),
@@ -86,7 +85,7 @@ class RnDMeasurement:
             input_channel_index=int(data.get("input_channel_index") or 0),
             input_channel_label=str(data.get("input_channel_label") or ""),
             output_device_label=str(data.get("output_device_label") or ""),
-            timestamp=str(data.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+            timestamp=str(data.get("timestamp") or datetime.now(UTC).isoformat()),
             notes=str(data.get("notes") or ""),
             change_status=str(data.get("change_status") or "no_change"),
             milestone=bool(data.get("milestone")),
@@ -107,7 +106,7 @@ class RnDPhoto:
     id: str = field(default_factory=lambda: uuid4().hex)
     display_name: str = "Photo"
     caption: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     file_name: str = ""
     # Runtime-only location in Fastgraph's staging directory. It is intentionally
     # not written to session JSON so sessions stay portable.
@@ -127,12 +126,12 @@ class RnDPhoto:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RnDPhoto":
+    def from_dict(cls, data: dict[str, Any]) -> RnDPhoto:
         return cls(
             id=str(data.get("id") or uuid4().hex),
             display_name=str(data.get("display_name") or "Photo"),
             caption=str(data.get("caption") or ""),
-            timestamp=str(data.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+            timestamp=str(data.get("timestamp") or datetime.now(UTC).isoformat()),
             file_name=str(data.get("file_name") or ""),
         )
 
@@ -169,7 +168,7 @@ class RnDGroup:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RnDGroup":
+    def from_dict(cls, data: dict[str, Any]) -> RnDGroup:
         return cls(
             id=str(data.get("id") or uuid4().hex),
             name=str(data.get("name") or "Group"),
@@ -234,7 +233,7 @@ class RnDSession:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RnDSession":
+    def from_dict(cls, data: dict[str, Any]) -> RnDSession:
         version = int(data.get("schema_version") or 0)
         if version > SCHEMA_VERSION:
             raise UnsupportedSessionVersion(
@@ -247,8 +246,7 @@ class RnDSession:
             schema_version=SCHEMA_VERSION,
             saved_app_version=str(data.get("saved_app_version") or ""),
             measurements=[
-                RnDMeasurement.from_dict(item)
-                for item in data.get("measurements") or []
+                RnDMeasurement.from_dict(item) for item in data.get("measurements") or []
             ],
             groups=[RnDGroup.from_dict(item) for item in data.get("groups") or []],
             ungrouped_order=[str(item) for item in data.get("ungrouped_order") or []],
@@ -292,12 +290,14 @@ class RnDSession:
         valid_ids = {item.id for item in self.measurements}
         seen: set[str] = set()
         self.ungrouped_order = [
-            item for item in self.ungrouped_order
+            item
+            for item in self.ungrouped_order
             if item in valid_ids and not (item in seen or seen.add(item))
         ]
         for group in self.groups:
             group.measurement_ids = [
-                item for item in group.measurement_ids
+                item
+                for item in group.measurement_ids
                 if item in valid_ids and not (item in seen or seen.add(item))
             ]
         for measurement in self.measurements:
@@ -347,12 +347,14 @@ def generate_measurement_name(
     if not identity:
         identity = "Unknown"
     base = " - ".join(
-        part for part in (
+        part
+        for part in (
             identity,
             session.rig.strip(),
             input_label.strip(),
             input_channel_label.strip(),
-        ) if part
+        )
+        if part
     )
     if not base:
         base = "R&D Measurement"

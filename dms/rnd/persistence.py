@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from dms.rnd.models import RnDSession
 from dms.rnd.photos import RnDPhotoStore, attachment_directory, session_photos
@@ -41,7 +43,9 @@ def session_snapshot(
     """Return an immutable session dictionary and available photo sources."""
     sources: dict[str, Path] = {}
     for photo in session_photos(session):
-        source = Path(photo.runtime_path) if photo.runtime_path else photo_store.root / photo.file_name
+        source = (
+            Path(photo.runtime_path) if photo.runtime_path else photo_store.root / photo.file_name
+        )
         if source.is_file():
             sources[Path(photo.file_name).name] = source
     return session.to_dict(), sources
@@ -188,10 +192,8 @@ def copy_session_bundle(source: Path, destination: Path) -> None:
 
 def remove_session_bundle(path: Path) -> None:
     path = Path(path)
-    try:
+    with contextlib.suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        pass
     sidecar = attachment_directory(path)
     if sidecar.exists():
         shutil.rmtree(sidecar)
@@ -208,10 +210,8 @@ def _atomic_copy(source: Path, destination: Path) -> None:
             os.fsync(handle.fileno())
         os.replace(temp_path, destination)
     finally:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             temp_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _atomic_write_validated_json(path: Path, serialized: str) -> None:
@@ -226,10 +226,8 @@ def _atomic_write_validated_json(path: Path, serialized: str) -> None:
         os.replace(temp_path, path)
         _fsync_directory(path.parent)
     finally:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             temp_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _fsync_directory(directory: Path) -> None:

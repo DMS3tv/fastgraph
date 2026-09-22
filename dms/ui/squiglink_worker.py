@@ -16,8 +16,9 @@ waiting on a dialog the user already dismissed.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -27,7 +28,6 @@ from dms.squiglink import (
     host_key_id,
     upload_export_sftp,
 )
-
 
 # How long the worker waits for the GUI thread to answer a prompt before
 # giving up. Long enough for a user to read a fingerprint, short enough that a

@@ -1,9 +1,10 @@
-import numpy as np
 import re
 from pathlib import Path
-from scipy.interpolate import interp1d
-from dms.measurement_txt import load_two_column_txt_curve
 
+import numpy as np
+from scipy.interpolate import interp1d
+
+from dms.measurement_txt import load_two_column_txt_curve
 
 #: Standard-normal quantiles for the 90th and 75th percentiles. A population
 #: HRTF's percentile columns are converted to a sigma through these, so the
@@ -24,12 +25,8 @@ def sigma_from_percentiles(
     distribution; averaging them uses all four columns and is less sensitive to
     one noisy tail than either alone.
     """
-    outer = (np.asarray(p90, dtype=float) - np.asarray(p10, dtype=float)) / (
-        2.0 * _Z_P90
-    )
-    inner = (np.asarray(p75, dtype=float) - np.asarray(p25, dtype=float)) / (
-        2.0 * _Z_P75
-    )
+    outer = (np.asarray(p90, dtype=float) - np.asarray(p10, dtype=float)) / (2.0 * _Z_P90)
+    inner = (np.asarray(p75, dtype=float) - np.asarray(p25, dtype=float)) / (2.0 * _Z_P75)
     return 0.5 * (outer + inner)
 
 
@@ -56,7 +53,9 @@ class HRTFCurve:
         self.is_variation = len(columns) == 5
         self.mags = columns[2] if self.is_variation else columns[0]
         self._interp = _edge_held_interp(self.freqs, self.mags)
-        self._variation_interps: tuple[interp1d, interp1d, interp1d, interp1d, interp1d] | None = None
+        self._variation_interps: tuple[interp1d, interp1d, interp1d, interp1d, interp1d] | None = (
+            None
+        )
         if self.is_variation:
             self._variation_interps = tuple(
                 _edge_held_interp(self.freqs, values) for values in columns
@@ -75,9 +74,7 @@ class HRTFCurve:
             return None
         return tuple(interp(freqs_hz) for interp in self._variation_interps)
 
-    def apply(
-        self, freqs_hz: np.ndarray, mag_db: np.ndarray, invert: bool = False
-    ) -> np.ndarray:
+    def apply(self, freqs_hz: np.ndarray, mag_db: np.ndarray, invert: bool = False) -> np.ndarray:
         """
         Default: corrected = raw - hrtf  (invert=False)
         Inverted: corrected = raw + hrtf  (invert=True)
@@ -149,9 +146,7 @@ class HRTFCurve:
         sigma_meas = sigma_from_percentiles(p10_db, p25_db, p75_db, p90_db)
         sigma_hrtf = sigma_from_percentiles(comp_p10, comp_p25, comp_p75, comp_p90)
         sigma = np.sqrt(np.square(sigma_meas) + np.square(sigma_hrtf))
-        median_c = np.asarray(median_db, dtype=float) - np.asarray(
-            comp_median, dtype=float
-        )
+        median_c = np.asarray(median_db, dtype=float) - np.asarray(comp_median, dtype=float)
         return (
             median_c - _Z_P90 * sigma,
             median_c - _Z_P75 * sigma,
@@ -163,7 +158,7 @@ class HRTFCurve:
 
 def _load_hrtf_data(path: str) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
     rows: list[list[float]] = []
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#") or line.startswith("*"):

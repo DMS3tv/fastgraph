@@ -151,9 +151,7 @@ def test_declined_host_key_stops_the_upload(qapp, tmp_path) -> None:
 
 def test_host_key_mismatch_is_surfaced_verbatim(qapp, tmp_path) -> None:
     def _upload(**_kwargs):
-        raise SquiglinkHostKeyMismatch(
-            "sftp.squig.link", 2022, "sha256:pinned", "sha256:other"
-        )
+        raise SquiglinkHostKeyMismatch("sftp.squig.link", 2022, "sha256:pinned", "sha256:other")
 
     worker = _make_worker(
         tmp_path,

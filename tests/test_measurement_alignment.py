@@ -27,7 +27,7 @@ def _test_sweep(length: int) -> np.ndarray:
 def _recording_from_layout(layout, delay_samples: int = 0) -> np.ndarray:
     rec = np.zeros(layout.total_samples + delay_samples + 256, dtype=np.float32)
     start = delay_samples + layout.excitation_start_sample
-    rec[start:start + len(layout.excitation)] = layout.excitation
+    rec[start : start + len(layout.excitation)] = layout.excitation
     return rec
 
 
@@ -183,8 +183,8 @@ def test_low_start_confidence_includes_structured_diagnostics() -> None:
 def test_missing_end_marker_uses_bluetooth_sweep_fallback() -> None:
     sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
-    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
-        :layout.sweep_end_sample - layout.excitation_start_sample
+    rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
+        : layout.sweep_end_sample - layout.excitation_start_sample
     ]
 
     result = align_recording_to_layout(
@@ -199,9 +199,7 @@ def test_missing_end_marker_uses_bluetooth_sweep_fallback() -> None:
     )
 
     assert result.diagnostics.failure_reason is None
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     assert result.diagnostics.alignment_mode == "sweep_fallback"
     assert (
         result.diagnostics.marker_failure_reason
@@ -214,8 +212,8 @@ def test_low_snr_missing_markers_still_fails_with_marker_diagnostics() -> None:
     sweep, layout = _layout(bluetooth=True)
     rng = np.random.default_rng(20260524)
     rec = rng.normal(0.0, 0.05, layout.total_samples).astype(np.float32)
-    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
-        :layout.sweep_end_sample - layout.excitation_start_sample
+    rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
+        : layout.sweep_end_sample - layout.excitation_start_sample
     ]
 
     with pytest.raises(MeasurementAlignmentError, match="Low end-marker confidence") as exc:
@@ -242,16 +240,18 @@ def test_excessive_timing_drift_raises_existing_message() -> None:
     sweep, layout = _layout(bluetooth=True)
     drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
-    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
-        :layout.sweep_end_sample - layout.excitation_start_sample
+    rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
+        : layout.sweep_end_sample - layout.excitation_start_sample
     ]
     rec[
-        layout.end_marker_1_start_sample + drift:
-        layout.end_marker_1_start_sample + drift + len(layout.end_marker)
+        layout.end_marker_1_start_sample + drift : layout.end_marker_1_start_sample
+        + drift
+        + len(layout.end_marker)
     ] = layout.end_marker
     rec[
-        layout.end_marker_2_start_sample + drift:
-        layout.end_marker_2_start_sample + drift + len(layout.end_marker_2)
+        layout.end_marker_2_start_sample + drift : layout.end_marker_2_start_sample
+        + drift
+        + len(layout.end_marker_2)
     ] = layout.end_marker_2
 
     with pytest.raises(ValueError, match="Timing drift too large"):
@@ -272,8 +272,8 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
     sweep, layout = _layout(bluetooth=True)
     drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
-    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
-        :layout.sweep_end_sample - layout.excitation_start_sample
+    rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
+        : layout.sweep_end_sample - layout.excitation_start_sample
     ]
     _write_at(rec, layout.end_marker_1_start_sample + drift, layout.end_marker)
     _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker_2)
@@ -312,10 +312,7 @@ def test_bluetooth_marginal_drift_succeeds_with_warning() -> None:
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
     assert result.diagnostics.failure_reason is None
-    assert (
-        result.diagnostics.warning_reason
-        == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
-    )
+    assert result.diagnostics.warning_reason == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
     assert "Bluetooth timing drift is marginal" in result.diagnostics.warning_message
     assert result.end.marker_confidence >= 2.5
     assert result.end.timing_error_ms > result.diagnostics.timing_drift_max_ms
@@ -361,10 +358,7 @@ def test_bluetooth_marginal_drift_accepts_weak_but_consistent_end_markers(monkey
     )
 
     assert result.diagnostics.failure_reason is None
-    assert (
-        result.diagnostics.warning_reason
-        == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
-    )
+    assert result.diagnostics.warning_reason == MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
     assert result.end.marker_confidence == pytest.approx(2.1)
     assert "end confidence 2.1" in result.diagnostics.warning_message
 
@@ -411,9 +405,7 @@ def test_bluetooth_weak_end_markers_use_sweep_fallback(monkeypatch) -> None:
     )
 
     assert result.diagnostics.failure_reason is None
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     assert result.diagnostics.alignment_mode == "sweep_fallback"
     assert (
         result.diagnostics.marker_failure_reason
@@ -465,9 +457,7 @@ def test_bluetooth_marginal_drift_with_excessive_spacing_error_fails() -> None:
         align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
     assert exc.value.reason == MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE
-    assert exc.value.diagnostics.spacing_error_samples > int(
-        round(960.0 * layout.fs / 48000.0)
-    )
+    assert exc.value.diagnostics.spacing_error_samples > int(round(960.0 * layout.fs / 48000.0))
 
 
 def test_short_recording_raises_existing_message() -> None:
@@ -485,9 +475,9 @@ def test_short_recording_raises_existing_message() -> None:
 def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
     sweep, layout = _layout()
     rec = _recording_from_layout(layout)
-    rec[:layout.sweep_start_sample] = 0.01
+    rec[: layout.sweep_start_sample] = 0.01
     noise_start = layout.sweep_end_sample
-    rec[noise_start:noise_start + int(round(0.12 * layout.fs))] = 0.01
+    rec[noise_start : noise_start + int(round(0.12 * layout.fs))] = 0.01
 
     result = align_recording_to_layout(
         rec,
@@ -578,8 +568,8 @@ def test_format_diagnostics_summary_includes_warning_text() -> None:
 def test_format_diagnostics_summary_includes_sweep_fallback_reason() -> None:
     sweep, layout = _layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
-    rec[layout.excitation_start_sample:layout.sweep_end_sample] = layout.excitation[
-        :layout.sweep_end_sample - layout.excitation_start_sample
+    rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
+        : layout.sweep_end_sample - layout.excitation_start_sample
     ]
 
     result = align_recording_to_layout(
@@ -656,14 +646,8 @@ def _recording_with_shifted_end_markers(
     rec = _recording_from_layout(layout)
     marker_len = len(layout.end_marker)
     marker_2_len = len(layout.end_marker_2)
-    rec[
-        layout.end_marker_1_start_sample:
-        layout.end_marker_1_start_sample + marker_len
-    ] = 0.0
-    rec[
-        layout.end_marker_2_start_sample:
-        layout.end_marker_2_start_sample + marker_2_len
-    ] = 0.0
+    rec[layout.end_marker_1_start_sample : layout.end_marker_1_start_sample + marker_len] = 0.0
+    rec[layout.end_marker_2_start_sample : layout.end_marker_2_start_sample + marker_2_len] = 0.0
     marker_1 = (marker_scale * layout.end_marker).astype(np.float32)
     marker_2 = (marker_scale * layout.end_marker_2).astype(np.float32)
     _write_at(rec, layout.end_marker_1_start_sample + drift_samples, marker_1)
@@ -735,7 +719,7 @@ def test_missing_start_audio_fails_or_locks_to_remaining_valid_marker_evidence()
     assert result.start.sweep_correlation_candidate == layout.sweep_start_sample + delay
     assert result.start.marker_locked_candidate is not None
     assert result.end.selected_sweep_start == layout.sweep_start_sample + delay
-    assert np.max(np.abs(result.aligned_recording[:int(round(0.08 * layout.fs))])) == 0.0
+    assert np.max(np.abs(result.aligned_recording[: int(round(0.08 * layout.fs))])) == 0.0
 
 
 def test_truncated_tail_audio_can_use_bluetooth_sweep_fallback() -> None:
@@ -747,9 +731,7 @@ def test_truncated_tail_audio_can_use_bluetooth_sweep_fallback() -> None:
 
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
 
@@ -812,12 +794,14 @@ def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
     delay = int(round(0.22 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     rec[
-        delay + layout.end_marker_1_start_sample:
-        delay + layout.end_marker_1_start_sample + len(layout.end_marker)
+        delay + layout.end_marker_1_start_sample : delay
+        + layout.end_marker_1_start_sample
+        + len(layout.end_marker)
     ] = 0.0
     rec[
-        delay + layout.end_marker_2_start_sample:
-        delay + layout.end_marker_2_start_sample + len(layout.end_marker_2)
+        delay + layout.end_marker_2_start_sample : delay
+        + layout.end_marker_2_start_sample
+        + len(layout.end_marker_2)
     ] = 0.0
     _write_at(rec, delay + layout.end_marker_1_start_sample, 2.0 * layout.end_marker_2)
     _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
@@ -828,9 +812,7 @@ def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
     assert result.diagnostics.alignment_mode == "sweep_fallback"
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     assert result.end.marker_confidence == 0.0
     assert result.end.selected_sweep_start == layout.sweep_start_sample + delay
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
@@ -841,8 +823,9 @@ def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
     delay = int(round(0.22 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     rec[
-        delay + layout.end_marker_2_start_sample:
-        delay + layout.end_marker_2_start_sample + len(layout.end_marker_2)
+        delay + layout.end_marker_2_start_sample : delay
+        + layout.end_marker_2_start_sample
+        + len(layout.end_marker_2)
     ] = 0.0
     _write_at(rec, delay + layout.end_marker_2_start_sample, 2.0 * layout.end_marker)
 
@@ -851,9 +834,7 @@ def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
     assert result.diagnostics.alignment_mode == "sweep_fallback"
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
     assert result.end.marker_confidence == 0.0
     np.testing.assert_allclose(result.aligned_recording, sweep, atol=1e-6)
 
@@ -894,8 +875,8 @@ def test_sample_rate_drift_produces_drift_failure_when_large() -> None:
     rec = _recording_from_layout(layout)
     drift = int(round(0.18 * layout.fs))
     rec[
-        layout.end_marker_1_start_sample:
-        layout.end_marker_2_start_sample + len(layout.end_marker_2)
+        layout.end_marker_1_start_sample : layout.end_marker_2_start_sample
+        + len(layout.end_marker_2)
     ] = 0.0
     _write_at(rec, layout.end_marker_1_start_sample + drift, layout.end_marker)
     _write_at(rec, layout.end_marker_2_start_sample + drift, layout.end_marker_2)
@@ -930,15 +911,11 @@ def test_bluetooth_stretched_playback_keeps_end_marker_confidence() -> None:
     result = align_recording_to_layout(rec, sweep, layout, _bluetooth_settings())
 
     assert result.end.marker_confidence >= 2.5
-    assert result.diagnostics.raw_marker_confidence == pytest.approx(
-        result.end.marker_confidence
-    )
+    assert result.diagnostics.raw_marker_confidence == pytest.approx(result.end.marker_confidence)
     assert result.end.spacing_error_samples <= int(round(960.0 * fs / 48000.0))
     assert result.diagnostics.marker_template_stretch is not None
     assert result.diagnostics.marker_template_stretch > 1.0
-    assert result.diagnostics.warning_reason == (
-        MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT
-    )
+    assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_MARGINAL_DRIFT)
 
 
 def test_bluetooth_profile_tail_covers_high_output_latency_recording_window() -> None:
@@ -983,19 +960,17 @@ def test_alignment_returns_post_sweep_tail_in_standard_mode() -> None:
     sweep, layout = _layout()
     delay = 137
     rec = _recording_from_layout(layout, delay_samples=delay)
-    decay = 0.01 * np.sin(
-        np.arange(layout.post_silence_samples, dtype=np.float32) * 0.05
-    ).astype(np.float32)
+    decay = 0.01 * np.sin(np.arange(layout.post_silence_samples, dtype=np.float32) * 0.05).astype(
+        np.float32
+    )
     end_idx = delay + layout.sweep_end_sample
-    rec[end_idx:end_idx + layout.post_silence_samples] += decay
+    rec[end_idx : end_idx + layout.post_silence_samples] += decay
 
     result = align_recording_to_layout(
         rec,
         sweep,
         layout,
-        AlignmentSettings(
-            start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0
-        ),
+        AlignmentSettings(start_alignment_confidence_min=3.0, end_marker_confidence_min=2.0),
     )
 
     assert len(result.aligned_recording_tail) == layout.post_silence_samples
@@ -1018,8 +993,8 @@ def test_alignment_tail_stops_before_end_markers_in_bluetooth_mode() -> None:
         np.max(
             np.abs(
                 rec[
-                    delay + layout.end_marker_1_start_sample:
-                    delay + layout.end_marker_1_start_sample
+                    delay + layout.end_marker_1_start_sample : delay
+                    + layout.end_marker_1_start_sample
                     + len(layout.end_marker)
                 ]
             )

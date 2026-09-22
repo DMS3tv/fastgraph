@@ -62,7 +62,6 @@ def test_spl_offset_is_pure_additive() -> None:
 
     # Only the anchor moves; every shape metric is untouched.
     np.testing.assert_allclose(np.diff(spl), np.diff(curve_db), atol=1e-12)
-    np.testing.assert_allclose(spl - np.mean(spl), curve_db - np.mean(curve_db),
-                               atol=1e-12)
+    np.testing.assert_allclose(spl - np.mean(spl), curve_db - np.mean(curve_db), atol=1e-12)
     assert spl[int(np.argmin(np.abs(freqs - 1000.0)))] == pytest.approx(offset)
     assert np.ptp(spl) == pytest.approx(np.ptp(curve_db))

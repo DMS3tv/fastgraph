@@ -32,10 +32,12 @@ def test_target_and_reference_layers_are_tracked_and_cleared(qapp) -> None:
         assert widget._compare_legend.isVisible()
 
         freqs, mag = _curve(2.0)
-        widget.set_reference_layers([
-            ("Ref A", freqs, mag, "#4c9be8"),
-            ("Ref B", freqs, mag + 1.0, "#e8845c"),
-        ])
+        widget.set_reference_layers(
+            [
+                ("Ref A", freqs, mag, "#4c9be8"),
+                ("Ref B", freqs, mag + 1.0, "#e8845c"),
+            ]
+        )
         assert len(widget._compare_items) == 3
 
         widget.set_reference_layers(None)
@@ -52,10 +54,12 @@ def test_reference_layers_reject_mismatched_arrays(qapp) -> None:
     widget = _widget(qapp)
     try:
         freqs, mag = _curve()
-        widget.set_reference_layers([
-            ("Short", freqs[:4], mag, "#4c9be8"),
-            ("Empty", np.array([]), np.array([]), "#4c9be8"),
-        ])
+        widget.set_reference_layers(
+            [
+                ("Short", freqs[:4], mag, "#4c9be8"),
+                ("Empty", np.array([]), np.array([]), "#4c9be8"),
+            ]
+        )
         assert widget._compare_items == []
     finally:
         widget.deleteLater()

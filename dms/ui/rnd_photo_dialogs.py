@@ -66,7 +66,9 @@ class CameraCaptureDialog(QDialog):
         self._retake_btn.setVisible(False)
         buttons.addWidget(self._retake_btn)
         buttons.addStretch(1)
-        self._dialog_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        self._dialog_buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+        )
         self._dialog_buttons.accepted.connect(self._accept_image)
         self._dialog_buttons.rejected.connect(self.reject)
         self._dialog_buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
@@ -98,12 +100,16 @@ class CameraCaptureDialog(QDialog):
         if self._image_capture.isReadyForCapture():
             self._image_capture.capture()
         else:
-            QMessageBox.information(self, "Camera Not Ready", "The camera is not ready to capture a photo yet.")
+            QMessageBox.information(
+                self, "Camera Not Ready", "The camera is not ready to capture a photo yet."
+            )
 
     def _on_image_captured(self, _request_id: int, image: QImage) -> None:
         self.image = image
         pixmap = QPixmap.fromImage(image).scaled(
-            self._preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            self._preview.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
         self._preview.setPixmap(pixmap)
         self._video.hide()
@@ -113,7 +119,9 @@ class CameraCaptureDialog(QDialog):
         self._dialog_buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def _on_capture_error(self, _request_id: int, _error, message: str) -> None:
-        QMessageBox.warning(self, "Capture Failed", message or "The webcam could not capture a photo.")
+        QMessageBox.warning(
+            self, "Capture Failed", message or "The webcam could not capture a photo."
+        )
 
     def _retake(self) -> None:
         self.image = None
@@ -136,7 +144,9 @@ class CameraCaptureDialog(QDialog):
 class PhotoViewerDialog(QDialog):
     """Browse an item's photos and edit captions or request removal."""
 
-    def __init__(self, entries: list[tuple[QImage | None, str, str]], index: int, parent=None) -> None:
+    def __init__(
+        self, entries: list[tuple[QImage | None, str, str]], index: int, parent=None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("R&D Photo")
         self.resize(760, 650)
@@ -164,7 +174,9 @@ class PhotoViewerDialog(QDialog):
         remove.clicked.connect(self._request_remove)
         row.addWidget(remove)
         row.addStretch(1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Save)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Save
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         row.addWidget(buttons)
@@ -196,12 +208,20 @@ class PhotoViewerDialog(QDialog):
             self._image_label.setPixmap(QPixmap())
         else:
             self._image_label.setText("")
-            self._image_label.setPixmap(QPixmap.fromImage(image).scaled(
-                700, 460, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            ))
+            self._image_label.setPixmap(
+                QPixmap.fromImage(image).scaled(
+                    700,
+                    460,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
 
     def _request_remove(self) -> None:
-        if QMessageBox.question(self, "Remove Photo", "Remove this photo attachment?") == QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(self, "Remove Photo", "Remove this photo attachment?")
+            == QMessageBox.StandardButton.Yes
+        ):
             self.remove_requested = True
             self.remove_index = self._index
             self.accept()

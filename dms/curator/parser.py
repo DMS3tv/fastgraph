@@ -9,7 +9,6 @@ from dms.curator.metadata import canonicalize_metadata
 from dms.curator.models import CurveData
 from dms.hrtf import HRTFCurve
 
-
 # A token is a decimal-comma number when the comma separates two digit runs.
 _DECIMAL_COMMA = re.compile(r"^[-+]?\d+,\d+([eE][-+]?\d+)?$")
 # Tokens are split on tab / semicolon / whitespace first so the comma can still
@@ -48,9 +47,7 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
         data = _positive_sorted(data, file_path)
         data, merged = _average_duplicate_frequencies(data)
         if merged:
-            warnings.append(
-                f"{file_path.name}: averaged {merged} repeated frequency row(s)."
-            )
+            warnings.append(f"{file_path.name}: averaged {merged} repeated frequency row(s).")
         return CurveData(
             kind="variation",
             freqs=data[:, 0],
@@ -67,9 +64,7 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
     data = _positive_sorted(data, file_path)
     data, merged = _average_duplicate_frequencies(data)
     if merged:
-        warnings.append(
-            f"{file_path.name}: averaged {merged} repeated frequency row(s)."
-        )
+        warnings.append(f"{file_path.name}: averaged {merged} repeated frequency row(s).")
     return CurveData(
         kind="fr",
         freqs=data[:, 0],

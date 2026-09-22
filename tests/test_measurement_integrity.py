@@ -27,7 +27,6 @@ from dms.measurement_layout import build_measurement_layout
 from dms.processing import generate_log_sweep
 from dms.settings_manager import SettingsManager
 
-
 FS = 48_000
 _RNG_SEED = 7
 
@@ -116,7 +115,7 @@ def _garbage(layout, kind: str) -> np.ndarray:
     elif kind == "reversed_sweep":
         rec = _noise(n, -60.0)
         start = layout.excitation_start_sample
-        rec[start:start + len(layout.excitation)] += 0.25 * layout.excitation[::-1]
+        rec[start : start + len(layout.excitation)] += 0.25 * layout.excitation[::-1]
     else:
         raise ValueError(kind)
     return rec.astype(np.float32)
@@ -169,16 +168,12 @@ def test_echo_lowers_nextbest_but_not_background_confidence() -> None:
 
     assert result.start.nextbest_confidence < 2.0
     assert result.start.background_confidence > 20.0
-    assert result.start.start_confidence == pytest.approx(
-        result.start.background_confidence
-    )
+    assert result.start.start_confidence == pytest.approx(result.start.background_confidence)
 
 
 def test_rolloff_raises_confidence_and_keeps_midband_margin() -> None:
     sweep, layout = _layout()
-    full = align_recording_to_layout(
-        _recording(layout), sweep, layout, AlignmentSettings()
-    )
+    full = align_recording_to_layout(_recording(layout), sweep, layout, AlignmentSettings())
     rolled = align_recording_to_layout(
         _recording(layout, system=lambda x: _bandlimit(x, 200.0, 5_000.0)),
         sweep,
@@ -254,9 +249,7 @@ def test_failure_diagnostics_carry_integrity_metrics() -> None:
     rec = _garbage(layout, "silence_minus40_noise")
 
     with pytest.raises(MeasurementAlignmentError) as exc:
-        align_recording_to_layout(
-            rec, sweep, layout, AlignmentSettings(peak_correlation_min=0.0)
-        )
+        align_recording_to_layout(rec, sweep, layout, AlignmentSettings(peak_correlation_min=0.0))
 
     diagnostics = exc.value.diagnostics
     assert diagnostics.snr_db is not None
@@ -269,9 +262,7 @@ def test_failure_diagnostics_carry_integrity_metrics() -> None:
 
 
 def test_compute_sweep_integrity_reports_margin_and_coverage() -> None:
-    aligned = np.concatenate(
-        [np.zeros(1000), 0.1 * np.ones(8000), np.zeros(1000)]
-    )
+    aligned = np.concatenate([np.zeros(1000), 0.1 * np.ones(8000), np.zeros(1000)])
     integrity = compute_sweep_integrity(aligned, noise_rms=0.001)
 
     assert integrity.midband_margin_db == pytest.approx(40.0, abs=0.1)
@@ -289,20 +280,14 @@ def test_settings_migrate_old_default_confidence(tmp_path, monkeypatch) -> None:
     config_dir.mkdir()
     monkeypatch.setattr(settings_module, "_config_dir", lambda: config_dir)
 
-    (config_dir / "settings.json").write_text(
-        json.dumps({"start_alignment_confidence_min": 9.0})
-    )
+    (config_dir / "settings.json").write_text(json.dumps({"start_alignment_confidence_min": 9.0}))
     assert SettingsManager().get("start_alignment_confidence_min") == 6.0
 
-    (config_dir / "settings.json").write_text(
-        json.dumps({"start_alignment_confidence_min": 7.5})
-    )
+    (config_dir / "settings.json").write_text(json.dumps({"start_alignment_confidence_min": 7.5}))
     assert SettingsManager().get("start_alignment_confidence_min") == 7.5
 
     (config_dir / "settings.json").write_text(
-        json.dumps(
-            {"start_alignment_confidence_min": 9.0, "settings_schema_version": 2}
-        )
+        json.dumps({"start_alignment_confidence_min": 9.0, "settings_schema_version": 2})
     )
     assert SettingsManager().get("start_alignment_confidence_min") == 9.0
 

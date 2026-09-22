@@ -1,15 +1,16 @@
 import base64
+import contextlib
 import hashlib
 import json
 import re
 import socket
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import paramiko
 
 from dms.session import SessionData
-
 
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
 DATA_UPLOAD_DIR = "data"
@@ -266,10 +267,8 @@ def open_sftp_connection(
     try:
         transport = paramiko.Transport(sock)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             sock.close()
-        except OSError:
-            pass
         raise
     try:
         _emit_diagnostic(diagnostic, "transport_created")
@@ -438,9 +437,8 @@ def merge_phone_book_entry(
         files.append(uploaded_name_stem)
     phone_entry["file"] = files
 
-    if len(files) > 1:
-        if "prefix" not in phone_entry or not str(phone_entry.get("prefix") or "").strip():
-            phone_entry["prefix"] = prefix_value
+    if len(files) > 1 and not str(phone_entry.get("prefix") or "").strip():
+        phone_entry["prefix"] = prefix_value
 
     return phone_book
 

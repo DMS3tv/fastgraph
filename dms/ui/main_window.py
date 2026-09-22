@@ -4,67 +4,65 @@ Orchestrates: device selectors, level meter, dual plot, queue control,
 pass/fail UI, HRTF selector, settings/calibration, and export.
 """
 
-import sys
-import shlex
-import tempfile
+import contextlib
 import os
 import re
+import shlex
+import sys
+import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
 from PyQt6.QtCore import (
-    QEvent,
     QEasingCurve,
+    QEvent,
     QPropertyAnimation,
     QRect,
     QSize,
+    Qt,
     QThread,
     QTimer,
-    Qt,
     QUrl,
     pyqtSignal,
 )
 from PyQt6.QtGui import QDesktopServices, QFontMetrics, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
-    QFrame,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QLayout,
     QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QProgressDialog,
-    QPushButton as NativePushButton,
     QScrollArea,
     QSizePolicy,
     QStatusBar,
     QStyle,
     QStyleOptionButton,
     QTabWidget,
-    QKeySequenceEdit,
-    QToolButton,
     QTextEdit,
-    QPlainTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
-    QApplication,
 )
-from dms.ui.modern_button import ModernButton as QPushButton
-from dms.ui.modern_spinbox import (
-    ModernDoubleSpinBox as QDoubleSpinBox,
-    ModernSpinBox as QSpinBox,
+from PyQt6.QtWidgets import (
+    QPushButton as NativePushButton,
 )
 
 from dms.audio_engine import (
@@ -85,9 +83,9 @@ from dms.audio_engine import (
     refresh_audio_backend,
     resolve_device_selection,
 )
-from dms.channel_balance import ChannelBalanceEngine, frequency_limit
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
+from dms.channel_balance import ChannelBalanceEngine, frequency_limit
 from dms.comparison import (
     OFFSET_MODES,
     ReferenceLayer,
@@ -109,24 +107,25 @@ from dms.export import (
     export_variation,
 )
 from dms.hrtf import HRTFCurve
-from dms.measurement_alignment import (
-    MeasurementWarningReason,
-    format_diagnostics_summary,
-    is_device_failure,
-    is_retryable_timing_failure,
-)
 from dms.measure_persistence import (
     MEASURE_SESSION_EXTENSION,
     MeasureSessionLoadError,
     ensure_measure_session_extension,
     load_measure_session,
     save_measure_session,
+)
+from dms.measure_persistence import (
     same_session_file as same_measure_session_file,
 )
 from dms.measure_queue import MeasurementQueue, QueueState
 from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
 from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
-from dms.ui.sweep_runner import SweepRunner
+from dms.measurement_alignment import (
+    MeasurementWarningReason,
+    format_diagnostics_summary,
+    is_device_failure,
+    is_retryable_timing_failure,
+)
 from dms.measurement_profiles import (
     PROFILE_SNAPSHOT_SETTING,
     bluetooth_profile_updates,
@@ -146,20 +145,15 @@ from dms.processing import (
     normalize_at_1khz,
     smooth_fractional_octave,
 )
-from dms.two_channel import (
-    TwoChannelCurvePair,
-    channel_curves,
-    combined_pair_curves,
-    curve_label_for_selection,
-    shared_normalize_pair_at_1khz,
-)
 from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
     generate_measurement_name,
-    group_variation as rnd_group_variation,
     measurement_session_data,
     session_snapshot,
+)
+from dms.rnd.models import (
+    group_variation as rnd_group_variation,
 )
 from dms.rnd.persistence import (
     RND_SESSION_EXTENSION,
@@ -167,6 +161,8 @@ from dms.rnd.persistence import (
     load_rnd_session,
     same_session_file,
     save_rnd_session,
+)
+from dms.rnd.persistence import (
     session_snapshot as rnd_persistence_snapshot,
 )
 from dms.rnd.recovery import RecoveryCandidate, RnDRecoveryManager
@@ -187,21 +183,36 @@ from dms.squiglink import (
     write_remote_phone_book,
 )
 from dms.theme import ThemeController, theme_trace_palette
-from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
-from dms.version import __version__
-from dms.ui.calibration_dialog import CalibrationDialog
+from dms.two_channel import (
+    TwoChannelCurvePair,
+    channel_curves,
+    combined_pair_curves,
+    curve_label_for_selection,
+    shared_normalize_pair_at_1khz,
+)
 from dms.ui.automation_widget import AutomationWidget
+from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
-from dms.ui.measure_workspace import MeasureWorkspace
 from dms.ui.level_meter import LevelMeterWidget
+from dms.ui.measure_workspace import MeasureWorkspace
+from dms.ui.modern_button import ModernButton as QPushButton
+from dms.ui.modern_spinbox import (
+    ModernDoubleSpinBox as QDoubleSpinBox,
+)
+from dms.ui.modern_spinbox import (
+    ModernSpinBox as QSpinBox,
+)
 from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionEditor
 from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.squiglink_worker import SquiglinkUploadWorker
+from dms.ui.sweep_runner import SweepRunner
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
+from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
+from dms.version import __version__
 
 
 class AppState:
@@ -242,9 +253,9 @@ class RnDRecoveryDialog(QDialog):
         self._candidates = candidates
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
-            "Fastgraph found R&D session data that was not cleared during a normal exit."
-        ))
+        layout.addWidget(
+            QLabel("Fastgraph found R&D session data that was not cleared during a normal exit.")
+        )
         self._candidate_combo = QComboBox()
         for candidate in candidates:
             self._candidate_combo.addItem(candidate.label, candidate)
@@ -294,10 +305,11 @@ class MeasureRecoveryDialog(QDialog):
         self._candidates = candidates
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
-            "Fastgraph found Measure session data that was not cleared during "
-            "a normal exit."
-        ))
+        layout.addWidget(
+            QLabel(
+                "Fastgraph found Measure session data that was not cleared during a normal exit."
+            )
+        )
         self._candidate_combo = QComboBox()
         for candidate in candidates:
             self._candidate_combo.addItem(candidate.label, candidate)
@@ -322,6 +334,8 @@ class MeasureRecoveryDialog(QDialog):
     def _finish(self, action: str) -> None:
         self.action = action
         self.accept()
+
+
 _MAX_SWEEP_ATTEMPTS = 3
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -369,15 +383,20 @@ _CONSOLE_SETTING_KEYS = {
 
 
 class _EventStatusBar(QStatusBar):
-    def __init__(self, events: ConsoleEventStore, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, events: ConsoleEventStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._events = events
 
     def showMessage(self, message: str, timeout: int = 0) -> None:
         super().showMessage(message, timeout)
-        severity = "WARNING" if any(
-            word in message.lower() for word in ("failed", "error", "warning", "aborted", "canceled", "unavailable")
-        ) else "INFO"
+        severity = (
+            "WARNING"
+            if any(
+                word in message.lower()
+                for word in ("failed", "error", "warning", "aborted", "canceled", "unavailable")
+            )
+            else "INFO"
+        )
         self._events.publish(severity, "status", message)
 
 
@@ -407,8 +426,8 @@ class _BalanceThread(QThread):
 class TestLevelDialog(QDialog):
     def __init__(
         self,
-        snapshot_fn: Callable[[], tuple[float, Optional[float], str]],
-        play_noise_fn: Optional[Callable[[], Optional[str]]] = None,
+        snapshot_fn: Callable[[], tuple[float, float | None, str]],
+        play_noise_fn: Callable[[], str | None] | None = None,
         calibrated: bool = False,
         parent=None,
     ) -> None:
@@ -488,7 +507,7 @@ class TestLevelDialog(QDialog):
             self._hint_label.setText("Noise ping sent. Confirm input level responds in dBFS.")
 
 
-def variation_combination_setting(settings: Optional[object]) -> str:
+def variation_combination_setting(settings: object | None) -> str:
     """Read ``hrtf_variation_combination``, defaulting to "independent".
 
     Takes the settings object rather than the window so the pure variation
@@ -500,8 +519,8 @@ def variation_combination_setting(settings: Optional[object]) -> str:
 
 
 def thd_band_summary(
-    analysis: Optional[HarmonicAnalysis],
-) -> Optional[tuple[float, float, float]]:
+    analysis: HarmonicAnalysis | None,
+) -> tuple[float, float, float] | None:
     """(median THD %, max THD %, frequency of the max) over 100 Hz - 10 kHz.
 
     Returns None when there is nothing measurable in the band — the summary
@@ -535,10 +554,10 @@ class PassFailDialog(QDialog):
         self,
         index: int,
         total: int,
-        timing_quality: Optional[tuple[float, float, float, float]] = None,
-        diagnostics: Optional[object] = None,
-        distortion: Optional[HarmonicAnalysis] = None,
-        deviation_summary: Optional[str] = None,
+        timing_quality: tuple[float, float, float, float] | None = None,
+        diagnostics: object | None = None,
+        distortion: HarmonicAnalysis | None = None,
+        deviation_summary: str | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -554,28 +573,20 @@ class PassFailDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        summary = QLabel(
-            f"Review measurement {index} of {total} and choose whether to keep it."
-        )
+        summary = QLabel(f"Review measurement {index} of {total} and choose whether to keep it.")
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
-        detail = QLabel(
-            "The latest sweep is shown in teal in the top plot while you decide."
-        )
+        detail = QLabel("The latest sweep is shown in teal in the top plot while you decide.")
         detail.setWordWrap(True)
         detail.setProperty("tone", "muted")
         layout.addWidget(detail)
 
         if timing_quality is not None:
             start_conf, end_conf, drift_ms, snr_db = timing_quality
-            bluetooth_mode = bool(
-                getattr(diagnostics, "bluetooth_headphone_mode", False)
-            )
+            bluetooth_mode = bool(getattr(diagnostics, "bluetooth_headphone_mode", False))
             warning_message = (
-                getattr(diagnostics, "warning_message", None)
-                if diagnostics is not None
-                else None
+                getattr(diagnostics, "warning_message", None) if diagnostics is not None else None
             )
             timing_box = QFrame()
             timing_box.setObjectName("diagnostic_box")
@@ -589,10 +600,7 @@ class PassFailDialog(QDialog):
                     f"SNR: {snr_db:.1f} dB"
                 )
             else:
-                quality_text = (
-                    f"Sweep Quality - alignment: {start_conf:.1f}, "
-                    f"SNR: {snr_db:.1f} dB"
-                )
+                quality_text = f"Sweep Quality - alignment: {start_conf:.1f}, SNR: {snr_db:.1f} dB"
             timing = QLabel(quality_text)
             timing.setWordWrap(True)
             timing.setProperty("tone", "muted")
@@ -734,8 +742,8 @@ class RnDReviewDialog(QDialog):
     def __init__(
         self,
         previous_name: str,
-        timing_quality: Optional[tuple[float, float, float, float]] = None,
-        diagnostics: Optional[object] = None,
+        timing_quality: tuple[float, float, float, float] | None = None,
+        diagnostics: object | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -753,7 +761,9 @@ class RnDReviewDialog(QDialog):
         layout.addWidget(summary)
 
         previous = QLabel(
-            f"Previous kept measurement: {previous_name}" if previous_name else "Previous kept measurement: none"
+            f"Previous kept measurement: {previous_name}"
+            if previous_name
+            else "Previous kept measurement: none"
         )
         previous.setProperty("tone", "muted")
         previous.setWordWrap(True)
@@ -789,7 +799,9 @@ class RnDReviewDialog(QDialog):
             details_toggle.toggled.connect(lambda _checked: self.adjustSize())
 
         self._notes = QTextEdit()
-        self._notes.setPlaceholderText("Change notes, design/sample details, pads, EQ, fixture notes...")
+        self._notes.setPlaceholderText(
+            "Change notes, design/sample details, pads, EQ, fixture notes..."
+        )
         self._notes.setMaximumHeight(96)
         layout.addWidget(self._notes)
 
@@ -872,7 +884,9 @@ class SquiglinkAuthDialog(QDialog):
         layout.addWidget(self._remember)
 
         layout.addWidget(QLabel("Name Modifier"))
-        layout.addWidget(QLabel("Optional. Type here if you're using different tips, pads, EQ modes, etc"))
+        layout.addWidget(
+            QLabel("Optional. Type here if you're using different tips, pads, EQ modes, etc")
+        )
         self._name_modifier = QLineEdit()
         self._name_modifier.setPlaceholderText("")
         layout.addWidget(self._name_modifier)
@@ -1113,20 +1127,23 @@ class _MeasureSubmodeControl(QWidget):
         option.initFrom(button)
         option.text = button.text()
         option.state = state
-        return button.style().sizeFromContents(
-            QStyle.ContentsType.CT_PushButton,
-            option,
-            text_size,
-            button,
-        ).width()
+        return (
+            button.style()
+            .sizeFromContents(
+                QStyle.ContentsType.CT_PushButton,
+                option,
+                text_size,
+                button,
+            )
+            .width()
+        )
 
     def refresh_segment_widths(self) -> None:
         self._width_refresh_pending = False
         widths = []
         for button in (self.frequency_button, self.balance_button):
             required_width = max(
-                self._required_width_for_state(button, state)
-                for state in self._WIDTH_STATES
+                self._required_width_for_state(button, state) for state in self._WIDTH_STATES
             )
             width = required_width + self._TEXT_WIDTH_HEADROOM
             button.setFixedWidth(width)
@@ -1265,7 +1282,7 @@ class MainWindow(QMainWindow):
         self,
         session: SessionData,
         settings: SettingsManager,
-        theme_controller: Optional[ThemeController] = None,
+        theme_controller: ThemeController | None = None,
     ) -> None:
         super().__init__()
         self._queue = MeasurementQueue(max_attempts=_MAX_SWEEP_ATTEMPTS)
@@ -1286,11 +1303,11 @@ class MainWindow(QMainWindow):
 
         self._state = AppState.IDLE
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
-        self._average: Optional[tuple[np.ndarray, np.ndarray]] = None
-        self._variation: Optional[
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        ] = None
-        self._pending_curve: Optional[tuple[np.ndarray, np.ndarray]] = None
+        self._average: tuple[np.ndarray, np.ndarray] | None = None
+        self._variation: (
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
+        ) = None
+        self._pending_curve: tuple[np.ndarray, np.ndarray] | None = None
         # Per-capture metadata kept positionally beside the curves, so a saved
         # session carries the diagnostics, timing and distortion the review
         # dialog showed. ``_kept_pair_meta`` is bookkeeping only: a kept pair
@@ -1305,15 +1322,9 @@ class MainWindow(QMainWindow):
         self._start_second_pair_stage = False
         self._two_channel_averages: dict[str, object] = {}
         self._two_channel_variations: dict[str, object] = {}
-        self._two_channel_enabled = bool(
-            self._settings.get("measure_two_channel_enabled")
-        )
-        bottom_mode = str(
-            self._settings.get("measure_two_channel_bottom_mode") or "combined"
-        )
-        self._two_channel_bottom_mode = (
-            "separate" if bottom_mode == "separate" else "combined"
-        )
+        self._two_channel_enabled = bool(self._settings.get("measure_two_channel_enabled"))
+        bottom_mode = str(self._settings.get("measure_two_channel_bottom_mode") or "combined")
+        self._two_channel_bottom_mode = "separate" if bottom_mode == "separate" else "combined"
         self._two_channel_selection = "channel_1"
         self._channel_balance_active = False
         self._balance_engine: ChannelBalanceEngine | None = None
@@ -1326,21 +1337,21 @@ class MainWindow(QMainWindow):
         self._queue_index = 0
         self._current_sweep_attempts = 0
 
-        self._hrtf: Optional[HRTFCurve] = None
+        self._hrtf: HRTFCurve | None = None
 
         # Kept for compatibility with code that inspects them; the runner owns
         # the real thread and worker.
-        self._sweep_thread: Optional[_SweepThread] = None
-        self._active_sweep_worker: Optional[SweepWorker] = None
+        self._sweep_thread: _SweepThread | None = None
+        self._active_sweep_worker: SweepWorker | None = None
         self._sweep_runner = SweepRunner(self)
         self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
         self._devices_dirty = False
         # Harmonic analysis of the most recently kept sweep. The queue's own
         # last_distortion is cleared by the reset that follows Keep, so the
         # overlay would otherwise vanish the moment a sweep is accepted.
-        self._kept_distortion: Optional[HarmonicAnalysis] = None
-        self._pass_fail_dialog: Optional[PassFailDialog] = None
-        self._rnd_review_dialog: Optional[RnDReviewDialog] = None
+        self._kept_distortion: HarmonicAnalysis | None = None
+        self._pass_fail_dialog: PassFailDialog | None = None
+        self._rnd_review_dialog: RnDReviewDialog | None = None
         self._rnd_sweep_active = False
 
         self._last_level_dbfs = -120.0
@@ -1351,28 +1362,28 @@ class MainWindow(QMainWindow):
         self._output_devices_by_index: dict[int, dict] = {}
         self._input_device_labels_by_index: dict[int, str] = {}
         self._output_device_labels_by_index: dict[int, str] = {}
-        self._last_timing_quality: Optional[tuple[float, float, float, float]] = None
-        self._last_measurement_diagnostics: Optional[object] = None
+        self._last_timing_quality: tuple[float, float, float, float] | None = None
+        self._last_measurement_diagnostics: object | None = None
         self._hrtf_options: list[tuple[str, str]] = []
         self._console_events = ConsoleEventStore(
             parent=self,
             log_path=config_dir() / "logs" / "fastgraph-console.log",
         )
         self._report_settings_load_problems()
-        self._squiglink_upload_context: Optional[dict] = None
+        self._squiglink_upload_context: dict | None = None
         self._automation_running = False
         self._keyboard_shortcuts: list[QShortcut] = []
         self._rnd_dirty = False
         self._restored_recovery_candidate: RecoveryCandidate | None = None
         # Measure session file the workspace currently belongs to, and whether
         # it holds changes that file does not.
-        self._measure_session_path: Optional[Path] = None
+        self._measure_session_path: Path | None = None
         self._measure_dirty = False
         self._restored_measure_candidate: MeasureRecoveryCandidate | None = None
         # Target comparison. The target survives restarts through settings;
         # reference layers are deliberately session-only.
-        self._measure_target: Optional[tuple[np.ndarray, np.ndarray]] = None
-        self._measure_target_path: Optional[Path] = None
+        self._measure_target: tuple[np.ndarray, np.ndarray] | None = None
+        self._measure_target_path: Path | None = None
         self._measure_reference_layers: list[ReferenceLayer] = []
 
         self._level_monitor = LevelMonitor()
@@ -1613,9 +1624,7 @@ class MainWindow(QMainWindow):
         self._level_status_label.setVisible(not balance)
         self._level_status_label_2.setVisible(self._two_channel_enabled and not balance)
         self._plots.two.set_generator_level(float(self._queue_level_spin.value()))
-        self._plots.two.set_frequency_limit(
-            frequency_limit(int(self._settings.get("sample_rate")))
-        )
+        self._plots.two.set_frequency_limit(frequency_limit(int(self._settings.get("sample_rate"))))
         if balance:
             self._level_monitor.stop()
             self._dual_level_monitor.stop()
@@ -1627,9 +1636,7 @@ class MainWindow(QMainWindow):
     def _on_two_channel_bottom_mode_changed(self, _index: int) -> None:
         mode = str(self._bottom_layout_combo.currentData() or "combined")
         self._two_channel_bottom_mode = "separate" if mode == "separate" else "combined"
-        self._settings.set(
-            "measure_two_channel_bottom_mode", self._two_channel_bottom_mode
-        )
+        self._settings.set("measure_two_channel_bottom_mode", self._two_channel_bottom_mode)
         self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
         self._update_plots()
 
@@ -1652,10 +1659,7 @@ class MainWindow(QMainWindow):
     def _start_channel_balance(self) -> None:
         if self._channel_balance_active:
             return
-        if (
-            self._state != AppState.IDLE
-            or not self._channel_balance_mode_active()
-        ):
+        if self._state != AppState.IDLE or not self._channel_balance_mode_active():
             return
         if not self._two_channel_devices_ready():
             QMessageBox.warning(
@@ -1753,14 +1757,10 @@ class MainWindow(QMainWindow):
         if engine is None:
             return
         sample_rate = int(self._settings.get("sample_rate"))
-        sample_count = int(
-            round(5.0 * sample_rate / max(20.0, self._balance_frequency))
-        )
+        sample_count = int(round(5.0 * sample_rate / max(20.0, self._balance_frequency)))
         sample_count = max(128, min(sample_count, int(0.25 * sample_rate)))
         left, right, left_db, right_db, delta_db = engine.snapshot(sample_count)
-        self._plots.two.update_scope(
-            left, right, sample_rate, left_db, right_db, delta_db
-        )
+        self._plots.two.update_scope(left, right, sample_rate, left_db, right_db, delta_db)
 
     def _toggle_inputs_overlay(self) -> None:
         if self._inputs_overlay_open:
@@ -1771,9 +1771,7 @@ class MainWindow(QMainWindow):
     def _open_inputs_overlay(self) -> None:
         self._close_metadata_overlay()
         self._inputs_overlay_open = True
-        target = self._inputs_overlay_geometry(
-            max(1, self._inputs_overlay.sizeHint().height())
-        )
+        target = self._inputs_overlay_geometry(max(1, self._inputs_overlay.sizeHint().height()))
         start = QRect(target.x(), target.y(), target.width(), 0)
         self._inputs_overlay.setGeometry(start)
         self._inputs_overlay.show()
@@ -1790,9 +1788,7 @@ class MainWindow(QMainWindow):
         self._inputs_overlay_animation.stop()
         start = self._inputs_overlay.geometry()
         self._inputs_overlay_animation.setStartValue(start)
-        self._inputs_overlay_animation.setEndValue(
-            QRect(start.x(), start.y(), start.width(), 0)
-        )
+        self._inputs_overlay_animation.setEndValue(QRect(start.x(), start.y(), start.width(), 0))
         self._inputs_overlay_animation.start()
 
     def _on_inputs_overlay_animation_finished(self) -> None:
@@ -1828,9 +1824,7 @@ class MainWindow(QMainWindow):
         self._close_inputs_overlay()
         self._metadata_editor.set_session(self._session)
         self._metadata_overlay_open = True
-        target = self._metadata_overlay_geometry(
-            max(1, self._metadata_overlay.sizeHint().height())
-        )
+        target = self._metadata_overlay_geometry(max(1, self._metadata_overlay.sizeHint().height()))
         start = QRect(target.x(), target.y(), target.width(), 0)
         self._metadata_overlay.setGeometry(start)
         self._metadata_overlay.show()
@@ -1847,9 +1841,7 @@ class MainWindow(QMainWindow):
         self._metadata_overlay_animation.stop()
         start = self._metadata_overlay.geometry()
         self._metadata_overlay_animation.setStartValue(start)
-        self._metadata_overlay_animation.setEndValue(
-            QRect(start.x(), start.y(), start.width(), 0)
-        )
+        self._metadata_overlay_animation.setEndValue(QRect(start.x(), start.y(), start.width(), 0))
         self._metadata_overlay_animation.start()
 
     def _on_metadata_overlay_animation_finished(self) -> None:
@@ -1890,13 +1882,17 @@ class MainWindow(QMainWindow):
                 return True
             if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "globalPosition"):
                 point = event.globalPosition().toPoint()
-                if getattr(self, "_inputs_overlay_open", False) and not self._global_point_inside(
-                    self._inputs_overlay, point
-                ) and not self._global_point_inside(self._inputs_btn, point):
+                if (
+                    getattr(self, "_inputs_overlay_open", False)
+                    and not self._global_point_inside(self._inputs_overlay, point)
+                    and not self._global_point_inside(self._inputs_btn, point)
+                ):
                     self._close_inputs_overlay()
-                if getattr(self, "_metadata_overlay_open", False) and not self._global_point_inside(
-                    self._metadata_overlay, point
-                ) and not self._global_point_inside(self._metadata_btn, point):
+                if (
+                    getattr(self, "_metadata_overlay_open", False)
+                    and not self._global_point_inside(self._metadata_overlay, point)
+                    and not self._global_point_inside(self._metadata_btn, point)
+                ):
                     self._close_metadata_overlay()
             if watched is self and event.type() == QEvent.Type.WindowDeactivate:
                 self._close_inputs_overlay()
@@ -1986,7 +1982,9 @@ class MainWindow(QMainWindow):
         if self._tabs.currentIndex() == 0:
             self._start_queue()
             return
-        self._statusbar.showMessage("Shortcut ignored: switch to Measure or R&D to start a measurement.")
+        self._statusbar.showMessage(
+            "Shortcut ignored: switch to Measure or R&D to start a measurement."
+        )
 
     def _shortcut_fail_review(self) -> None:
         if self._state != AppState.PASS_FAIL:
@@ -2043,16 +2041,12 @@ class MainWindow(QMainWindow):
 
         self._bluetooth_mode_toggle = ToggleSwitch("Bluetooth")
         self._bluetooth_mode_toggle.setFixedHeight(30)
-        self._bluetooth_mode_toggle.setChecked(
-            bool(self._settings.get("bluetooth_headphone_mode"))
-        )
+        self._bluetooth_mode_toggle.setChecked(bool(self._settings.get("bluetooth_headphone_mode")))
         self._bluetooth_mode_toggle.setToolTip(
             "Bluetooth Headphone Mode applies safer timing settings for "
             "Bluetooth latency and jitter paths."
         )
-        self._bluetooth_mode_toggle.stateChanged.connect(
-            self._on_bluetooth_mode_changed
-        )
+        self._bluetooth_mode_toggle.stateChanged.connect(self._on_bluetooth_mode_changed)
         row.addWidget(self._bluetooth_mode_toggle)
         self._refresh_session_labels()
         return header
@@ -2113,7 +2107,9 @@ class MainWindow(QMainWindow):
         load_error = getattr(self._settings, "load_error", None)
         if load_error:
             problems.append(str(load_error))
-            self._log_event("ERROR", "settings", "Settings file was damaged", detail=str(load_error))
+            self._log_event(
+                "ERROR", "settings", "Settings file was damaged", detail=str(load_error)
+            )
 
         corrected = list(getattr(self._settings, "corrected_keys", []) or [])
         if corrected:
@@ -2223,13 +2219,19 @@ class MainWindow(QMainWindow):
         finally:
             self._automation_draining = False
 
-    def _run_automation(self, automation: AutomationDefinition, triggered_by: str = "manual") -> None:
+    def _run_automation(
+        self, automation: AutomationDefinition, triggered_by: str = "manual"
+    ) -> None:
         if getattr(self, "_automation_running", False):
-            self._log_event("WARNING", "automation", "Automation already running", name=automation.name)
+            self._log_event(
+                "WARNING", "automation", "Automation already running", name=automation.name
+            )
             return
         self._automation_running = True
         variables = dict(automation.variables)
-        self._log_event("INFO", "automation", "Automation started", name=automation.name, trigger=triggered_by)
+        self._log_event(
+            "INFO", "automation", "Automation started", name=automation.name, trigger=triggered_by
+        )
         try:
             for index, step in enumerate(automation.steps, start=1):
                 if not self._automation_condition_matches(step, variables):
@@ -2246,17 +2248,23 @@ class MainWindow(QMainWindow):
                     if choice != QMessageBox.StandardButton.Yes:
                         raise RuntimeError(f"Automation canceled before step {index}.")
                 self._execute_automation_step(step, variables)
-                self._log_event("INFO", "automation", "Automation step complete", step=index, action=step.action)
+                self._log_event(
+                    "INFO", "automation", "Automation step complete", step=index, action=step.action
+                )
             self._log_event("INFO", "automation", "Automation complete", name=automation.name)
         except Exception as exc:
-            self._log_event("ERROR", "automation", f"Automation failed: {exc}", name=automation.name)
+            self._log_event(
+                "ERROR", "automation", f"Automation failed: {exc}", name=automation.name
+            )
             if triggered_by == "manual":
                 QMessageBox.warning(self, "Automation Failed", str(exc))
         finally:
             self._automation_running = False
             self._drain_automation_queue()
 
-    def _automation_condition_matches(self, step: AutomationStep, variables: dict[str, object]) -> bool:
+    def _automation_condition_matches(
+        self, step: AutomationStep, variables: dict[str, object]
+    ) -> bool:
         condition = step.condition
         value = str(condition.value)
         current = str(variables.get(condition.left, ""))
@@ -2490,7 +2498,9 @@ class MainWindow(QMainWindow):
                 if self._last_measurement_diagnostics is None:
                     self._command_reply("No measurement diagnostics are available yet.")
                 else:
-                    self._command_reply(format_diagnostics_summary(self._last_measurement_diagnostics))
+                    self._command_reply(
+                        format_diagnostics_summary(self._last_measurement_diagnostics)
+                    )
             elif args[0] == "measure":
                 self._run_measure_command(args[1:])
             elif args[0] == "export":
@@ -2508,35 +2518,41 @@ class MainWindow(QMainWindow):
                     )
                     raise
             else:
-                self._command_reply("Unknown command. Type 'help' for available commands.", error=True)
+                self._command_reply(
+                    "Unknown command. Type 'help' for available commands.", error=True
+                )
         except Exception as exc:
             self._command_reply(f"Command failed: {exc}", error=True)
 
     @staticmethod
     def _console_help() -> str:
-        return "\n".join((
-            "Commands:",
-            "  help | clear | status | devices | diagnostics system | diagnostics last",
-            "  settings list | settings get <name> | settings set <name> <value>",
-            "  settings save [<name>|all]",
-            "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
-            "  measure session save|load <path> | measure target <path>|clear | measure eq [max_filters]",
-            "  export average [path] | export variation [path] | export squiglink | export log [path]",
-            "  curator help  (Curator workspace commands)",
-        ))
+        return "\n".join(
+            (
+                "Commands:",
+                "  help | clear | status | devices | diagnostics system | diagnostics last",
+                "  settings list | settings get <name> | settings set <name> <value>",
+                "  settings save [<name>|all]",
+                "  measure start [count] [level_db] | measure pass | measure fail | measure cancel",
+                "  measure session save|load <path> | measure target <path>|clear | measure eq [max_filters]",
+                "  export average [path] | export variation [path] | export squiglink | export log [path]",
+                "  curator help  (Curator workspace commands)",
+            )
+        )
 
     def _console_status(self) -> str:
-        return "\n".join((
-            f"State: {self._state}",
-            f"Queue: {self._queue_index}/{self._queue_target or 0}",
-            f"Kept curves: {len(self._kept_curves)}",
-            f"Curator layers: {len(self._curator_widget.graph_state.layers)} "
-            f"({sum(layer.visible for layer in self._curator_widget.graph_state.layers)} visible)",
-            f"Output: {self._current_output_device_label() or 'none'}",
-            f"Input: {self._current_input_device_label() or 'none'} / channel {self._current_input_channel() + 1}",
-            f"Bluetooth mode: {bool(self._settings.get('bluetooth_headphone_mode'))}",
-            f"Sweep: {self._settings.get('sweep_duration')} s @ {self._settings.get('sample_rate')} Hz, buffer {self._settings.get('buffer_size')}",
-        ))
+        return "\n".join(
+            (
+                f"State: {self._state}",
+                f"Queue: {self._queue_index}/{self._queue_target or 0}",
+                f"Kept curves: {len(self._kept_curves)}",
+                f"Curator layers: {len(self._curator_widget.graph_state.layers)} "
+                f"({sum(layer.visible for layer in self._curator_widget.graph_state.layers)} visible)",
+                f"Output: {self._current_output_device_label() or 'none'}",
+                f"Input: {self._current_input_device_label() or 'none'} / channel {self._current_input_channel() + 1}",
+                f"Bluetooth mode: {bool(self._settings.get('bluetooth_headphone_mode'))}",
+                f"Sweep: {self._settings.get('sweep_duration')} s @ {self._settings.get('sample_rate')} Hz, buffer {self._settings.get('buffer_size')}",
+            )
+        )
 
     def _console_devices(self) -> str:
         output_lines = ["Output devices:"]
@@ -2560,7 +2576,11 @@ class MainWindow(QMainWindow):
             for name in _CONSOLE_SETTING_SPECS:
                 key = _CONSOLE_SETTING_KEYS.get(name, name)
                 suffix = " (session)" if key in overrides else ""
-                value = self._queue_level_spin.value() if name == "output_level" else self._settings.get(key)
+                value = (
+                    self._queue_level_spin.value()
+                    if name == "output_level"
+                    else self._settings.get(key)
+                )
                 lines.append(f"{name} = {value}{suffix}")
             self._command_reply("\n".join(lines))
             return
@@ -2569,7 +2589,11 @@ class MainWindow(QMainWindow):
             if name not in _CONSOLE_SETTING_SPECS:
                 raise ValueError(f"Unknown editable setting: {name}")
             key = _CONSOLE_SETTING_KEYS.get(name, name)
-            value = self._queue_level_spin.value() if name == "output_level" else self._settings.get(key)
+            value = (
+                self._queue_level_spin.value()
+                if name == "output_level"
+                else self._settings.get(key)
+            )
             session = " (session)" if key in self._settings.session_overrides() else ""
             self._command_reply(f"{name} = {value}{session}")
             return
@@ -2599,7 +2623,9 @@ class MainWindow(QMainWindow):
                     for key in bluetooth_keys:
                         saved.extend(self._settings.save_session(key))
                 else:
-                    saved = self._settings.save_session(_CONSOLE_SETTING_KEYS.get(requested, requested))
+                    saved = self._settings.save_session(
+                        _CONSOLE_SETTING_KEYS.get(requested, requested)
+                    )
             if not saved:
                 self._command_reply("No matching session overrides to save.")
             else:
@@ -2752,9 +2778,7 @@ class MainWindow(QMainWindow):
             from dms.comparison import format_eq_apo, suggest_eq
 
             delta = self._measure_delta_result(average)
-            self._command_reply(
-                format_eq_apo(suggest_eq(delta, max_filters=max_filters))
-            )
+            self._command_reply(format_eq_apo(suggest_eq(delta, max_filters=max_filters)))
             return
         raise ValueError(
             "Usage: measure start [count] [level_db]|pass|fail|cancel"
@@ -2792,19 +2816,21 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _curator_help() -> str:
-        return "\n".join((
-            "Curator commands:",
-            "  curator status | curator layers | curator send",
-            "  curator import <path> [<path>...]",
-            "  curator layer <n> show|hide|remove",
-            "  curator layer <n> offset <db> | color <#RRGGBB> | hrtf <name|none>",
-            "  curator combine <n> <n> [...] | curator clear",
-            "  curator bounds on|off",
-            "  curator view limits <min_db> <max_db> | aspect on|off",
-            "  curator view background <#RRGGBB|theme>",
-            "  curator text title|fixture|footer <text>",
-            "  curator reset | curator export <path>",
-        ))
+        return "\n".join(
+            (
+                "Curator commands:",
+                "  curator status | curator layers | curator send",
+                "  curator import <path> [<path>...]",
+                "  curator layer <n> show|hide|remove",
+                "  curator layer <n> offset <db> | color <#RRGGBB> | hrtf <name|none>",
+                "  curator combine <n> <n> [...] | curator clear",
+                "  curator bounds on|off",
+                "  curator view limits <min_db> <max_db> | aspect on|off",
+                "  curator view background <#RRGGBB|theme>",
+                "  curator text title|fixture|footer <text>",
+                "  curator reset | curator export <path>",
+            )
+        )
 
     @staticmethod
     def _console_on_off(value: str) -> bool:
@@ -2820,14 +2846,18 @@ class MainWindow(QMainWindow):
             return
         if args == ["status"]:
             layers = curator.graph_state.layers
-            self._command_reply("\n".join((
-                f"Layers: {len(layers)}",
-                f"Visible: {sum(layer.visible for layer in layers)}",
-                f"Bounds: {'on' if curator.graph_state.bounds.enabled else 'off'}",
-                f"Limits: {curator.graph_state.y_min:g} to {curator.graph_state.y_max:g} dB",
-                f"25 dB/decade: {'on' if curator.graph_state.aspect_locked_25db else 'off'}",
-                f"Background: {curator.graph_state.background}",
-            )))
+            self._command_reply(
+                "\n".join(
+                    (
+                        f"Layers: {len(layers)}",
+                        f"Visible: {sum(layer.visible for layer in layers)}",
+                        f"Bounds: {'on' if curator.graph_state.bounds.enabled else 'off'}",
+                        f"Limits: {curator.graph_state.y_min:g} to {curator.graph_state.y_max:g} dB",
+                        f"25 dB/decade: {'on' if curator.graph_state.aspect_locked_25db else 'off'}",
+                        f"Background: {curator.graph_state.background}",
+                    )
+                )
+            )
             return
         if args == ["layers"]:
             self._command_reply(curator.layer_summary())
@@ -2874,7 +2904,9 @@ class MainWindow(QMainWindow):
             except ValueError as exc:
                 raise ValueError("Combine expects integer layer numbers.") from exc
             layer = curator.combine_layer_numbers(numbers)
-            self._command_reply(f"Created Curator layer {len(curator.graph_state.layers)}: {layer.name}")
+            self._command_reply(
+                f"Created Curator layer {len(curator.graph_state.layers)}: {layer.name}"
+            )
             return
         if args == ["clear"]:
             curator.clear_layers()
@@ -2971,9 +3003,7 @@ class MainWindow(QMainWindow):
             "secondary axis in the bottom viewport. Needs at least "
             f"{_DISTORTION_MIN_SNR_DB:.0f} dB SNR."
         )
-        self._distortion_toggle.setChecked(
-            bool(self._settings.get("measure_distortion_overlay"))
-        )
+        self._distortion_toggle.setChecked(bool(self._settings.get("measure_distortion_overlay")))
         self._distortion_toggle.stateChanged.connect(self._on_distortion_overlay_changed)
         row.addWidget(self._distortion_toggle)
 
@@ -2999,9 +3029,7 @@ class MainWindow(QMainWindow):
         self._level_mode_combo = QComboBox()
         self._level_mode_combo.addItem("1 kHz ref", "ref_1khz")
         self._level_mode_combo.addItem("dB SPL", "dbspl")
-        self._level_mode_combo.setCurrentIndex(
-            1 if self._level_mode() == "dbspl" else 0
-        )
+        self._level_mode_combo.setCurrentIndex(1 if self._level_mode() == "dbspl" else 0)
         self._level_mode_combo.setToolTip(
             "1 kHz ref normalizes every curve to 0 dB at 1 kHz. dB SPL keeps "
             "the absolute level and needs a calibrated input device."
@@ -3012,9 +3040,7 @@ class MainWindow(QMainWindow):
         self._compare_menu_btn = QToolButton()
         self._compare_menu_btn.setText("Compare ▾")
         self._compare_menu_btn.setProperty("menuButton", True)
-        self._compare_menu_btn.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
+        self._compare_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._compare_menu_btn.setToolTip(
             "Compare the average against a target curve or other measurements."
         )
@@ -3023,25 +3049,15 @@ class MainWindow(QMainWindow):
         self._load_target_action.triggered.connect(lambda: self._load_measure_target())
         self._clear_target_action = self._compare_menu.addAction("Clear Target")
         self._clear_target_action.triggered.connect(self._clear_measure_target)
-        self._delta_view_action = self._compare_menu.addAction(
-            "Delta View (measurement − target)"
-        )
+        self._delta_view_action = self._compare_menu.addAction("Delta View (measurement − target)")
         self._delta_view_action.setCheckable(True)
-        self._delta_view_action.setChecked(
-            bool(self._settings.get("measure_delta_view"))
-        )
+        self._delta_view_action.setChecked(bool(self._settings.get("measure_delta_view")))
         self._delta_view_action.toggled.connect(self._on_delta_view_toggled)
         self._compare_menu.addSeparator()
         self._load_reference_action = self._compare_menu.addAction("Load Reference…")
-        self._load_reference_action.triggered.connect(
-            lambda: self._load_measure_reference()
-        )
-        self._clear_references_action = self._compare_menu.addAction(
-            "Clear References"
-        )
-        self._clear_references_action.triggered.connect(
-            self._clear_measure_references
-        )
+        self._load_reference_action.triggered.connect(lambda: self._load_measure_reference())
+        self._clear_references_action = self._compare_menu.addAction("Clear References")
+        self._clear_references_action.triggered.connect(self._clear_measure_references)
         self._compare_menu.addSeparator()
         self._eq_suggestion_action = self._compare_menu.addAction("EQ Suggestion…")
         self._eq_suggestion_action.triggered.connect(self._open_eq_suggestion)
@@ -3069,29 +3085,19 @@ class MainWindow(QMainWindow):
         self._session_menu_btn = QToolButton()
         self._session_menu_btn.setText("Session ▾")
         self._session_menu_btn.setProperty("menuButton", True)
-        self._session_menu_btn.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        self._session_menu_btn.setToolTip(
-            "Save, reopen or start over on a Measure session file."
-        )
+        self._session_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._session_menu_btn.setToolTip("Save, reopen or start over on a Measure session file.")
         self._session_menu = QMenu(self._session_menu_btn)
         self._new_session_action = self._session_menu.addAction("New Session")
         self._new_session_action.triggered.connect(self._new_measure_session)
         self._save_session_action = self._session_menu.addAction("Save Session")
-        self._save_session_action.triggered.connect(
-            lambda: self._save_measure_session()
-        )
-        self._save_session_as_action = self._session_menu.addAction(
-            "Save Session As…"
-        )
+        self._save_session_action.triggered.connect(lambda: self._save_measure_session())
+        self._save_session_as_action = self._session_menu.addAction("Save Session As…")
         self._save_session_as_action.triggered.connect(
             lambda: self._save_measure_session(save_as=True)
         )
         self._load_session_action = self._session_menu.addAction("Load Session…")
-        self._load_session_action.triggered.connect(
-            lambda: self._load_measure_session()
-        )
+        self._load_session_action.triggered.connect(lambda: self._load_measure_session())
         self._session_menu_btn.setMenu(self._session_menu)
         row.addWidget(self._session_menu_btn)
 
@@ -3140,9 +3146,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(QLabel("Output Device"))
         self._out_dev_combo = QComboBox()
-        self._out_dev_combo.currentIndexChanged.connect(
-            self._on_output_device_changed
-        )
+        self._out_dev_combo.currentIndexChanged.connect(self._on_output_device_changed)
         layout.addWidget(self._out_dev_combo)
 
         layout.addWidget(QLabel("Input Device"))
@@ -3264,15 +3268,9 @@ class MainWindow(QMainWindow):
         primary.addWidget(self._two_channel_toggle)
 
         self._measure_submode_control = _MeasureSubmodeControl()
-        self._measure_frequency_button = (
-            self._measure_submode_control.frequency_button
-        )
-        self._measure_balance_button = (
-            self._measure_submode_control.balance_button
-        )
-        self._measure_submode_control.balance_toggled.connect(
-            self._on_measure_submode_toggled
-        )
+        self._measure_frequency_button = self._measure_submode_control.frequency_button
+        self._measure_balance_button = self._measure_submode_control.balance_button
+        self._measure_submode_control.balance_toggled.connect(self._on_measure_submode_toggled)
         self._measure_submode_control.minimum_width_changed.connect(
             self._sync_queue_bar_submode_width
         )
@@ -3308,9 +3306,7 @@ class MainWindow(QMainWindow):
         primary.addWidget(self._queue_level_spin)
         self._queue_level_persist_toggle = ToggleSwitch("")
         self._queue_level_persist_toggle.setChecked(persist_output_level)
-        self._queue_level_persist_toggle.stateChanged.connect(
-            self._on_queue_level_persist_changed
-        )
+        self._queue_level_persist_toggle.stateChanged.connect(self._on_queue_level_persist_changed)
         primary.addWidget(
             self._queue_level_persist_toggle,
             0,
@@ -3404,9 +3400,7 @@ class MainWindow(QMainWindow):
         toggle.setCheckable(True)
         toggle.setChecked(not collapsed)
         toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        toggle.setArrowType(
-            Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow
-        )
+        toggle.setArrowType(Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow)
         toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -3428,9 +3422,7 @@ class MainWindow(QMainWindow):
         anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
 
         def on_toggle(checked: bool) -> None:
-            toggle.setArrowType(
-                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
-            )
+            toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
             anim.stop()
             target = max(1, content_widget.sizeHint().height())
             if checked:
@@ -3443,11 +3435,13 @@ class MainWindow(QMainWindow):
             anim.start()
 
         toggle.toggled.connect(on_toggle)
+
         def on_finished() -> None:
             if toggle.isChecked():
                 container.setMaximumHeight(max(1, content_widget.sizeHint().height()))
             else:
                 container.setVisible(False)
+
         anim.finished.connect(on_finished)
 
         section_layout.addWidget(toggle)
@@ -3462,24 +3456,24 @@ class MainWindow(QMainWindow):
         self._update_button.setToolTip("A new app version is available.")
         self._update_button.clicked.connect(self._open_update_url)
         self._statusbar.addPermanentWidget(self._update_button)
-        self._pending_update_url: Optional[str] = None
-        self._update_check_thread: Optional[QThread] = None
+        self._pending_update_url: str | None = None
+        self._update_check_thread: QThread | None = None
 
-    def _current_output_device(self) -> Optional[int]:
+    def _current_output_device(self) -> int | None:
         value = self._out_dev_combo.currentData()
         return int(value) if value is not None else None
 
-    def _current_input_device(self) -> Optional[int]:
+    def _current_input_device(self) -> int | None:
         value = self._in_dev_combo.currentData()
         return int(value) if value is not None else None
 
-    def _current_output_device_info(self) -> Optional[dict]:
+    def _current_output_device_info(self) -> dict | None:
         index = self._current_output_device()
         if index is None:
             return None
         return self._output_devices_by_index.get(index)
 
-    def _current_input_device_info(self) -> Optional[dict]:
+    def _current_input_device_info(self) -> dict | None:
         index = self._current_input_device()
         if index is None:
             return None
@@ -3497,11 +3491,11 @@ class MainWindow(QMainWindow):
             return ""
         return self._input_device_labels_by_index.get(index, str(index))
 
-    def _current_output_device_setting(self) -> Optional[dict]:
+    def _current_output_device_setting(self) -> dict | None:
         device = self._current_output_device_info()
         return device_setting(device, "output") if device is not None else None
 
-    def _current_input_device_setting(self) -> Optional[dict]:
+    def _current_input_device_setting(self) -> dict | None:
         device = self._current_input_device_info()
         return device_setting(device, "input") if device is not None else None
 
@@ -3525,7 +3519,7 @@ class MainWindow(QMainWindow):
             f"for stable timing.\n\nInput: {in_label}\nOutput: {out_label}"
         )
 
-    def _matching_output_for_input(self, input_device: Optional[dict]) -> Optional[dict]:
+    def _matching_output_for_input(self, input_device: dict | None) -> dict | None:
         if input_device is None:
             return None
         hostapi = int(input_device.get("hostapi", -1))
@@ -3577,10 +3571,7 @@ class MainWindow(QMainWindow):
         return self._queue_target > 0
 
     def _is_hrtf_active(self) -> bool:
-        return (
-            self._hrtf is not None
-            and self._hrtf_toggle.isChecked()
-        )
+        return self._hrtf is not None and self._hrtf_toggle.isChecked()
 
     def _restore_hrtf_state(self) -> None:
         self._refresh_hrtf_options()
@@ -3674,12 +3665,10 @@ class MainWindow(QMainWindow):
         in_devices = filter_devices_by_hostapi(all_in_devices, preferred_hostapi)
 
         out_signature = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in all_out_devices
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in all_out_devices
         ]
         in_signature = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in all_in_devices
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in all_in_devices
         ]
         out_duplicates = duplicate_device_names(out_devices)
         in_duplicates = duplicate_device_names(in_devices)
@@ -3691,12 +3680,10 @@ class MainWindow(QMainWindow):
         self._output_devices_by_index = {int(d["index"]): d for d in out_devices}
         self._input_devices_by_index = {int(d["index"]): d for d in in_devices}
         self._output_device_labels_by_index = {
-            int(d["index"]): device_label(d, out_duplicates)
-            for d in out_devices
+            int(d["index"]): device_label(d, out_duplicates) for d in out_devices
         }
         self._input_device_labels_by_index = {
-            int(d["index"]): device_label(d, in_duplicates)
-            for d in in_devices
+            int(d["index"]): device_label(d, in_duplicates) for d in in_devices
         }
 
         self._out_dev_combo.clear()
@@ -3799,22 +3786,14 @@ class MainWindow(QMainWindow):
         current_out = self._current_output_device()
         current_in = self._current_input_device()
         current_ch = self._current_input_channel()
-        if (
-            previous_out == current_out
-            and previous_in == current_in
-            and previous_ch == current_ch
-        ):
+        if previous_out == current_out and previous_in == current_in and previous_ch == current_ch:
             self._statusbar.showMessage("Audio devices refreshed.")
         else:
             self._statusbar.showMessage("Audio devices refreshed; selection changed.")
 
-    def _refresh_channels(self, selected_ch: Optional[int] = None) -> None:
+    def _refresh_channels(self, selected_ch: int | None = None) -> None:
         input_device = self._current_input_device()
-        count = (
-            device_channel_count(input_device, "input")
-            if input_device is not None
-            else 0
-        )
+        count = device_channel_count(input_device, "input") if input_device is not None else 0
 
         self._ch_combo.clear()
         for idx in range(count):
@@ -3830,9 +3809,7 @@ class MainWindow(QMainWindow):
             want_ch = max(0, min(want_ch, count - 1))
             self._ch_combo.setCurrentIndex(want_ch)
             self._settings.set("input_channel", want_ch)
-            self._active_ch_label.setText(
-                f"Active input channel: Ch {want_ch + 1}"
-            )
+            self._active_ch_label.setText(f"Active input channel: Ch {want_ch + 1}")
         else:
             self._active_ch_label.setText("Active input channel: —")
         if hasattr(self, "_rnd_widget"):
@@ -3849,16 +3826,13 @@ class MainWindow(QMainWindow):
         poller = getattr(self, "_device_poller", None)
         if poller is None:
             return
-        busy = (
-            not self._queue.allows_device_reselect()
-            or getattr(self, "_rnd_sweep_active", False)
-        )
+        busy = not self._queue.allows_device_reselect() or getattr(self, "_rnd_sweep_active", False)
         poller.pause(busy)
 
     def _check_devices(
         self,
-        output_devices: Optional[list[dict]] = None,
-        input_devices: Optional[list[dict]] = None,
+        output_devices: list[dict] | None = None,
+        input_devices: list[dict] | None = None,
     ) -> None:
         """React to a device-set change reported by :class:`DevicePoller`.
 
@@ -3870,27 +3844,22 @@ class MainWindow(QMainWindow):
         if input_devices is None:
             input_devices = get_input_devices()
         current_out = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in output_devices
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in output_devices
         ]
         current_in = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1)))
-            for d in input_devices
+            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in input_devices
         ]
 
-        if current_out == self._last_output_devices and current_in == (
-            self._last_input_devices
-        ):
+        if current_out == self._last_output_devices and current_in == (self._last_input_devices):
             return
 
         getattr(self, "_stop_channel_balance", lambda: None)()
 
         selected_out = self._current_output_device()
         selected_in = self._current_input_device()
-        selected_vanished = (
-            selected_out not in {idx for idx, _name, _hostapi in current_out}
-            or selected_in not in {idx for idx, _name, _hostapi in current_in}
-        )
+        selected_vanished = selected_out not in {
+            idx for idx, _name, _hostapi in current_out
+        } or selected_in not in {idx for idx, _name, _hostapi in current_in}
 
         if selected_vanished and self._state != AppState.IDLE:
             # Whether a sweep is running, a pair is between channels, or a
@@ -3918,10 +3887,8 @@ class MainWindow(QMainWindow):
         Waiting matters: sounddevice's play/record state is process-global, so
         a stale thread that stops later would truncate the next sweep.
         """
-        try:
+        with contextlib.suppress(Exception):
             self._sweep_runner.abort()
-        except Exception:
-            pass
 
     def _cleanup_sweep_thread(self) -> None:
         """Compatibility hook; the runner releases its thread and worker itself."""
@@ -3979,9 +3946,7 @@ class MainWindow(QMainWindow):
             and self._current_input_device() is not None
             and not self._selected_audio_pair_is_compatible()
         ):
-            self._statusbar.showMessage(
-                "Windows input/output driver backends do not match."
-            )
+            self._statusbar.showMessage("Windows input/output driver backends do not match.")
 
     def _on_input_device_changed(self) -> None:
         self._stop_channel_balance()
@@ -4034,10 +3999,7 @@ class MainWindow(QMainWindow):
             self._level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
             return
         target_db = max(-60.0, min(0.0, self._last_level_dbfs))
-        self._displayed_level_dbfs = (
-            self._displayed_level_dbfs * 0.5
-            + target_db * 0.5
-        )
+        self._displayed_level_dbfs = self._displayed_level_dbfs * 0.5 + target_db * 0.5
         if abs(self._displayed_level_dbfs - target_db) < 0.2:
             self._displayed_level_dbfs = target_db
         self._level_meter.set_level(self._displayed_level_dbfs)
@@ -4081,9 +4043,7 @@ class MainWindow(QMainWindow):
         self._pending_update_url = release_url
         self._update_button.setVisible(True)
         summary_text = f" - {summary}" if summary else ""
-        self._update_button.setToolTip(
-            f"v{latest_version} is available{summary_text}"
-        )
+        self._update_button.setToolTip(f"v{latest_version} is available{summary_text}")
         self._statusbar.showMessage(
             f"Update available: v{latest_version}. Click 'Update' to open release notes."
         )
@@ -4138,9 +4098,7 @@ class MainWindow(QMainWindow):
             and self._selected_audio_pair_is_compatible()
         )
         device_ok = (
-            self._two_channel_devices_ready()
-            if self._two_channel_enabled
-            else single_device_ok
+            self._two_channel_devices_ready() if self._two_channel_enabled else single_device_ok
         )
 
         for widget in (
@@ -4184,9 +4142,7 @@ class MainWindow(QMainWindow):
         self._start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
         self._cancel_queue_btn.setEnabled(busy or pass_fail)
         active_count = (
-            len(self._two_channel_pairs)
-            if self._two_channel_enabled
-            else len(self._kept_curves)
+            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
         self._undo_btn.setEnabled(idle and active_count > 0)
         has_measurements = (
@@ -4266,20 +4222,20 @@ class MainWindow(QMainWindow):
         self._queue_target = int(self._queue_n_spin.value())
         self._queue_index = 0
         self._current_sweep_attempts = 0
-        overrides = self._settings.session_overrides() if hasattr(self._settings, "session_overrides") else {}
+        overrides = (
+            self._settings.session_overrides()
+            if hasattr(self._settings, "session_overrides")
+            else {}
+        )
         if "queue_count" not in overrides:
             self._settings.set("queue_count", self._queue_target)
 
         self._queue_progress_bar.setRange(0, max(1, self._queue_target))
         self._queue_progress_bar.setValue(0)
         kept_count = (
-            len(self._two_channel_pairs)
-            if self._two_channel_enabled
-            else len(self._kept_curves)
+            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
-        self._queue_progress_label.setText(
-            f"Kept: {kept_count}"
-        )
+        self._queue_progress_label.setText(f"Kept: {kept_count}")
 
         self._state = AppState.QUEUE_RUNNING
         self._apply_state_ui()
@@ -4363,19 +4319,13 @@ class MainWindow(QMainWindow):
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
             latency=self._sweep_latency_mode(),
-            bluetooth_headphone_mode=bool(
-                self._settings.get("bluetooth_headphone_mode")
-            ),
+            bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
             start_alignment_confidence_min=float(
                 self._settings.get("start_alignment_confidence_min")
             ),
-            end_marker_confidence_min=float(
-                self._settings.get("end_marker_confidence_min")
-            ),
+            end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
-            sweep_noise_margin_min_db=float(
-                self._settings.get("sweep_noise_margin_min_db")
-            ),
+            sweep_noise_margin_min_db=float(self._settings.get("sweep_noise_margin_min_db")),
             snr_warn_db=float(self._settings.get("snr_warn_db")),
             failed_recording_dir=self._failed_recording_dir(),
             sweep_f_low=_MEASUREMENT_F_MIN,
@@ -4387,17 +4337,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        channel_text = (
-            f", channel {self._two_channel_stage}"
-            if self._two_channel_enabled
-            else ""
-        )
+        channel_text = f", channel {self._two_channel_stage}" if self._two_channel_enabled else ""
         self._statusbar.showMessage(
             f"Sweeping {self._queue_index + 1}/{self._queue_target}{channel_text} "
             f"(attempt {self._current_sweep_attempts})..."
         )
         self._log_event(
-            "INFO", "measurement", "Sweep started",
+            "INFO",
+            "measurement",
+            "Sweep started",
             index=self._queue_index + 1,
             total=self._queue_target,
             attempt=self._current_sweep_attempts,
@@ -4425,8 +4373,14 @@ class MainWindow(QMainWindow):
         details = {
             name: getattr(diagnostics, name)
             for name in (
-                "start_confidence", "marker_confidence", "timing_error_ms", "snr_db",
-                "failure_reason", "warning_reason", "bluetooth_headphone_mode", "buffer_size",
+                "start_confidence",
+                "marker_confidence",
+                "timing_error_ms",
+                "snr_db",
+                "failure_reason",
+                "warning_reason",
+                "bluetooth_headphone_mode",
+                "buffer_size",
             )
             if hasattr(diagnostics, name)
         }
@@ -4445,9 +4399,7 @@ class MainWindow(QMainWindow):
                     self._start_second_pair_stage = True
                     self._state = AppState.QUEUE_RUNNING
                     self._apply_state_ui()
-                    self._statusbar.showMessage(
-                        "Channel 1/L complete. Starting channel 2/R."
-                    )
+                    self._statusbar.showMessage("Channel 1/L complete. Starting channel 2/R.")
                     return
                 if self._two_channel_stage != 2 or self._pending_pair_first_raw is None:
                     raise ValueError("The first channel result is unavailable.")
@@ -4488,9 +4440,7 @@ class MainWindow(QMainWindow):
                 self._state = AppState.PASS_FAIL
                 self._apply_state_ui()
                 self._update_plots(show_pending=True)
-                self._statusbar.showMessage(
-                    "Two-channel pair complete. Waiting for review."
-                )
+                self._statusbar.showMessage("Two-channel pair complete. Waiting for review.")
                 QTimer.singleShot(0, self._show_pass_fail_dialog)
                 return
             if spl_offset is None:
@@ -4506,8 +4456,11 @@ class MainWindow(QMainWindow):
 
             self._pending_curve = (freqs_ds, mag_ds)
             self._log_event(
-                "INFO", "processing", "Frequency response processed",
-                input_points=len(freqs), output_points=len(freqs_ds),
+                "INFO",
+                "processing",
+                "Frequency response processed",
+                input_points=len(freqs),
+                output_points=len(freqs_ds),
             )
             self._state = AppState.PASS_FAIL
             self._apply_state_ui()
@@ -4548,10 +4501,7 @@ class MainWindow(QMainWindow):
                         f"SNR {snr_db:.1f} dB.{warning_prefix}"
                     )
                 else:
-                    timing_msg = (
-                        f" Sweep Quality: alignment {start_conf:.1f}, "
-                        f"SNR {snr_db:.1f} dB."
-                    )
+                    timing_msg = f" Sweep Quality: alignment {start_conf:.1f}, SNR {snr_db:.1f} dB."
             self._statusbar.showMessage(f"Sweep complete. Waiting for review.{timing_msg}")
             QTimer.singleShot(0, self._show_pass_fail_dialog)
         except Exception as exc:
@@ -4572,9 +4522,7 @@ class MainWindow(QMainWindow):
 
         failure_reason = None
         if self._last_measurement_diagnostics is not None:
-            failure_reason = getattr(
-                self._last_measurement_diagnostics, "failure_reason", None
-            )
+            failure_reason = getattr(self._last_measurement_diagnostics, "failure_reason", None)
         is_timing_quality_error = is_retryable_timing_failure(
             message=message,
             failure_reason=failure_reason,
@@ -4594,15 +4542,10 @@ class MainWindow(QMainWindow):
             diagnostics_text = ""
             if (
                 self._last_measurement_diagnostics is not None
-                and getattr(
-                    self._last_measurement_diagnostics, "failure_reason", None
-                ) is not None
+                and getattr(self._last_measurement_diagnostics, "failure_reason", None) is not None
             ):
-                diagnostics_text = (
-                    "\n\n"
-                    + format_diagnostics_summary(
-                        self._last_measurement_diagnostics
-                    )
+                diagnostics_text = "\n\n" + format_diagnostics_summary(
+                    self._last_measurement_diagnostics
                 )
             self._state = AppState.QUEUE_RUNNING
             self._apply_state_ui()
@@ -4633,25 +4576,18 @@ class MainWindow(QMainWindow):
                 return
             self._cancel_queue()
             cancel_reason = (
-                "two-channel pair retry"
-                if retry_complete_pair
-                else "timing-quality retry"
+                "two-channel pair retry" if retry_complete_pair else "timing-quality retry"
             )
-            self._statusbar.showMessage(
-                f"Queue canceled by user after {cancel_reason} prompt."
-            )
+            self._statusbar.showMessage(f"Queue canceled by user after {cancel_reason} prompt.")
             return
 
         dialog_message = message
         if (
             self._last_measurement_diagnostics is not None
-            and getattr(
-                self._last_measurement_diagnostics, "failure_reason", None
-            ) is not None
+            and getattr(self._last_measurement_diagnostics, "failure_reason", None) is not None
         ):
             dialog_message = (
-                f"{message}\n\n"
-                f"{format_diagnostics_summary(self._last_measurement_diagnostics)}"
+                f"{message}\n\n{format_diagnostics_summary(self._last_measurement_diagnostics)}"
             )
         # Terminal: the queue is over. A full reset clears the counters too, so
         # no phantom queue survives in the progress bar or the console.
@@ -4681,9 +4617,7 @@ class MainWindow(QMainWindow):
                 return
             self._close_pass_fail_dialog()
             self._two_channel_pairs.append(self._pending_pair)
-            self._kept_pair_meta.append(
-                {"timing_quality": self._last_timing_quality}
-            )
+            self._kept_pair_meta.append({"timing_quality": self._last_timing_quality})
             self._kept_distortion = self._queue.last_distortion
             self._pending_pair = None
             self._pending_pair_first_raw = None
@@ -4709,14 +4643,18 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._kept_curves.append(self._pending_curve)
-        self._kept_sweep_meta.append({
-            "diagnostics": self._last_measurement_diagnostics,
-            "timing_quality": self._last_timing_quality,
-            "distortion": self._queue.last_distortion,
-        })
+        self._kept_sweep_meta.append(
+            {
+                "diagnostics": self._last_measurement_diagnostics,
+                "timing_quality": self._last_timing_quality,
+                "distortion": self._queue.last_distortion,
+            }
+        )
         self._kept_distortion = self._queue.last_distortion
         self._log_event(
-            "INFO", "review", "Measurement kept",
+            "INFO",
+            "review",
+            "Measurement kept",
             index=self._queue_index + 1,
             kept_count=len(self._kept_curves),
         )
@@ -4736,9 +4674,7 @@ class MainWindow(QMainWindow):
         self._mark_measure_dirty()
         match = self._target_match_message()
         if match:
-            self._statusbar.showMessage(
-                f"Kept {len(self._kept_curves)} measurement(s). {match}"
-            )
+            self._statusbar.showMessage(f"Kept {len(self._kept_curves)} measurement(s). {match}")
 
         if self._queue_index >= self._queue_target:
             self._finish_queue()
@@ -4786,9 +4722,7 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._start_level_monitor()
         match = self._target_match_message()
-        self._statusbar.showMessage(
-            f"Queue complete. {match}" if match else "Queue complete."
-        )
+        self._statusbar.showMessage(f"Queue complete. {match}" if match else "Queue complete.")
         self._run_automation_trigger("queue_complete")
 
     def _update_queue_progress(self) -> None:
@@ -4796,13 +4730,9 @@ class MainWindow(QMainWindow):
         self._queue_progress_bar.setRange(0, max(1, target))
         self._queue_progress_bar.setValue(min(self._queue_index, max(1, target)))
         kept_count = (
-            len(self._two_channel_pairs)
-            if self._two_channel_enabled
-            else len(self._kept_curves)
+            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         )
-        self._queue_progress_label.setText(
-            f"Kept: {kept_count}"
-        )
+        self._queue_progress_label.setText(f"Kept: {kept_count}")
 
     def _show_pass_fail_dialog(self) -> None:
         pending_available = (
@@ -4954,12 +4884,12 @@ class MainWindow(QMainWindow):
             post_silence=float(self._settings.get("post_sweep_silence")),
             latency=self._sweep_latency_mode(),
             bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
-            start_alignment_confidence_min=float(self._settings.get("start_alignment_confidence_min")),
+            start_alignment_confidence_min=float(
+                self._settings.get("start_alignment_confidence_min")
+            ),
             end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
             timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
-            sweep_noise_margin_min_db=float(
-                self._settings.get("sweep_noise_margin_min_db")
-            ),
+            sweep_noise_margin_min_db=float(self._settings.get("sweep_noise_margin_min_db")),
             snr_warn_db=float(self._settings.get("snr_warn_db")),
             failed_recording_dir=self._failed_recording_dir(),
             sweep_f_low=_MEASUREMENT_F_MIN,
@@ -5049,7 +4979,11 @@ class MainWindow(QMainWindow):
             self._rnd_review_dialog.raise_()
             self._rnd_review_dialog.activateWindow()
             return
-        previous = self._rnd_widget.session.measurements[-1].name if self._rnd_widget.session.measurements else ""
+        previous = (
+            self._rnd_widget.session.measurements[-1].name
+            if self._rnd_widget.session.measurements
+            else ""
+        )
         dlg = RnDReviewDialog(
             previous,
             timing_quality=self._last_timing_quality,
@@ -5087,7 +5021,9 @@ class MainWindow(QMainWindow):
         if self._pending_curve is None:
             return
         freqs, mag_db = self._pending_curve
-        channel_label = self._ch_combo.currentText().strip() or f"Channel {self._current_input_channel() + 1}"
+        channel_label = (
+            self._ch_combo.currentText().strip() or f"Channel {self._current_input_channel() + 1}"
+        )
         existing_names = {item.name for item in self._rnd_widget.session.measurements}
         measurement = RnDMeasurement(
             name=generate_measurement_name(
@@ -5120,7 +5056,9 @@ class MainWindow(QMainWindow):
         self._start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
-        self._log_event("INFO", "rnd", "R&D measurement kept", name=measurement.name, status=change_status)
+        self._log_event(
+            "INFO", "rnd", "R&D measurement kept", name=measurement.name, status=change_status
+        )
         self._run_automation_trigger("rnd_measurement_kept")
 
     def _cancel_rnd_measurement(self) -> None:
@@ -5192,7 +5130,7 @@ class MainWindow(QMainWindow):
 
     def _active_two_channel_average(
         self,
-    ) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    ) -> tuple[np.ndarray, np.ndarray] | None:
         value = self._two_channel_averages.get(self._active_two_channel_key())
         return value if isinstance(value, tuple) else None
 
@@ -5242,16 +5180,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         hrtf: HRTFCurve | None,
-    ) -> Optional[
-        tuple[
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-        ]
-    ]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         return MainWindow._variation_from_curves(
             self,
             self._kept_curves,
@@ -5262,19 +5191,10 @@ class MainWindow(QMainWindow):
     def _variation_from_curves(
         self,
         curves: list[tuple[np.ndarray, np.ndarray]],
-        average: Optional[tuple[np.ndarray, np.ndarray]],
+        average: tuple[np.ndarray, np.ndarray] | None,
         *,
         hrtf: HRTFCurve | None,
-    ) -> Optional[
-        tuple[
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-        ]
-    ]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         if not curves or average is None:
             return None
 
@@ -5308,16 +5228,14 @@ class MainWindow(QMainWindow):
                 median,
                 p75,
                 p90,
-                combination=variation_combination_setting(
-                    getattr(self, "_settings", None)
-                ),
+                combination=variation_combination_setting(getattr(self, "_settings", None)),
             )
         return (base_freqs, p10, p25, p75, p90, median)
 
     def _average_curve_with_hrtf(
         self,
         hrtf: HRTFCurve | None,
-    ) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    ) -> tuple[np.ndarray, np.ndarray] | None:
         source = (
             self._active_two_channel_average()
             if getattr(self, "_two_channel_enabled", False)
@@ -5332,11 +5250,11 @@ class MainWindow(QMainWindow):
 
     def _bottom_curve_for_display_and_export(
         self,
-    ) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    ) -> tuple[np.ndarray, np.ndarray] | None:
         active_hrtf = self._hrtf if self._is_hrtf_active() else None
         return self._average_curve_with_hrtf(active_hrtf)
 
-    def _bottom_curve_for_display(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    def _bottom_curve_for_display(self) -> tuple[np.ndarray, np.ndarray] | None:
         curve = self._bottom_curve_for_display_and_export()
         if curve is None:
             return None
@@ -5423,9 +5341,7 @@ class MainWindow(QMainWindow):
         if delta_on:
             # The bottom viewport shows measurement - target instead of the
             # average, so the variation band has nothing to describe.
-            delta = self._measure_delta_result(
-                self._bottom_curve_for_display_and_export()
-            )
+            delta = self._measure_delta_result(self._bottom_curve_for_display_and_export())
             if delta is not None:
                 avg = (delta.freqs, delta.delta_db)
                 bottom_mode = "average"
@@ -5440,9 +5356,8 @@ class MainWindow(QMainWindow):
         self._sync_export_button()
 
     def _bottom_view_mode(self) -> str:
-        if (
-            getattr(self, "_is_hrtf_active", lambda: False)()
-            and getattr(getattr(self, "_hrtf", None), "is_variation", False)
+        if getattr(self, "_is_hrtf_active", lambda: False)() and getattr(
+            getattr(self, "_hrtf", None), "is_variation", False
         ):
             return "variation"
         return "variation" if self._variation_toggle.isChecked() else "average"
@@ -5488,16 +5403,14 @@ class MainWindow(QMainWindow):
         return np.asarray(analysis.freqs), series
 
     def _on_distortion_overlay_changed(self, *_args) -> None:
-        self._settings.set(
-            "measure_distortion_overlay", self._distortion_overlay_enabled()
-        )
+        self._settings.set("measure_distortion_overlay", self._distortion_overlay_enabled())
         self._update_plots()
 
     def _analyze_sweep(
         self,
         recording: np.ndarray,
         sweep: np.ndarray,
-    ) -> tuple[tuple[np.ndarray, np.ndarray], Optional[HarmonicAnalysis]]:
+    ) -> tuple[tuple[np.ndarray, np.ndarray], HarmonicAnalysis | None]:
         """Frequency response plus, when asked for, harmonic distortion.
 
         The distortion pass is strictly optional: any failure inside it is
@@ -5512,7 +5425,7 @@ class MainWindow(QMainWindow):
             f_low=_MEASUREMENT_F_MIN,
             f_high=_MEASUREMENT_F_MAX,
         )
-        distortion: Optional[HarmonicAnalysis] = None
+        distortion: HarmonicAnalysis | None = None
         if self._distortion_analysis_allowed():
             try:
                 distortion = harmonic_responses(
@@ -5538,7 +5451,7 @@ class MainWindow(QMainWindow):
         mode = str(self._settings.get("measure_level_mode") or "ref_1khz")
         return "dbspl" if mode == "dbspl" else "ref_1khz"
 
-    def _calibrated_sensitivity(self) -> Optional[float]:
+    def _calibrated_sensitivity(self) -> float | None:
         """Pa/FS for the selected input device, or None when uncalibrated.
 
         ``CalibrationStore`` is keyed by the device's raw name — the same key
@@ -5552,7 +5465,7 @@ class MainWindow(QMainWindow):
             return None
         return self._cal_store.get_sensitivity(name)
 
-    def _spl_offset_db(self) -> Optional[float]:
+    def _spl_offset_db(self) -> float | None:
         """dB offset to absolute SPL, or None to stay in 1 kHz reference mode.
 
         Falls back to reference mode — with a single status-bar note — when
@@ -5630,8 +5543,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._statusbar.showMessage(
-                "Level mode: dB SPL." if chosen == "dbspl"
-                else "Level mode: 1 kHz reference."
+                "Level mode: dB SPL." if chosen == "dbspl" else "Level mode: 1 kHz reference."
             )
         self._update_plots()
 
@@ -5671,9 +5583,7 @@ class MainWindow(QMainWindow):
                 "Single Channel Only",
                 "TXT drag-and-drop import is available only in Single Channel mode.",
             )
-            self._statusbar.showMessage(
-                "Measurement import blocked: Two Channel mode is active."
-            )
+            self._statusbar.showMessage("Measurement import blocked: Two Channel mode is active.")
             return
         if self._state != AppState.IDLE:
             QMessageBox.information(
@@ -5791,12 +5701,8 @@ class MainWindow(QMainWindow):
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle("Clear All Measurements")
-        dialog.setText(
-            "Are you sure you want to clear all measurements from this tab?"
-        )
-        clear_button = dialog.addButton(
-            "Clear All", QMessageBox.ButtonRole.DestructiveRole
-        )
+        dialog.setText("Are you sure you want to clear all measurements from this tab?")
+        clear_button = dialog.addButton("Clear All", QMessageBox.ButtonRole.DestructiveRole)
         clear_button.setObjectName("btn_danger")
         dialog.addButton(QMessageBox.StandardButton.Cancel)
         dont_show = QCheckBox("Don’t show this warning again")
@@ -5872,9 +5778,7 @@ class MainWindow(QMainWindow):
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle("Clear Headphone Metadata")
         dialog.setText("Are you sure you want to clear all headphone metadata?")
-        clear_button = dialog.addButton(
-            "Clear Metadata", QMessageBox.ButtonRole.DestructiveRole
-        )
+        clear_button = dialog.addButton("Clear Metadata", QMessageBox.ButtonRole.DestructiveRole)
         clear_button.setObjectName("btn_danger")
         dialog.addButton(QMessageBox.StandardButton.Cancel)
         dont_show = QCheckBox("Don’t show this warning again")
@@ -5939,13 +5843,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         updates = bluetooth_profile_updates()
         if preserve_standard:
-            current_profile = {
-                key: self._settings.get(key)
-                for key in updates
-            }
-            updates[PROFILE_SNAPSHOT_SETTING] = snapshot_measurement_profile(
-                current_profile
-            )
+            current_profile = {key: self._settings.get(key) for key in updates}
+            updates[PROFILE_SNAPSHOT_SETTING] = snapshot_measurement_profile(current_profile)
         self._settings.update(updates)
         self._settings_widget.refresh_from_settings()
         if notify:
@@ -6000,9 +5899,7 @@ class MainWindow(QMainWindow):
 
     def _on_calibration_done(self, device_name: str, sensitivity: float) -> None:
         label = self._current_input_device_label() or device_name
-        self._statusbar.showMessage(
-            f"Calibration saved for {label}: {sensitivity:.6f} Pa/FS"
-        )
+        self._statusbar.showMessage(f"Calibration saved for {label}: {sensitivity:.6f} Pa/FS")
 
     def _open_test_level(self) -> None:
         input_device = self._current_input_device()
@@ -6024,7 +5921,7 @@ class MainWindow(QMainWindow):
         )
         dlg.exec()
 
-    def _play_test_noise(self) -> Optional[str]:
+    def _play_test_noise(self) -> str | None:
         output_device = self._current_output_device()
         if output_device is None:
             return "No output device selected."
@@ -6033,7 +5930,7 @@ class MainWindow(QMainWindow):
         n = int(round(fs * dur_s))
         if n <= 0:
             return "Invalid sample rate for noise ping."
-        noise = (np.random.randn(n).astype(np.float32) * 0.04)
+        noise = np.random.randn(n).astype(np.float32) * 0.04
         fade_n = min(max(8, int(0.01 * fs)), n // 2)
         if fade_n > 0:
             fade = np.linspace(0.0, 1.0, fade_n, dtype=np.float32)
@@ -6047,7 +5944,7 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("Played test noise ping on selected output device.")
         return None
 
-    def _level_snapshot(self) -> tuple[float, Optional[float], str]:
+    def _level_snapshot(self) -> tuple[float, float | None, str]:
         input_info = self._current_input_device_info()
         input_device_name = str(input_info["name"]) if input_info is not None else ""
         input_label = self._current_input_device_label()
@@ -6101,11 +5998,16 @@ class MainWindow(QMainWindow):
             curve = CurveData(
                 kind="variation",
                 freqs=np.array(freqs, dtype=float, copy=True),
-                p10_db=np.array(p10, dtype=float, copy=True) + (correction if correction is not None else 0.0),
-                p25_db=np.array(p25, dtype=float, copy=True) + (correction if correction is not None else 0.0),
-                median_db=np.array(median, dtype=float, copy=True) + (correction if correction is not None else 0.0),
-                p75_db=np.array(p75, dtype=float, copy=True) + (correction if correction is not None else 0.0),
-                p90_db=np.array(p90, dtype=float, copy=True) + (correction if correction is not None else 0.0),
+                p10_db=np.array(p10, dtype=float, copy=True)
+                + (correction if correction is not None else 0.0),
+                p25_db=np.array(p25, dtype=float, copy=True)
+                + (correction if correction is not None else 0.0),
+                median_db=np.array(median, dtype=float, copy=True)
+                + (correction if correction is not None else 0.0),
+                p75_db=np.array(p75, dtype=float, copy=True)
+                + (correction if correction is not None else 0.0),
+                p90_db=np.array(p90, dtype=float, copy=True)
+                + (correction if correction is not None else 0.0),
                 metadata={
                     **curator_metadata,
                     "Source": "Fastgraph current variation",
@@ -6183,9 +6085,7 @@ class MainWindow(QMainWindow):
             if not self._active_measure_curves():
                 return "Keep at least one measurement before sending Var to R&D."
         elif (
-            self._active_two_channel_average()
-            if self._two_channel_enabled
-            else self._average
+            self._active_two_channel_average() if self._two_channel_enabled else self._average
         ) is None:
             return "Create an average before sending it to R&D."
         return ""
@@ -6204,17 +6104,16 @@ class MainWindow(QMainWindow):
         output_label = self._current_output_device_label()
         active_label = self._active_measure_label()
         input_channel_index = (
-            1 if active_label == "R" else 0
-        ) if self._two_channel_enabled else self._current_input_channel()
+            (1 if active_label == "R" else 0)
+            if self._two_channel_enabled
+            else self._current_input_channel()
+        )
         channel_label = active_label or (
-            self._ch_combo.currentText().strip()
-            or f"Channel {input_channel_index + 1}"
+            self._ch_combo.currentText().strip() or f"Channel {input_channel_index + 1}"
         )
         metadata["measure_channel"] = channel_label
         identity = self._session.asset_tag.strip() or " ".join(
-            part
-            for part in (self._session.brand.strip(), self._session.model.strip())
-            if part
+            part for part in (self._session.brand.strip(), self._session.model.strip()) if part
         )
         identity = identity or "Fastgraph"
 
@@ -6227,9 +6126,7 @@ class MainWindow(QMainWindow):
                 measurement.name for measurement in self._rnd_widget.session.measurements
             }
             measurements: list[RnDMeasurement] = []
-            for index, (freqs, mag_db) in enumerate(
-                self._active_measure_curves(), start=1
-            ):
+            for index, (freqs, mag_db) in enumerate(self._active_measure_curves(), start=1):
                 name = self._unique_rnd_transfer_name(
                     f"{group_name} Sweep {index}",
                     existing_names,
@@ -6269,18 +6166,13 @@ class MainWindow(QMainWindow):
             transfer_mode = "variation"
         else:
             active_average = (
-                self._active_two_channel_average()
-                if self._two_channel_enabled
-                else self._average
+                self._active_two_channel_average() if self._two_channel_enabled else self._average
             )
             assert active_average is not None
             freqs, mag_db = active_average
             name = self._unique_rnd_transfer_name(
                 f"{identity} AVG",
-                {
-                    measurement.name
-                    for measurement in self._rnd_widget.session.measurements
-                },
+                {measurement.name for measurement in self._rnd_widget.session.measurements},
             )
             measurement = RnDMeasurement(
                 name=name,
@@ -6368,21 +6260,15 @@ class MainWindow(QMainWindow):
                 )
                 return
             freqs, p10, p25, p75, p90, median = variation
-            group_metadata = shared_metadata(
-                measurement.metadata for measurement in measurements
-            )
+            group_metadata = shared_metadata(measurement.metadata for measurement in measurements)
             rigs = {measurement.rig.strip() for measurement in measurements}
             if len(rigs) == 1 and next(iter(rigs)):
                 group_metadata["rig"] = next(iter(rigs))
-            hrtf_names = {
-                measurement.hrtf_name.strip()
-                for measurement in measurements
-            }
+            hrtf_names = {measurement.hrtf_name.strip() for measurement in measurements}
             if len(hrtf_names) == 1 and next(iter(hrtf_names)):
                 group_metadata["hrtf_name"] = next(iter(hrtf_names))
             compensation_states = {
-                bool(measurement.hrtf_path or measurement.hrtf_name)
-                for measurement in measurements
+                bool(measurement.hrtf_path or measurement.hrtf_name) for measurement in measurements
             }
             if len(compensation_states) == 1:
                 group_metadata["compensated"] = next(iter(compensation_states))
@@ -6404,7 +6290,9 @@ class MainWindow(QMainWindow):
             )
             name = f"{group.name} VAR"
         else:
-            QMessageBox.information(self, "Nothing Selected", "Select an R&D measurement or group first.")
+            QMessageBox.information(
+                self, "Nothing Selected", "Select an R&D measurement or group first."
+            )
             return
 
         self._tabs.setCurrentWidget(self._curator_widget)
@@ -6433,9 +6321,13 @@ class MainWindow(QMainWindow):
             else:
                 self._export_rnd_group_measurements(group)
             return
-        QMessageBox.information(self, "Nothing Selected", "Select an R&D measurement or group first.")
+        QMessageBox.information(
+            self, "Nothing Selected", "Select an R&D measurement or group first."
+        )
 
-    def _export_rnd_measurement(self, measurement: RnDMeasurement, requested_path: Optional[str] = None) -> None:
+    def _export_rnd_measurement(
+        self, measurement: RnDMeasurement, requested_path: str | None = None
+    ) -> None:
         session = measurement_session_data(measurement)
         hrtf_path = self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
         if not self._ensure_rnd_hrtfs_available([measurement]):
@@ -6512,10 +6404,13 @@ class MainWindow(QMainWindow):
         measurements = [
             measurement
             for measurement_id in group.measurement_ids
-            if (measurement := self._rnd_widget.session.measurement_by_id(measurement_id)) is not None
+            if (measurement := self._rnd_widget.session.measurement_by_id(measurement_id))
+            is not None
         ]
         if not measurements:
-            QMessageBox.information(self, "Nothing to Export", "Selected group has no measurements.")
+            QMessageBox.information(
+                self, "Nothing to Export", "Selected group has no measurements."
+            )
             return
         if not self._ensure_rnd_hrtfs_available(measurements):
             return
@@ -6538,7 +6433,9 @@ class MainWindow(QMainWindow):
                 continue
             if self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name):
                 continue
-            label = measurement.hrtf_name or Path(measurement.hrtf_path).stem or measurement.hrtf_path
+            label = (
+                measurement.hrtf_name or Path(measurement.hrtf_path).stem or measurement.hrtf_path
+            )
             missing.append(f"{measurement.name}: {label}")
         if not missing:
             return True
@@ -6567,9 +6464,8 @@ class MainWindow(QMainWindow):
                 dialog = RnDRecoveryDialog(candidates, self)
                 dialog.exec()
                 candidate = dialog.selected_candidate()
-                if (
-                    dialog.action == RnDRecoveryDialog.RESTORE
-                    and getattr(candidate, "unsupported", False)
+                if dialog.action == RnDRecoveryDialog.RESTORE and getattr(
+                    candidate, "unsupported", False
                 ):
                     # Intact, but written by a newer build. It is left in place
                     # rather than quarantined so a Fastgraph update can read it.
@@ -6747,7 +6643,9 @@ class MainWindow(QMainWindow):
         dialog.setIcon(QMessageBox.Icon.Question)
         dialog.setWindowTitle("Load R&D Session")
         dialog.setText("How should this R&D session be loaded?")
-        clear_btn = dialog.addButton("Clear current session and load", QMessageBox.ButtonRole.AcceptRole)
+        clear_btn = dialog.addButton(
+            "Clear current session and load", QMessageBox.ButtonRole.AcceptRole
+        )
         add_btn = dialog.addButton("Add to current session", QMessageBox.ButtonRole.ActionRole)
         dialog.addButton(QMessageBox.StandardButton.Cancel)
         dialog.exec()
@@ -6763,9 +6661,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _measure_default_dir(self) -> Path:
-        configured = str(
-            self._settings.get("measure_session_directory") or ""
-        ).strip()
+        configured = str(self._settings.get("measure_session_directory") or "").strip()
         if configured:
             return Path(configured).expanduser()
         documents = Path.home() / "Documents"
@@ -6784,19 +6680,11 @@ class MainWindow(QMainWindow):
             hrtf_path=hrtf_path,
             hrtf_name=Path(hrtf_path).stem if hrtf_path else None,
             hrtf_enabled=self._is_hrtf_active(),
-            sweep_diagnostics=[
-                meta.get("diagnostics") for meta in self._kept_sweep_meta
-            ],
-            sweep_timing_quality=[
-                meta.get("timing_quality") for meta in self._kept_sweep_meta
-            ],
-            sweep_distortion=[
-                meta.get("distortion") for meta in self._kept_sweep_meta
-            ],
+            sweep_diagnostics=[meta.get("diagnostics") for meta in self._kept_sweep_meta],
+            sweep_timing_quality=[meta.get("timing_quality") for meta in self._kept_sweep_meta],
+            sweep_distortion=[meta.get("distortion") for meta in self._kept_sweep_meta],
             source_path=(
-                str(self._measure_session_path)
-                if self._measure_session_path is not None
-                else None
+                str(self._measure_session_path) if self._measure_session_path is not None else None
             ),
         )
 
@@ -6863,9 +6751,7 @@ class MainWindow(QMainWindow):
             # The dialog checked the name the user typed; the canonical
             # extension is added afterwards, so "demo" can still land on an
             # existing "demo.fastgraph-measure.json" without a warning.
-            if path.exists() and not same_measure_session_file(
-                self._measure_session_path, path
-            ):
+            if path.exists() and not same_measure_session_file(self._measure_session_path, path):
                 choice = QMessageBox.question(
                     self,
                     "Replace Measure Session?",
@@ -6892,7 +6778,7 @@ class MainWindow(QMainWindow):
         self._log_event("INFO", "measure", "Measure session saved", path=str(written))
         return True
 
-    def _load_measure_session(self, requested_path: Optional[str] = None) -> bool:
+    def _load_measure_session(self, requested_path: str | None = None) -> bool:
         if self._state != AppState.IDLE:
             QMessageBox.information(
                 self,
@@ -6908,8 +6794,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Load Measure Session",
                 str(self._measure_default_dir()),
-                "Fastgraph Measure Session "
-                "(*.fastgraph-measure.json *.json);;All Files (*)",
+                "Fastgraph Measure Session (*.fastgraph-measure.json *.json);;All Files (*)",
             )
             if not path_str:
                 return False
@@ -6935,15 +6820,11 @@ class MainWindow(QMainWindow):
 
         self._apply_measure_session(session)
         self._measure_session_path = Path(path_str)
-        self._settings.set(
-            "measure_session_directory", str(Path(path_str).parent)
-        )
+        self._settings.set("measure_session_directory", str(Path(path_str).parent))
         self._settings_widget.refresh_from_settings()
         self._clear_measure_dirty()
         self._statusbar.showMessage(f"Loaded Measure session: {path_str}")
-        self._log_event(
-            "INFO", "measure", "Measure session loaded", path=str(path_str)
-        )
+        self._log_event("INFO", "measure", "Measure session loaded", path=str(path_str))
         return True
 
     def _apply_measure_session(self, session: MeasureSession) -> None:
@@ -7065,9 +6946,8 @@ class MainWindow(QMainWindow):
                 dialog = MeasureRecoveryDialog(candidates, self)
                 dialog.exec()
                 candidate = dialog.selected_candidate()
-                if (
-                    dialog.action == MeasureRecoveryDialog.RESTORE
-                    and getattr(candidate, "unsupported", False)
+                if dialog.action == MeasureRecoveryDialog.RESTORE and getattr(
+                    candidate, "unsupported", False
                 ):
                     # Intact, but written by a newer build. It is left in place
                     # rather than quarantined so an update can read it.
@@ -7106,9 +6986,7 @@ class MainWindow(QMainWindow):
 
     def _on_measure_recovery_failed(self, error: str) -> None:
         self._statusbar.showMessage("Measure recovery save failed.")
-        self._log_event(
-            "ERROR", "measure", "Measure recovery save failed", error=error
-        )
+        self._log_event("ERROR", "measure", "Measure recovery save failed", error=error)
 
     # ------------------------------------------------------------------
     # Target comparison
@@ -7116,11 +6994,7 @@ class MainWindow(QMainWindow):
 
     def _delta_view_enabled(self) -> bool:
         action = getattr(self, "_delta_view_action", None)
-        return (
-            action is not None
-            and action.isChecked()
-            and self._measure_target is not None
-        )
+        return action is not None and action.isChecked() and self._measure_target is not None
 
     def _delta_offset_mode(self) -> str:
         mode = str(self._settings.get("measure_delta_offset_mode") or "1khz")
@@ -7143,7 +7017,7 @@ class MainWindow(QMainWindow):
                 self._settings.set("measure_target_path", "")
         self._sync_compare_layers()
 
-    def _load_measure_target(self, requested_path: Optional[str] = None) -> bool:
+    def _load_measure_target(self, requested_path: str | None = None) -> bool:
         path_str = requested_path
         if path_str is None:
             path_str, _ = QFileDialog.getOpenFileName(
@@ -7196,11 +7070,9 @@ class MainWindow(QMainWindow):
         self._settings.set("measure_delta_view", bool(checked))
         self._sync_compare_layers()
         self._update_plots()
-        self._statusbar.showMessage(
-            "Delta view on." if checked else "Delta view off."
-        )
+        self._statusbar.showMessage("Delta view on." if checked else "Delta view off.")
 
-    def _load_measure_reference(self, requested_path: Optional[str] = None) -> bool:
+    def _load_measure_reference(self, requested_path: str | None = None) -> bool:
         if len(self._measure_reference_layers) >= _MAX_REFERENCE_LAYERS:
             QMessageBox.information(
                 self,
@@ -7215,8 +7087,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Load Reference Curve",
                 str(self._measure_default_dir()),
-                "Reference Curves "
-                "(*.txt *.fastgraph-measure.json *.json);;All Files (*)",
+                "Reference Curves (*.txt *.fastgraph-measure.json *.json);;All Files (*)",
             )
             if not path_str:
                 return False
@@ -7251,10 +7122,7 @@ class MainWindow(QMainWindow):
             brand_mode=self._theme_controller.brand_mode,
         )
         remaining = palette[1:] or palette
-        return [
-            remaining[index % len(remaining)]
-            for index in range(_MAX_REFERENCE_LAYERS)
-        ]
+        return [remaining[index % len(remaining)] for index in range(_MAX_REFERENCE_LAYERS)]
 
     def _sync_compare_actions(self) -> None:
         has_target = self._measure_target is not None
@@ -7269,19 +7137,12 @@ class MainWindow(QMainWindow):
                 self._delta_view_action.setChecked(False)
                 self._delta_view_action.blockSignals(False)
         if getattr(self, "_clear_references_action", None) is not None:
-            self._clear_references_action.setEnabled(
-                bool(self._measure_reference_layers)
-            )
+            self._clear_references_action.setEnabled(bool(self._measure_reference_layers))
         if getattr(self, "_eq_suggestion_action", None) is not None:
-            can_fit = (
-                has_target
-                and self._bottom_curve_for_display_and_export() is not None
-            )
+            can_fit = has_target and self._bottom_curve_for_display_and_export() is not None
             self._eq_suggestion_action.setEnabled(bool(can_fit))
             self._eq_suggestion_action.setToolTip(
-                ""
-                if can_fit
-                else "Needs a loaded target and at least one kept measurement."
+                "" if can_fit else "Needs a loaded target and at least one kept measurement."
             )
 
     def _sync_compare_layers(self) -> None:
@@ -7298,16 +7159,18 @@ class MainWindow(QMainWindow):
         else:
             single.set_target_curve(None)
         colors = self._reference_colors()
-        single.set_reference_layers([
-            (layer.name, layer.freqs, layer.mag_db, colors[index % len(colors)])
-            for index, layer in enumerate(
-                self._measure_reference_layers[:_MAX_REFERENCE_LAYERS]
-            )
-        ])
+        single.set_reference_layers(
+            [
+                (layer.name, layer.freqs, layer.mag_db, colors[index % len(colors)])
+                for index, layer in enumerate(
+                    self._measure_reference_layers[:_MAX_REFERENCE_LAYERS]
+                )
+            ]
+        )
 
     def _measure_delta_result(
         self,
-        curve: Optional[tuple[np.ndarray, np.ndarray]],
+        curve: tuple[np.ndarray, np.ndarray] | None,
     ):
         """``curve - target`` on the shared grid, or ``None`` without either."""
         if curve is None or self._measure_target is None:
@@ -7321,12 +7184,10 @@ class MainWindow(QMainWindow):
                 offset_mode=self._delta_offset_mode(),
             )
         except Exception as exc:  # pragma: no cover - defensive
-            self._log_event(
-                "ERROR", "measure", "Delta computation failed", error=str(exc)
-            )
+            self._log_event("ERROR", "measure", "Delta computation failed", error=str(exc))
             return None
 
-    def _pending_deviation_summary(self) -> Optional[str]:
+    def _pending_deviation_summary(self) -> str | None:
         """Band-by-band deviation of the sweep awaiting review, if any."""
         if self._measure_target is None or self._two_channel_enabled:
             return None
@@ -7335,10 +7196,8 @@ class MainWindow(QMainWindow):
             return None
         return format_deviation_summary(deviation_score(delta))
 
-    def _target_match_message(self) -> Optional[str]:
-        delta = self._measure_delta_result(
-            self._bottom_curve_for_display_and_export()
-        )
+    def _target_match_message(self) -> str | None:
+        delta = self._measure_delta_result(self._bottom_curve_for_display_and_export())
         if delta is None:
             return None
         return f"Match: {deviation_score(delta).match_percent:.0f} %"
@@ -7346,9 +7205,7 @@ class MainWindow(QMainWindow):
     def _open_eq_suggestion(self) -> None:
         average = self._bottom_curve_for_display_and_export()
         if self._measure_target is None:
-            self._statusbar.showMessage(
-                "Load a target curve before asking for an EQ suggestion."
-            )
+            self._statusbar.showMessage("Load a target curve before asking for an EQ suggestion.")
             return
         if average is None:
             self._statusbar.showMessage(
@@ -7373,11 +7230,11 @@ class MainWindow(QMainWindow):
 
     def _resolve_export_path(
         self,
-        requested_path: Optional[str],
+        requested_path: str | None,
         filename: str,
         title: str,
         file_filter: str = "Text Files (*.txt);;All Files (*)",
-    ) -> Optional[Path]:
+    ) -> Path | None:
         if requested_path:
             path = Path(requested_path).expanduser()
             if path.exists() and path.is_dir():
@@ -7399,12 +7256,10 @@ class MainWindow(QMainWindow):
             self._settings.get("export_directory") or ""
         )
         default_path = str(Path(default_dir) / filename) if default_dir else filename
-        path_str, _ = QFileDialog.getSaveFileName(
-            self, title, default_path, file_filter
-        )
+        path_str, _ = QFileDialog.getSaveFileName(self, title, default_path, file_filter)
         return Path(path_str) if path_str else None
 
-    def _export_average(self, requested_path: Optional[str] = None) -> None:
+    def _export_average(self, requested_path: str | None = None) -> None:
         # Export what is displayed: the same smoothed curve the bottom
         # viewport draws, with the smoothing recorded in the header.
         curve = self._bottom_curve_for_display()
@@ -7416,9 +7271,7 @@ class MainWindow(QMainWindow):
         two_channel = bool(getattr(self, "_two_channel_enabled", False))
         channel_label = self._active_measure_label() if two_channel else ""
         export_session = self._active_measure_session() if two_channel else self._session
-        active_count = (
-            self._active_measure_count() if two_channel else len(self._kept_curves)
-        )
+        active_count = self._active_measure_count() if two_channel else len(self._kept_curves)
         filename = build_filename(
             self._session,
             compensated=compensated,
@@ -7442,12 +7295,13 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=active_count,
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=self._level_mode() if self._spl_offset_db() is not None
-                else "ref_1khz",
+                level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
             )
             self._statusbar.showMessage(f"Exported average: {path}")
             if hasattr(self, "_log_event"):
-                self._log_event("INFO", "export", "Average exported", path=str(path), compensated=compensated)
+                self._log_event(
+                    "INFO", "export", "Average exported", path=str(path), compensated=compensated
+                )
             if hasattr(self, "_run_automation_trigger"):
                 self._run_automation_trigger("export_complete")
         except Exception as exc:
@@ -7455,11 +7309,9 @@ class MainWindow(QMainWindow):
                 self._log_event("ERROR", "export", f"Average export failed: {exc}")
             QMessageBox.warning(self, "Export Error", str(exc))
 
-    def _export_variation(self, requested_path: Optional[str] = None) -> None:
+    def _export_variation(self, requested_path: str | None = None) -> None:
         two_channel = bool(getattr(self, "_two_channel_enabled", False))
-        active_variation = (
-            self._active_measure_variation() if two_channel else self._variation
-        )
+        active_variation = self._active_measure_variation() if two_channel else self._variation
         if active_variation is None:
             QMessageBox.information(self, "Nothing to Export", "No variation band available yet.")
             return
@@ -7467,9 +7319,7 @@ class MainWindow(QMainWindow):
         compensated = self._is_hrtf_active()
         channel_label = self._active_measure_label() if two_channel else ""
         export_session = self._active_measure_session() if two_channel else self._session
-        active_count = (
-            self._active_measure_count() if two_channel else len(self._kept_curves)
-        )
+        active_count = self._active_measure_count() if two_channel else len(self._kept_curves)
         filename = build_variation_filename(
             self._session,
             compensated=compensated,
@@ -7500,7 +7350,9 @@ class MainWindow(QMainWindow):
             )
             self._statusbar.showMessage(f"Exported variation: {path}")
             if hasattr(self, "_log_event"):
-                self._log_event("INFO", "export", "Variation exported", path=str(path), compensated=compensated)
+                self._log_event(
+                    "INFO", "export", "Variation exported", path=str(path), compensated=compensated
+                )
             if hasattr(self, "_run_automation_trigger"):
                 self._run_automation_trigger("export_complete")
         except Exception as exc:
@@ -7570,9 +7422,7 @@ class MainWindow(QMainWindow):
         dialog.setText(
             f"{len(conflicts)} Export All file(s) already exist in the selected directory."
         )
-        dialog.setInformativeText(
-            "\n".join(path.name for path in conflicts)
-        )
+        dialog.setInformativeText("\n".join(path.name for path in conflicts))
         overwrite = dialog.addButton(
             "Overwrite All",
             QMessageBox.ButtonRole.AcceptRole,
@@ -7628,9 +7478,7 @@ class MainWindow(QMainWindow):
             return
 
         channel_label = (
-            self._active_measure_label()
-            if getattr(self, "_two_channel_enabled", False)
-            else ""
+            self._active_measure_label() if getattr(self, "_two_channel_enabled", False) else ""
         )
         active_count = (
             self._active_measure_count()
@@ -7722,7 +7570,7 @@ class MainWindow(QMainWindow):
             f"Exported to:\n{directory}\n\n" + "\n".join(filenames),
         )
 
-    def _export_console_log(self, requested_path: Optional[str] = None) -> None:
+    def _export_console_log(self, requested_path: str | None = None) -> None:
         path = self._resolve_export_path(
             requested_path,
             "fastgraph-console.log",
@@ -7740,14 +7588,8 @@ class MainWindow(QMainWindow):
         idle = self._state == AppState.IDLE
         two_channel = bool(getattr(self, "_two_channel_enabled", False))
         frequency_mode = not MainWindow._channel_balance_mode_active(self)
-        active_average = (
-            self._active_two_channel_average()
-            if two_channel
-            else self._average
-        )
-        active_variation = (
-            self._active_measure_variation() if two_channel else self._variation
-        )
+        active_average = self._active_two_channel_average() if two_channel else self._average
+        active_variation = self._active_measure_variation() if two_channel else self._variation
         if self._bottom_view_mode() == "variation":
             self._export_btn.setText("Export Variation…")
             self._export_btn.setToolTip(
@@ -7756,9 +7598,7 @@ class MainWindow(QMainWindow):
             export_enabled = idle and frequency_mode and active_variation is not None
         else:
             self._export_btn.setText("Export Average…")
-            self._export_btn.setToolTip(
-                "Export averaged FR as a REW-style TXT file."
-            )
+            self._export_btn.setToolTip("Export averaged FR as a REW-style TXT file.")
             export_enabled = idle and frequency_mode and active_average is not None
         self._export_btn.setEnabled(export_enabled)
         if hasattr(self, "_send_to_curator_btn"):
@@ -7767,8 +7607,7 @@ class MainWindow(QMainWindow):
             unavailable = self._measure_to_rnd_unavailable_reason()
             self._send_to_rnd_btn.setEnabled(not unavailable)
             self._send_to_rnd_btn.setToolTip(
-                unavailable
-                or "Send the current average or all kept Var measurements to R&D."
+                unavailable or "Send the current average or all kept Var measurements to R&D."
             )
         if MainWindow._brand_mode_active(self):
             self._upload_btn.setText("Export All…")
@@ -7779,8 +7618,7 @@ class MainWindow(QMainWindow):
             unavailable = self._export_all_unavailable_reason()
             self._upload_btn.setEnabled(not unavailable)
             self._upload_btn.setToolTip(
-                unavailable
-                or "Export RAW AVG, COMP AVG, RAW VAR, and COMP VAR to one directory."
+                unavailable or "Export RAW AVG, COMP AVG, RAW VAR, and COMP VAR to one directory."
             )
         else:
             self._upload_btn.setText("Upload to Squiglink")
@@ -7807,7 +7645,7 @@ class MainWindow(QMainWindow):
         port = int(self._settings.get("squiglink_port") or 22)
         return host, port
 
-    def _failed_recording_dir(self) -> Optional[str]:
+    def _failed_recording_dir(self) -> str | None:
         """Folder for failed-recording dumps, or None when the setting is off."""
         if not bool(self._settings.get("save_failed_recordings")):
             return None
@@ -7862,8 +7700,8 @@ class MainWindow(QMainWindow):
         # represent a combined L/R result. A Combined ("BOTH") upload is sent as
         # the L side on purpose; the "BOTH L" name modifier below marks it.
         required_side = (
-            "R" if channel_label == "R" else "L"
-        ) if self._two_channel_enabled else None
+            ("R" if channel_label == "R" else "L") if self._two_channel_enabled else None
+        )
         if not self._ensure_upload_metadata(required_side=required_side):
             return
         upload_session = (
@@ -7879,7 +7717,7 @@ class MainWindow(QMainWindow):
         filename = f"{upload_stem}.txt"
         freqs, mag_db = curve
 
-        tmp_path: Optional[Path] = None
+        tmp_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -7900,18 +7738,15 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=self._active_measure_count(),
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=self._level_mode() if self._spl_offset_db() is not None
-                else "ref_1khz",
+                level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
             )
         except Exception as exc:
             self._statusbar.showMessage(f"Upload to Squiglink failed: {exc}")
             self._log_exception("upload", "Squiglink upload failed", exc)
             QMessageBox.warning(self, "Upload Failed", f"Upload to Squiglink failed.\n\n{exc}")
             if tmp_path is not None:
-                try:
+                with contextlib.suppress(Exception):
                     tmp_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
             return
 
         self._start_squiglink_upload(
@@ -8058,10 +7893,8 @@ class MainWindow(QMainWindow):
             progress.deleteLater()
         local_path = context.get("local_path")
         if local_path is not None:
-            try:
+            with contextlib.suppress(Exception):
                 Path(local_path).unlink(missing_ok=True)
-            except Exception:
-                pass
         self._squiglink_upload_context = None
 
     def _on_squiglink_upload_finished(self, result: dict) -> None:
@@ -8097,9 +7930,7 @@ class MainWindow(QMainWindow):
         side = (getattr(self._session, "channel_side", "") or "").strip().upper()
         brand = (getattr(self._session, "brand", "") or "").strip()
         model = (getattr(self._session, "model", "") or "").strip()
-        if brand and model and (
-            required_side in {"L", "R"} or side in {"L", "R"}
-        ):
+        if brand and model and (required_side in {"L", "R"} or side in {"L", "R"}):
             return True
 
         dialog = SquiglinkUploadMetadataDialog(
@@ -8122,9 +7953,7 @@ class MainWindow(QMainWindow):
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setWindowTitle("Phone Book Unavailable")
         dialog.setText("Couldn't load remote phone_book.json.")
-        dialog.setInformativeText(
-            f"{detail_message}\n\nChoose how to proceed with this upload:"
-        )
+        dialog.setInformativeText(f"{detail_message}\n\nChoose how to proceed with this upload:")
         create_btn = dialog.addButton(
             "Create Fresh Phone Book",
             QMessageBox.ButtonRole.AcceptRole,
@@ -8153,9 +7982,9 @@ class MainWindow(QMainWindow):
         username: str,
         password: str,
         phone_book_stem: str,
-        ask_fallback: Optional[Callable[[str], str]] = None,
-        host_keys: Optional[dict] = None,
-        confirm_host_key: Optional[Callable[[str, int, str, str], bool]] = None,
+        ask_fallback: Callable[[str], str] | None = None,
+        host_keys: dict | None = None,
+        confirm_host_key: Callable[[str, int, str, str], bool] | None = None,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
     ) -> str:
         """Merge this upload into the remote phone book.
@@ -8220,32 +8049,22 @@ class MainWindow(QMainWindow):
 
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
-        try:
+        with contextlib.suppress(Exception):
             self._device_poller.stop()
-        except Exception:
-            pass
 
         # Join the sweep thread before Qt tears the window down; a live
         # PortAudio duplex stream at interpreter exit crashes on some hosts.
-        try:
+        with contextlib.suppress(Exception):
             self._sweep_runner.shutdown()
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             self._level_monitor.stop()
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             self._dual_level_monitor.stop()
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             self._stop_channel_balance()
-        except Exception:
-            pass
 
         try:
             if self._update_check_thread is not None and self._update_check_thread.isRunning():
@@ -8276,9 +8095,7 @@ class MainWindow(QMainWindow):
         try:
             self._measure_recovery.shutdown_clean()
         except Exception as exc:
-            self._log_event(
-                "ERROR", "measure", "Measure recovery cleanup failed", error=str(exc)
-            )
+            self._log_event("ERROR", "measure", "Measure recovery cleanup failed", error=str(exc))
 
         app = QApplication.instance()
         if app is not None:
@@ -8295,11 +8112,7 @@ class MainWindow(QMainWindow):
             return True
         if not bool(self._settings.get("confirm_discard_measurements")):
             return True
-        kept = (
-            len(self._two_channel_pairs)
-            if self._two_channel_enabled
-            else len(self._kept_curves)
-        )
+        kept = len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Question)
         dialog.setWindowTitle("Save Measure Session?")
@@ -8347,8 +8160,14 @@ class MainWindow(QMainWindow):
     def _refresh_session_labels(self) -> None:
         if not hasattr(self, "_inputs_btn"):
             return
-        output = self._current_output_device_label() if hasattr(self, "_out_dev_combo") else "Not selected"
-        input_name = self._current_input_device_label() if hasattr(self, "_in_dev_combo") else "Not selected"
+        output = (
+            self._current_output_device_label()
+            if hasattr(self, "_out_dev_combo")
+            else "Not selected"
+        )
+        input_name = (
+            self._current_input_device_label() if hasattr(self, "_in_dev_combo") else "Not selected"
+        )
         channel = self._current_input_channel() + 1 if hasattr(self, "_ch_combo") else 1
         self._inputs_btn.setToolTip(
             f"Output: {output or 'Not selected'}\n"

@@ -29,14 +29,14 @@ sources can be subtracted without further resampling.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
 from dms.processing import compute_rms_average, smooth_fractional_octave
-
 
 # ---------------------------------------------------------------------------
 # The common grid
@@ -82,6 +82,7 @@ _LOG_COMMON_GRID = np.log10(np.asarray(COMMON_GRID, dtype=float))
 # ---------------------------------------------------------------------------
 # Small array helpers
 # ---------------------------------------------------------------------------
+
 
 def _as_sorted_pair(
     freqs: Any,
@@ -137,6 +138,7 @@ def _band_mask(freqs: np.ndarray, f_low: float, f_high: float) -> np.ndarray:
 # Target curves
 # ---------------------------------------------------------------------------
 
+
 def load_target_curve(path: str | Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Load a target curve, normalized so 1 kHz reads 0 dB.
 
@@ -165,7 +167,7 @@ def load_target_curve(path: str | Path) -> tuple[np.ndarray, np.ndarray, list[st
         raise ValueError(f"{Path(path).name} carries no magnitude column.")
 
     freqs, mag_db = _as_sorted_pair(curve.freqs, values)
-    if F_REF < freqs[0] or F_REF > freqs[-1]:
+    if freqs[0] > F_REF or freqs[-1] < F_REF:
         warnings.append(
             f"{Path(path).name}: covers {freqs[0]:.0f}-{freqs[-1]:.0f} Hz, so the "
             "1 kHz normalization used the nearest end of the file."
@@ -226,9 +228,7 @@ def delta_curve(
         No realignment; whatever normalization the inputs carried survives.
     """
     if offset_mode not in OFFSET_MODES:
-        raise ValueError(
-            f"offset_mode must be one of {OFFSET_MODES!r}, got {offset_mode!r}."
-        )
+        raise ValueError(f"offset_mode must be one of {OFFSET_MODES!r}, got {offset_mode!r}.")
 
     measured = resample_to_common(measure_freqs, measure_db)
     target = resample_to_common(target_freqs, target_db)
@@ -382,6 +382,7 @@ def format_deviation_summary(score: DeviationScore) -> str:
 # Peaking filters
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PeakingFilter:
     """One RBJ peaking (bell) filter, as Equalizer APO understands it."""
@@ -423,9 +424,12 @@ def _peaking_response_matrix(
     a1 = b1
     a2 = 1.0 - alpha / amp
 
-    w = 2.0 * np.pi * np.clip(
-        np.asarray(freqs, dtype=np.float64), 0.0, nyquist * 0.999999
-    ) / float(fs)
+    w = (
+        2.0
+        * np.pi
+        * np.clip(np.asarray(freqs, dtype=np.float64), 0.0, nyquist * 0.999999)
+        / float(fs)
+    )
     z1 = np.exp(-1j * w)[None, :]
     z2 = z1 * z1
 
@@ -501,9 +505,7 @@ class EqSuggestion:
     filters: list[PeakingFilter] = field(default_factory=list)
     preamp_db: float = 0.0
     residual_rms_db: float = 0.0
-    residual_delta_db: np.ndarray = field(
-        default_factory=lambda: np.zeros(GRID_POINTS)
-    )
+    residual_delta_db: np.ndarray = field(default_factory=lambda: np.zeros(GRID_POINTS))
 
 
 def _fit_candidates(
@@ -565,28 +567,22 @@ def _fit_one_filter(
     q_lo, q_hi = float(min(q_range)), float(max(q_range))
 
     coarse_freqs = np.clip(
-        f_peak * 2.0 ** np.linspace(
-            -_COARSE_FREQ_SPAN_OCT, _COARSE_FREQ_SPAN_OCT, _COARSE_FREQ_STEPS
-        ),
+        f_peak
+        * 2.0 ** np.linspace(-_COARSE_FREQ_SPAN_OCT, _COARSE_FREQ_SPAN_OCT, _COARSE_FREQ_STEPS),
         f_lo,
         f_hi,
     )
     coarse_qs = np.geomspace(q_lo, q_hi, _COARSE_Q_STEPS)
-    candidate, response, rms = _fit_candidates(
-        residual, grid, coarse_freqs, coarse_qs, max_gain_db
-    )
+    candidate, response, rms = _fit_candidates(residual, grid, coarse_freqs, coarse_qs, max_gain_db)
 
     fine_freqs = np.clip(
-        candidate.freq_hz * 2.0 ** np.linspace(
-            -_FINE_FREQ_SPAN_OCT, _FINE_FREQ_SPAN_OCT, _FINE_FREQ_STEPS
-        ),
+        candidate.freq_hz
+        * 2.0 ** np.linspace(-_FINE_FREQ_SPAN_OCT, _FINE_FREQ_SPAN_OCT, _FINE_FREQ_STEPS),
         f_lo,
         f_hi,
     )
     fine_qs = np.clip(
-        np.geomspace(
-            candidate.q / _FINE_Q_RATIO, candidate.q * _FINE_Q_RATIO, _FINE_Q_STEPS
-        ),
+        np.geomspace(candidate.q / _FINE_Q_RATIO, candidate.q * _FINE_Q_RATIO, _FINE_Q_STEPS),
         q_lo,
         q_hi,
     )
@@ -635,9 +631,7 @@ def suggest_eq(
 
     correction = -delta_db
     if smoothing_fraction is not None and int(smoothing_fraction) > 0:
-        _, correction = smooth_fractional_octave(
-            grid, correction, fraction=int(smoothing_fraction)
-        )
+        _, correction = smooth_fractional_octave(grid, correction, fraction=int(smoothing_fraction))
         correction = np.asarray(correction, dtype=np.float64)
 
     residual = correction.copy()
@@ -647,9 +641,7 @@ def suggest_eq(
     for _ in range(int(max_filters)):
         if current_rms <= 0.0:
             break
-        candidate, response, new_rms = _fit_one_filter(
-            residual, grid, q_range, float(max_gain_db)
-        )
+        candidate, response, new_rms = _fit_one_filter(residual, grid, q_range, float(max_gain_db))
         if abs(candidate.gain_db) < float(min_gain_db):
             break
         if current_rms - new_rms < EQ_MIN_IMPROVEMENT_DB:
@@ -697,15 +689,14 @@ def format_eq_table(suggestion: EqSuggestion) -> str:
         lines.append("  (no filters suggested)")
         return "\n".join(lines)
     for index, item in enumerate(suggestion.filters, start=1):
-        lines.append(
-            f"{index:>3}   {item.freq_hz:>9.0f}   {item.gain_db:>+9.1f}   {item.q:>4.2f}"
-        )
+        lines.append(f"{index:>3}   {item.freq_hz:>9.0f}   {item.gain_db:>+9.1f}   {item.q:>4.2f}")
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # A/B reference layers
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ReferenceLayer:
@@ -785,7 +776,7 @@ def _session_curves_via_module(path: Path) -> list[tuple[np.ndarray, np.ndarray]
     """
     from dms.measure_session import MeasureSession
 
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         session = MeasureSession.from_dict(json.load(handle))
     curves = [_coerce_curve(item) for item in session.curves()]
     return [curve for curve in curves if curve is not None]
@@ -814,7 +805,7 @@ def load_reference_from_measure_session(
     normalized at 1 kHz - the same average the Measure workspace plots.
     """
     file_path = Path(path)
-    with open(file_path, "r", encoding="utf-8") as handle:
+    with open(file_path, encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
         raise ValueError(f"{file_path.name} is not a Measure session file.")

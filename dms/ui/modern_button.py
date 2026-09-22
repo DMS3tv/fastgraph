@@ -22,10 +22,9 @@ from PyQt6.QtWidgets import (
     QStyleOptionButton,
 )
 
+from dms.dither_fonts import dither_heading_font
 from dms.ui.style_tokens import ThemeTokens, mode_tokens
 from dms.ui.theme_surface import paint_dither
-from dms.dither_fonts import dither_heading_font
-
 
 _OBJECT_ROLES = {
     "btn_keep": "positive",
@@ -241,11 +240,7 @@ class ModernButton(QPushButton):
         self.update()
 
     def _glow_profile(self) -> dict[str, float | int]:
-        if (
-            not self.isEnabled()
-            or self._tokens().classic_controls
-            or self._tokens().flat_controls
-        ):
+        if not self.isEnabled() or self._tokens().classic_controls or self._tokens().flat_controls:
             return {
                 "center_y": 1.05,
                 "radius": 0.50,
@@ -329,14 +324,8 @@ class ModernButton(QPushButton):
             font = dither_heading_font(self.font())
             label_width = QFontMetrics(font).horizontalAdvance(self.text().upper())
             border_width = max(geometry.border_px, geometry.focus_border_px)
-            painted_width = (
-                label_width
-                + 2 * _FLAT_LABEL_HORIZONTAL_INSET
-                + 2 * border_width
-            )
-            hint.setWidth(
-                max(hint.width(), painted_width + _FLAT_PAINT_RECT_WIDTH_LOSS)
-            )
+            painted_width = label_width + 2 * _FLAT_LABEL_HORIZONTAL_INSET + 2 * border_width
+            hint.setWidth(max(hint.width(), painted_width + _FLAT_PAINT_RECT_WIDTH_LOSS))
         return hint
 
     def minimumSizeHint(self):
@@ -460,9 +449,7 @@ class ModernButton(QPushButton):
         rect = self.rect().adjusted(0, 0, -1, -1)
         pressed = self.isDown() and self.isEnabled()
         hovered = (
-            self.isEnabled()
-            and not pressed
-            and (self.underMouse() or self._hover_progress > 0.0)
+            self.isEnabled() and not pressed and (self.underMouse() or self._hover_progress > 0.0)
         )
         role_color = self._flat_role_color(tokens)
 
@@ -560,14 +547,18 @@ class ModernButton(QPushButton):
             "danger",
         }
         terminal_edge = role_accent if terminal_emphasis else QColor(tokens.border)
-        light = QColor(terminal_edge if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF"))
+        light = QColor(
+            terminal_edge if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF")
+        )
         mid_light = (
             _mix(terminal_edge, QColor("#000000"), 0.52)
             if terminal_variant
             else QColor("#666666" if dark_variant else "#DFDFDF")
         )
         dark = QColor("#000000")
-        mid_dark = QColor(tokens.alternate if terminal_variant else ("#1B1B1B" if dark_variant else "#808080"))
+        mid_dark = QColor(
+            tokens.alternate if terminal_variant else ("#1B1B1B" if dark_variant else "#808080")
+        )
         top_left_outer = dark if pressed else light
         top_left_inner = mid_dark if pressed else mid_light
         bottom_right_outer = light if pressed else dark

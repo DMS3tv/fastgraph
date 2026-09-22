@@ -99,8 +99,7 @@ def test_variation_hrtf_turns_one_fr_line_into_a_variation_band(
 ) -> None:
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
-        "100 1 2 3 4 5\n"
-        "1000 10 20 30 40 50\n",
+        "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
         encoding="utf-8",
     )
     layer = LayerState(
@@ -130,8 +129,7 @@ def test_variation_hrtf_expands_an_existing_variation_band(
 ) -> None:
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
-        "100 1 2 3 4 5\n"
-        "1000 10 20 30 40 50\n",
+        "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
         encoding="utf-8",
     )
     layer = LayerState(
@@ -177,8 +175,7 @@ def test_worst_case_combination_keeps_the_legacy_variation_band(
 ) -> None:
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
-        "100 1 2 3 4 5\n"
-        "1000 10 20 30 40 50\n",
+        "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
         encoding="utf-8",
     )
     layer = LayerState(
@@ -278,8 +275,6 @@ def test_can_combine_layers_requires_two_complete_variations() -> None:
     assert can_combine_layers([_variation_layer(name="a"), _variation_layer(name="b")])
     assert not can_combine_layers([_variation_layer(name="a")])
     assert not can_combine_layers([_variation_layer(name="a"), fr])
-
-
 
 
 def _normal_band_layer(

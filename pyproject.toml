@@ -8,6 +8,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = [
     "E501",   # line length is handled by the formatter
     "SIM108", # ternaries are not clearer than short if/else blocks
+    "B905",   # zip(strict=...) on every call is noise
 ]
 
 [tool.ruff.lint.isort]

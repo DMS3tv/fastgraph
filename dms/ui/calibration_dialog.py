@@ -6,14 +6,17 @@ records RMS, then stores Pa/FS sensitivity.
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QProgressBar,
-    QHBoxLayout,
-)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QVBoxLayout,
+)
 
-from dms.calibration import CalibrationStore
 from dms.audio_engine import device_by_index
+from dms.calibration import CalibrationStore
 from dms.ui.modern_button import ModernButton as QPushButton
 
 _REF_SPL_DB = 94.0
@@ -52,13 +55,15 @@ class CalibrationDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel(
-            "<b>94 dB SPL Calibration</b><br><br>"
-            "1. Apply your 94 dB pistonphone / calibrator to the microphone.<br>"
-            "2. Click <b>Start Capture</b>.<br>"
-            "3. Wait ~3 seconds for measurement.<br>"
-            "4. Click <b>Accept</b> to save, or <b>Cancel</b>."
-        ))
+        layout.addWidget(
+            QLabel(
+                "<b>94 dB SPL Calibration</b><br><br>"
+                "1. Apply your 94 dB pistonphone / calibrator to the microphone.<br>"
+                "2. Click <b>Start Capture</b>.<br>"
+                "3. Wait ~3 seconds for measurement.<br>"
+                "4. Click <b>Accept</b> to save, or <b>Cancel</b>."
+            )
+        )
 
         self._status = QLabel("Ready. Device: " + self._device_label)
         self._status.setWordWrap(True)
@@ -107,8 +112,7 @@ class CalibrationDialog(QDialog):
         n_ch = dev["max_input_channels"]
         if self._channel < 0 or self._channel >= n_ch:
             self._status.setText(
-                f"Error: channel {self._channel} is not available on "
-                f"{self._device_label}."
+                f"Error: channel {self._channel} is not available on {self._device_label}."
             )
             self._start_btn.setEnabled(True)
             self._capturing = False
@@ -169,7 +173,7 @@ class CalibrationDialog(QDialog):
         self._level_label.setText(f"{db_fs:.2f} dBFS  →  {sensitivity:.6f} Pa/FS")
         self._status.setText(
             f"Captured. Avg RMS = {avg_rms:.5f} FS ({db_fs:.2f} dBFS)\n"
-            f"Sensitivity = {sensitivity:.5f} Pa/FS  (1 FS = {1/sensitivity:.2f} Pa)"
+            f"Sensitivity = {sensitivity:.5f} Pa/FS  (1 FS = {1 / sensitivity:.2f} Pa)"
         )
         self._accept_btn.setEnabled(True)
 

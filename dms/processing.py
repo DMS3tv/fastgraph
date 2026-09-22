@@ -3,16 +3,16 @@ DSP: log sweep generation, frequency response computation,
 normalization, and downsampling.
 """
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 import numpy as np
 from scipy.interpolate import interp1d
 
-
 # ---------------------------------------------------------------------------
 # Log swept-sine generation
 # ---------------------------------------------------------------------------
+
 
 def generate_log_sweep(
     duration: float,
@@ -37,9 +37,12 @@ def generate_log_sweep(
         sweep[-fade_n:] *= fade[::-1]
 
     return sweep.astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Frequency response computation
 # ---------------------------------------------------------------------------
+
 
 def compute_frequency_response(
     recording: np.ndarray,
@@ -68,12 +71,8 @@ def compute_frequency_response(
     """
     if window:
         deconv = deconvolve_sweep(recording, sweep, fs)
-        ir_window = window_impulse_response(
-            deconv, f_low=f_low, f_high=f_high, **window_kwargs
-        )
-        return frequency_response_from_ir(
-            ir_window, fs, f_low=f_low, f_high=f_high
-        )
+        ir_window = window_impulse_response(deconv, f_low=f_low, f_high=f_high, **window_kwargs)
+        return frequency_response_from_ir(ir_window, fs, f_low=f_low, f_high=f_high)
     if window_kwargs:
         raise TypeError(
             "compute_frequency_response() got unexpected keyword arguments "
@@ -230,9 +229,7 @@ def deconvolve_sweep(
 
 def _default_second_harmonic_delay(duration_s: float) -> float:
     """Δt₂ for the default 20 Hz – 20 kHz sweep band."""
-    return harmonic_time_offsets(
-        (2,), duration_s=duration_s, f_low=20.0, f_high=20000.0
-    )[2]
+    return harmonic_time_offsets((2,), duration_s=duration_s, f_low=20.0, f_high=20000.0)[2]
 
 
 def _find_linear_peak(ir: np.ndarray, fs: int, duration_s: float) -> int:
@@ -280,9 +277,7 @@ def harmonic_time_offsets(
     return out
 
 
-def _half_hann_window(
-    n: int, fs: int, head_taper_ms: float, tail_taper_ms: float
-) -> np.ndarray:
+def _half_hann_window(n: int, fs: int, head_taper_ms: float, tail_taper_ms: float) -> np.ndarray:
     """Rectangular window with half-Hann tapers at both ends."""
     if n <= 0:
         return np.zeros(0)
@@ -297,7 +292,7 @@ def _half_hann_window(
         w[:n_head] = rise
     if n_tail > 0:
         fall = 0.5 * (1.0 - np.cos(np.pi * np.arange(n_tail) / n_tail))[::-1]
-        w[n - n_tail:] = fall
+        w[n - n_tail :] = fall
     return w
 
 
@@ -315,9 +310,7 @@ def _extract_circular(
     n_after = max(0, int(n_after))
     idx = np.arange(centre - n_before, centre + n_after + 1)
     segment = np.take(ir, idx, mode="wrap").astype(np.float64)
-    return segment * _half_hann_window(
-        segment.size, fs, head_taper_ms, tail_taper_ms
-    )
+    return segment * _half_hann_window(segment.size, fs, head_taper_ms, tail_taper_ms)
 
 
 def window_impulse_response(
@@ -481,23 +474,17 @@ def harmonic_responses(
             span_after = offsets[k] - offsets[k - 1]
         n_before = int(round(HARMONIC_WINDOW_SPAN * span_before * fs))
         n_after = int(round(HARMONIC_WINDOW_SPAN * span_after * fs))
-        windows[k] = _extract_circular(
-            ir, centre, n_before, n_after, fs, 2.0, 20.0
-        )
+        windows[k] = _extract_circular(ir, centre, n_before, n_after, fs, 2.0, 20.0)
 
     longest = max(w.size for w in windows.values())
     padded = {k: np.pad(w, (0, longest - w.size)) for k, w in windows.items()}
 
-    grid_freqs, linear_db = _band_response(
-        padded[1], fs, f_low, f_high, n_points, f_ref=1000.0
-    )
+    grid_freqs, linear_db = _band_response(padded[1], fs, f_low, f_high, n_points, f_ref=1000.0)
 
     nyquist = fs / 2.0
     order_db: dict[int, np.ndarray] = {}
     for k in wanted:
-        _, mag_k = _band_response(
-            padded[k], fs, f_low * k, f_high * k, n_points, f_ref=1000.0 * k
-        )
+        _, mag_k = _band_response(padded[k], fs, f_low * k, f_high * k, n_points, f_ref=1000.0 * k)
         rel = mag_k - linear_db
         harmonic_freqs = grid_freqs * k
         # Mask a little below the hard limit: the last few percent before
@@ -557,6 +544,7 @@ def _band_response(
 # Absolute SPL calibration
 # ---------------------------------------------------------------------------
 
+
 def absolute_spl_offset_db(
     *,
     sensitivity_pa_per_fs: float,
@@ -583,6 +571,7 @@ def absolute_spl_offset_db(
 # Normalization — skip-noise, anchor at 1 kHz
 # ---------------------------------------------------------------------------
 
+
 def normalize_at_1khz(
     freqs: np.ndarray,
     mag_db: np.ndarray,
@@ -603,9 +592,8 @@ def normalize_at_1khz(
 # Downsampling — log-spaced, guaranteed 1 kHz point
 # ---------------------------------------------------------------------------
 
-def _log_target_grid(
-    f_min: float, f_max: float, n_points: int, f_ref: float
-) -> np.ndarray:
+
+def _log_target_grid(f_min: float, f_max: float, n_points: int, f_ref: float) -> np.ndarray:
     """Log-spaced grid with the point nearest ``f_ref`` snapped onto it."""
     target = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
     # Replace nearest point to f_ref with exactly f_ref
@@ -658,8 +646,9 @@ def resample_log_band_average(
     def _interpolated() -> np.ndarray:
         if freqs.size == 1:
             return np.full(target.size, values[0])
-        interp = interp1d(freqs, values, kind="linear", bounds_error=False,
-                          fill_value=(values[0], values[-1]))
+        interp = interp1d(
+            freqs, values, kind="linear", bounds_error=False, fill_value=(values[0], values[-1])
+        )
         return np.asarray(interp(target), dtype=np.float64)
 
     if target.size < 2 or freqs.size < 2:
@@ -723,8 +712,9 @@ def downsample_to_log_points(
 
     target = _log_target_grid(f_min, f_max, n_points, f_ref)
 
-    interp = interp1d(freqs, mag_db, kind="linear", bounds_error=False,
-                      fill_value=(mag_db[0], mag_db[-1]))
+    interp = interp1d(
+        freqs, mag_db, kind="linear", bounds_error=False, fill_value=(mag_db[0], mag_db[-1])
+    )
     out_mag = interp(target)
 
     if normalize_ref:
@@ -737,6 +727,7 @@ def downsample_to_log_points(
 # ---------------------------------------------------------------------------
 # RMS average across kept curves
 # ---------------------------------------------------------------------------
+
 
 def compute_rms_average(
     curves: list[tuple[np.ndarray, np.ndarray]],
@@ -760,8 +751,9 @@ def compute_rms_average(
     sum_lin = np.zeros(n_points)
     count = 0
     for freqs, mag_db in curves:
-        interp = interp1d(freqs, mag_db, kind="linear", bounds_error=False,
-                          fill_value=(mag_db[0], mag_db[-1]))
+        interp = interp1d(
+            freqs, mag_db, kind="linear", bounds_error=False, fill_value=(mag_db[0], mag_db[-1])
+        )
         vals = interp(common_freqs)
         # RMS average in linear (power) space
         sum_lin += 10.0 ** (vals / 10.0)

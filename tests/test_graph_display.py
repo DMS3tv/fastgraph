@@ -39,9 +39,7 @@ def test_retro_step_group_keeps_curves_on_shared_frequency_transitions() -> None
     lower = -2.0 + np.sin(np.log(freqs))
     upper = lower + 4.0
 
-    stepped_freqs, stepped_lower, stepped_upper = retro_step_group(
-        freqs, (lower, upper)
-    )
+    stepped_freqs, stepped_lower, stepped_upper = retro_step_group(freqs, (lower, upper))
 
     assert len(stepped_freqs) == len(stepped_lower) == len(stepped_upper)
     assert np.all(stepped_lower <= stepped_upper)

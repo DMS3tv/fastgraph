@@ -1,13 +1,13 @@
 from PyQt6.QtCore import (
     QEasingCurve,
+    QPointF,
     QPropertyAnimation,
     QRectF,
-    QPointF,
     Qt,
     pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen, QPalette
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QWidget
 
 from dms.ui.style_tokens import mode_tokens
@@ -113,10 +113,21 @@ class ToggleSwitch(QCheckBox):
         p.setBrush(palette.color(QPalette.ColorRole.Base))
         p.drawEllipse(QRectF(knob_x, knob_y, knob_d, knob_d))
 
-        text_rect = QRectF(margin + track_w + text_gap, 0, self.width() - (margin + track_w + text_gap), self.height())
-        text_role = QPalette.ColorRole.WindowText if self.isEnabled() else QPalette.ColorRole.PlaceholderText
+        text_rect = QRectF(
+            margin + track_w + text_gap,
+            0,
+            self.width() - (margin + track_w + text_gap),
+            self.height(),
+        )
+        text_role = (
+            QPalette.ColorRole.WindowText
+            if self.isEnabled()
+            else QPalette.ColorRole.PlaceholderText
+        )
         p.setPen(palette.color(text_role))
-        p.drawText(text_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), self.text())
+        p.drawText(
+            text_rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), self.text()
+        )
 
         p.end()
 
@@ -208,18 +219,32 @@ class _ThemeIcon(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         inactive = self.palette().color(QPalette.ColorRole.Mid)
-        color = QColor("#d69b00" if self._kind == "sun" else "#5977b8") if self._active else inactive
+        color = (
+            QColor("#d69b00" if self._kind == "sun" else "#5977b8") if self._active else inactive
+        )
         painter.setPen(QPen(color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.setBrush(color)
         center = QPointF(self.width() / 2.0, self.height() / 2.0)
         if self._kind == "sun":
             painter.drawEllipse(center, 3.7, 3.7)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            for dx, dy in ((0, -8), (0, 8), (-8, 0), (8, 0), (-5.7, -5.7), (5.7, 5.7), (-5.7, 5.7), (5.7, -5.7)):
+            for dx, dy in (
+                (0, -8),
+                (0, 8),
+                (-8, 0),
+                (8, 0),
+                (-5.7, -5.7),
+                (5.7, 5.7),
+                (-5.7, 5.7),
+                (5.7, -5.7),
+            ):
                 length = 2.0
                 scale = (dx * dx + dy * dy) ** 0.5
                 painter.drawLine(
-                    QPointF(center.x() + dx * (1.0 - length / scale), center.y() + dy * (1.0 - length / scale)),
+                    QPointF(
+                        center.x() + dx * (1.0 - length / scale),
+                        center.y() + dy * (1.0 - length / scale),
+                    ),
                     QPointF(center.x() + dx, center.y() + dy),
                 )
         else:

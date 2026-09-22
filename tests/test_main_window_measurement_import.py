@@ -22,9 +22,15 @@ def _make_fake_main_window(state: str = AppState.IDLE):
         _mark_measure_dirty=lambda: calls.__setitem__(
             "mark_measure_dirty", calls.get("mark_measure_dirty", 0) + 1
         ),
-        _recompute_average=lambda: calls.__setitem__("recompute_average", calls["recompute_average"] + 1),
-        _recompute_variation=lambda: calls.__setitem__("recompute_variation", calls["recompute_variation"] + 1),
-        _update_queue_progress=lambda: calls.__setitem__("update_queue_progress", calls["update_queue_progress"] + 1),
+        _recompute_average=lambda: calls.__setitem__(
+            "recompute_average", calls["recompute_average"] + 1
+        ),
+        _recompute_variation=lambda: calls.__setitem__(
+            "recompute_variation", calls["recompute_variation"] + 1
+        ),
+        _update_queue_progress=lambda: calls.__setitem__(
+            "update_queue_progress", calls["update_queue_progress"] + 1
+        ),
         _update_plots=lambda: calls.__setitem__("update_plots", calls["update_plots"] + 1),
         _statusbar=SimpleNamespace(showMessage=lambda msg: status_messages.append(msg)),
     )

@@ -159,7 +159,9 @@ class LevelMeterWidget(QWidget):
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         outer, well, track = self._paint_rects()
-        radius = min(float(tokens.geometry.radius_button), track.height() / 2.0, track.width() / 2.0)
+        radius = min(
+            float(tokens.geometry.radius_button), track.height() / 2.0, track.width() / 2.0
+        )
 
         surround = QLinearGradient(outer.topLeft(), outer.bottomLeft())
         surround.setColorAt(0.0, _mix(QColor(tokens.panel), QColor("#FFFFFF"), 0.035))
@@ -290,9 +292,7 @@ class LevelMeterWidget(QWidget):
             )
 
         border = QColor(
-            tokens.danger
-            if self._display_db >= self._DANGER_BLEND_DB
-            else tokens.border
+            tokens.danger if self._display_db >= self._DANGER_BLEND_DB else tokens.border
         )
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(border, tokens.geometry.border_px))
@@ -303,8 +303,12 @@ class LevelMeterWidget(QWidget):
         outer, well, track = self._paint_rects()
         dark_variant = tokens.dark_bevel
         terminal_variant = tokens.terminal_chrome
-        highlight = QColor(tokens.accent if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF"))
-        mid_shadow = QColor("#082E0E" if terminal_variant else ("#1B1B1B" if dark_variant else "#808080"))
+        highlight = QColor(
+            tokens.accent if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF")
+        )
+        mid_shadow = QColor(
+            "#082E0E" if terminal_variant else ("#1B1B1B" if dark_variant else "#808080")
+        )
         shadow = QColor(tokens.border)
 
         painter.fillRect(outer, QColor(tokens.control))
@@ -326,7 +330,9 @@ class LevelMeterWidget(QWidget):
         painter.fillRect(track, QColor(tokens.alternate))
         blocks = self._classic_block_rects(track.adjusted(1.0, 1.0, -1.0, -1.0))
         fraction = self._fraction(self._display_db)
-        active_count = min(len(blocks), int(math.ceil(fraction * len(blocks)))) if fraction > 0 else 0
+        active_count = (
+            min(len(blocks), int(math.ceil(fraction * len(blocks)))) if fraction > 0 else 0
+        )
         for index, block in enumerate(blocks):
             if index >= active_count:
                 painter.fillRect(block, QColor(tokens.raised))

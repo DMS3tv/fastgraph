@@ -38,9 +38,7 @@ def _write_settings(tmp_path: Path, payload: dict) -> None:
     (tmp_path / "settings.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_numeric_strings_are_coerced_to_their_declared_types(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_numeric_strings_are_coerced_to_their_declared_types(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     _write_settings(
         tmp_path,
@@ -125,9 +123,7 @@ def test_uncoercible_values_fall_back_to_defaults_and_are_recorded(
     ]
 
 
-def test_mapping_settings_that_are_not_mappings_are_reset(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_mapping_settings_that_are_not_mappings_are_reset(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     _write_settings(tmp_path, {"squiglink_host_keys": "sha256:oops"})
     settings = SettingsManager()
@@ -139,9 +135,7 @@ def test_host_key_pins_round_trip(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     settings = SettingsManager()
     settings.set("squiglink_host_keys", {"sftp.squig.link:2022": "sha256:abc"})
-    assert SettingsManager().get("squiglink_host_keys") == {
-        "sftp.squig.link:2022": "sha256:abc"
-    }
+    assert SettingsManager().get("squiglink_host_keys") == {"sftp.squig.link:2022": "sha256:abc"}
 
 
 def test_alignment_confidence_migration_still_runs_after_coercion(
@@ -165,4 +159,3 @@ def test_deliberate_confidence_value_is_preserved(monkeypatch, tmp_path: Path) -
         {"settings_schema_version": 1, "start_alignment_confidence_min": "12.5"},
     )
     assert SettingsManager().get("start_alignment_confidence_min") == 12.5
-

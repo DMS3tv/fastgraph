@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QRect, pyqtSignal
@@ -19,10 +21,9 @@ from PyQt6.QtWidgets import (
 from dms.graph_display import retro_step_group, retro_step_series, stipple_trace_pen
 from dms.theme import ensure_graph_color, brand_theme_colors, normalize_theme, theme_colors
 from dms.ui.dual_plot_widget import DualPlotWidget, _configure_plot_widget
+from dms.ui.modern_spinbox import ModernDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import tokens_for
-from dms.ui.modern_spinbox import ModernDoubleSpinBox
-
 
 Curve = tuple[np.ndarray, np.ndarray]
 Variation = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -55,10 +56,8 @@ class _PlotPane(QWidget):
 
     def clear(self) -> None:
         for item in self._items:
-            try:
+            with contextlib.suppress(Exception):
                 self.plot.removeItem(item)
-            except Exception:
-                pass
         self._items.clear()
 
     def set_selected(self, selected: bool, focus_color: str, border_color: str) -> None:
@@ -104,7 +103,9 @@ class _PlotPane(QWidget):
             pen = pg.mkPen(color, width=1.7 if latest else 1.0)
             pen = stipple_trace_pen(pen, index, tokens)
             display_freqs, display_values = (
-                retro_step_series(freqs, values) if tokens.retro_graph and not brand_mode else (freqs, values)
+                retro_step_series(freqs, values)
+                if tokens.retro_graph and not brand_mode
+                else (freqs, values)
             )
             self._items.append(self.plot.plot(display_freqs, display_values, pen=pen))
         _auto_center(self.plot, curves)
@@ -221,7 +222,9 @@ class TwoChannelMeasureWidget(QWidget):
         scope_layout = QHBoxLayout(scopes)
         scope_layout.setContentsMargins(0, 0, 0, 0)
         scope_layout.setSpacing(4)
-        self._overlay_scope = _PlotPane("overlay", "Channel Balance — L / R", frequency_response=False)
+        self._overlay_scope = _PlotPane(
+            "overlay", "Channel Balance — L / R", frequency_response=False
+        )
         self._delta_scope = _PlotPane("delta", "Delta — L − R", frequency_response=False)
         scope_layout.addWidget(self._overlay_scope, 1)
         scope_layout.addWidget(self._delta_scope, 1)
@@ -352,18 +355,27 @@ class TwoChannelMeasureWidget(QWidget):
         self._top_1.draw_curves(top_channel_1, theme=self._theme, brand_mode=self._brand_mode)
         self._top_2.draw_curves(top_channel_2, theme=self._theme, brand_mode=self._brand_mode)
         self._combined.draw_result(
-            averages.get("combined"), variations.get("combined"),
-            show_variation=show_variation, theme=self._theme, brand_mode=self._brand_mode,
+            averages.get("combined"),
+            variations.get("combined"),
+            show_variation=show_variation,
+            theme=self._theme,
+            brand_mode=self._brand_mode,
             title="Combined Variation — BOTH" if show_variation else "Combined Average — BOTH",
         )
         self._bottom_1.draw_result(
-            averages.get("channel_1"), variations.get("channel_1"),
-            show_variation=show_variation, theme=self._theme, brand_mode=self._brand_mode,
+            averages.get("channel_1"),
+            variations.get("channel_1"),
+            show_variation=show_variation,
+            theme=self._theme,
+            brand_mode=self._brand_mode,
             title="Channel 1 Variation — L" if show_variation else "Channel 1 Average — L",
         )
         self._bottom_2.draw_result(
-            averages.get("channel_2"), variations.get("channel_2"),
-            show_variation=show_variation, theme=self._theme, brand_mode=self._brand_mode,
+            averages.get("channel_2"),
+            variations.get("channel_2"),
+            show_variation=show_variation,
+            theme=self._theme,
+            brand_mode=self._brand_mode,
             title="Channel 2 Variation — R" if show_variation else "Channel 2 Average — R",
         )
 
@@ -387,16 +399,25 @@ class TwoChannelMeasureWidget(QWidget):
         colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
         left_color = ensure_graph_color(BLUE, colors["plot_bg"])
         right_color = ensure_graph_color(RED, colors["plot_bg"])
-        delta_color = ensure_graph_color(tokens_for(self._theme, brand_mode=self._brand_mode).accent, colors["plot_bg"])
-        self._overlay_scope._items.extend([
-            self._overlay_scope.plot.plot(times, left, pen=pg.mkPen(left_color, width=1.7)),
-            self._overlay_scope.plot.plot(times, right, pen=pg.mkPen(right_color, width=1.7)),
-        ])
+        delta_color = ensure_graph_color(
+            tokens_for(self._theme, brand_mode=self._brand_mode).accent, colors["plot_bg"]
+        )
+        self._overlay_scope._items.extend(
+            [
+                self._overlay_scope.plot.plot(times, left, pen=pg.mkPen(left_color, width=1.7)),
+                self._overlay_scope.plot.plot(times, right, pen=pg.mkPen(right_color, width=1.7)),
+            ]
+        )
         delta = left - right
         self._delta_scope._items.append(
             self._delta_scope.plot.plot(times, delta, pen=pg.mkPen(delta_color, width=1.7))
         )
-        peak = max(float(np.max(np.abs(left))), float(np.max(np.abs(right))), float(np.max(np.abs(delta))), 1e-4)
+        peak = max(
+            float(np.max(np.abs(left))),
+            float(np.max(np.abs(right))),
+            float(np.max(np.abs(delta))),
+            1e-4,
+        )
         target_limit = min(1.2, peak * 1.15)
         smoothing = 0.45 if target_limit > self._scope_limit else 0.12
         self._scope_limit += smoothing * (target_limit - self._scope_limit)
@@ -404,21 +425,30 @@ class TwoChannelMeasureWidget(QWidget):
         for pane in (self._overlay_scope, self._delta_scope):
             pane.plot.setXRange(float(times[0]), float(times[-1]), padding=0)
             pane.plot.setYRange(-limit, limit, padding=0)
-        self._readout.setText(f"L {left_db:.1f} dBFS   R {right_db:.1f} dBFS   Δ {delta_db:+.1f} dB")
+        self._readout.setText(
+            f"L {left_db:.1f} dBFS   R {right_db:.1f} dBFS   Δ {delta_db:+.1f} dB"
+        )
 
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
         self._brand_mode = bool(brand_mode)
         for pane in (
-            self._top_1, self._top_2, self._combined, self._bottom_1, self._bottom_2,
-            self._overlay_scope, self._delta_scope,
+            self._top_1,
+            self._top_2,
+            self._combined,
+            self._bottom_1,
+            self._bottom_2,
+            self._overlay_scope,
+            self._delta_scope,
         ):
             pane.apply_theme(self._theme, self._brand_mode)
         self._refresh_selection()
 
     def bottom_plot_global_rect(self) -> QRect:
-        pane = self._combined if self._bottom_mode == "combined" else (
-            self._bottom_1 if self._selection == "channel_1" else self._bottom_2
+        pane = (
+            self._combined
+            if self._bottom_mode == "combined"
+            else (self._bottom_1 if self._selection == "channel_1" else self._bottom_2)
         )
         top_left = pane.plot.mapToGlobal(pane.plot.rect().topLeft())
         return QRect(top_left, pane.plot.size())
@@ -515,16 +545,20 @@ class MeasureWorkspace(QWidget):
     def export_bottom_plot_image(self, output_path: str) -> bool:
         if not self._two_enabled:
             return self.single.export_bottom_plot_image(output_path)
-        pane = self.two._combined if self.two._bottom_mode == "combined" else (
-            self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2
+        pane = (
+            self.two._combined
+            if self.two._bottom_mode == "combined"
+            else (self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2)
         )
         return pane.plot.grab().save(output_path, "PNG")
 
     def bottom_plot_pixmap(self):
         if not self._two_enabled:
             return self.single.bottom_plot_pixmap()
-        pane = self.two._combined if self.two._bottom_mode == "combined" else (
-            self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2
+        pane = (
+            self.two._combined
+            if self.two._bottom_mode == "combined"
+            else (self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2)
         )
         return pane.plot.grab()
 

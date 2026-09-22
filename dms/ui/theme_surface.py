@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import QApplication, QGraphicsPixmapItem, QWidget
 
 from dms.ui.style_tokens import mode_tokens, tokens_for
 
-
 _BAYER_8 = (
     (0, 48, 12, 60, 3, 51, 15, 63),
     (32, 16, 44, 28, 35, 19, 47, 31),
@@ -105,9 +104,7 @@ def aperiodic_dither_band_image(
 
     columns_u32 = np.arange(image_width, dtype=np.uint32)[None, :]
     rows_u32 = np.arange(image_height, dtype=np.uint32)[:, None]
-    hashed = (columns_u32 * np.uint32(0x9E3779B1)) ^ (
-        rows_u32 * np.uint32(0x85EBCA77)
-    )
+    hashed = (columns_u32 * np.uint32(0x9E3779B1)) ^ (rows_u32 * np.uint32(0x85EBCA77))
     hashed ^= np.uint32(seed & 0xFFFFFFFF)
     hashed ^= hashed >> np.uint32(16)
     hashed *= np.uint32(0x7FEB352D)
@@ -186,12 +183,8 @@ def aperiodic_dither_band_item(
     if x_span <= 0.0 or y_span <= 0.0:
         return None
 
-    upper_points = list(
-        zip((x_data - x_min) / x_span, (y_max - upper_data) / y_span)
-    )
-    lower_points = list(
-        zip((x_data - x_min) / x_span, (y_max - lower_data) / y_span)
-    )
+    upper_points = list(zip((x_data - x_min) / x_span, (y_max - upper_data) / y_span))
+    lower_points = list(zip((x_data - x_min) / x_span, (y_max - lower_data) / y_span))
     image = aperiodic_dither_band_image(
         sample_width,
         sample_height,
@@ -210,9 +203,7 @@ def aperiodic_dither_band_item(
     return item
 
 
-def _sample_normalized_curve(
-    points: Sequence[tuple[float, float]], width: int
-) -> np.ndarray:
+def _sample_normalized_curve(points: Sequence[tuple[float, float]], width: int) -> np.ndarray:
     values = np.asarray(points, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] != 2:
         raise ValueError("Dither boundary points must contain X and Y pairs")

@@ -72,8 +72,17 @@
 - Exported averages and Squiglink uploads now contain the curve shown on
   screen, smoothed at 1/48 octave; the file header says so.
 - Population-HRTF variation bands combine measurement and compensation
-  spread in quadrature instead of pairing the widest percentiles. The old
-  behaviour is available as `hrtf_variation_combination = "worst_case"`.
+  spread in quadrature instead of pairing the widest percentiles. The
+  unreachable `hrtf_variation_combination = "worst_case"` option has been
+  removed, and the key is dropped from saved settings once.
+- Bluetooth mode's standard-profile fallback now restores a start alignment
+  confidence minimum of 6.0, matching the new default, instead of 9.0.
+- Export All writes the same average curves as Export Average: smoothed at
+  1/48 octave, with the smoothing and level recorded in the header.
+- R&D measurement exports record the R&D smoothing and any vertical offset
+  (`* Offset: <x> dB`) in the file header.
+- Variation exports record the level mode (1 kHz reference or calibrated dB
+  SPL) in the header, the same way average exports do.
 
 ### Added
 

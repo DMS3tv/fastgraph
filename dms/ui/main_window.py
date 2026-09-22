@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
         self._theme_controller.brand_mode_changed.connect(self._on_brand_mode_changed)
         self._cal_store = CalibrationStore()
         self.measure = MeasureController(self)
+        self.measure.state_changed.connect(self._apply_state_ui)
         self._console_events = ConsoleEventStore(
             parent=self,
             log_path=config_dir() / "logs" / "fastgraph-console.log",

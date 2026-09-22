@@ -351,7 +351,7 @@ class DeviceController(QObject):
                 "Windows audio set to matched driver backend for stable timing."
             )
 
-        window._apply_state_ui()
+        window.measure.state_changed.emit()
         self.start_level_monitor()
         window._refresh_session_labels()
 
@@ -457,7 +457,7 @@ class DeviceController(QObject):
             window.measure.queue.reset()
             window.measure.queue.state = QueueState.IDLE
             window.measure.update_queue_progress()
-            window._apply_state_ui()
+            window.measure.state_changed.emit()
             window._statusbar.showMessage(
                 "Audio device change detected. Active measurement aborted safely."
             )
@@ -478,7 +478,7 @@ class DeviceController(QObject):
         window.measure.stop_channel_balance()
         window._settings.set("output_device", self.current_output_device_setting())
         window._refresh_session_labels()
-        window._apply_state_ui()
+        window.measure.state_changed.emit()
         if (
             is_windows_audio_host()
             and self.current_output_device() is not None
@@ -494,7 +494,7 @@ class DeviceController(QObject):
         self._sync_windows_output_to_input()
         self._refresh_channels()
         self.start_level_monitor()
-        window._apply_state_ui()
+        window.measure.state_changed.emit()
         window._refresh_session_labels()
 
     def on_advanced_windows_drivers_changed(self) -> None:

@@ -323,7 +323,7 @@ class MeasureTab(QWidget):
         self.variation_toggle.setToolTip(
             "Show confidence-style spread of kept measurements in the bottom viewport."
         )
-        self.variation_toggle.stateChanged.connect(self._window.measure.on_bottom_view_changed)
+        self.variation_toggle.stateChanged.connect(self._window.measure.refresh)
         row.addWidget(self.variation_toggle)
 
         self.distortion_toggle = ToggleSwitch("Distortion")
@@ -342,7 +342,7 @@ class MeasureTab(QWidget):
 
         self.hrtf_toggle = ToggleSwitch("HRTF")
         self.hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
-        self.hrtf_toggle.stateChanged.connect(self._window.measure.update_plots)
+        self.hrtf_toggle.stateChanged.connect(self._window.measure.refresh)
         row.addWidget(self.hrtf_toggle)
 
         self.hrtf_combo = QComboBox()

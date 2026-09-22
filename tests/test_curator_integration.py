@@ -277,7 +277,7 @@ def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> No
     curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window.measure.kept_curves = [curve]
     window.measure.recompute_average()
-    window.measure.update_plots()
+    window.measure.refresh()
     curator_marker = object()
     window._curator_widget.graph_state.layers.append(curator_marker)
     window._console_events.publish("INFO", "test", "keep me")
@@ -312,7 +312,7 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(
     freqs = np.array([100.0, 1000.0, 10000.0])
     source_mag = np.array([4.0, 0.0, -4.0])
     window.measure.average = (freqs, source_mag)
-    window.measure.update_plots()
+    window.measure.refresh()
     expected_freqs, expected_mag = window.measure.bottom_curve_for_display()
 
     window.rnd.send_to_curator()
@@ -389,7 +389,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     freqs = np.array([100.0, 1000.0])
     window.measure.kept_curves = [(freqs, np.array([10.0, 100.0]))]
     window.measure.recompute_average()
-    window.measure.update_plots()
+    window.measure.refresh()
     band = window.measure.variation
     expected = tuple(
         np.array(values, copy=True)

@@ -36,7 +36,7 @@ def _window_with_target(make_main_window, tmp_path, **kwargs):
     window.measure.kept_curves.append(_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure.recompute_average()
-    window.measure.update_plots()
+    window.measure.refresh()
     target = _write_target(tmp_path / "target.txt")
     assert window.measure_compare.load_target(str(target)) is True
     return window, target
@@ -207,7 +207,7 @@ def test_reference_layers_draw_and_clear(tmp_path, make_main_window) -> None:
     window.measure.kept_curves.append(_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure.recompute_average()
-    window.measure.update_plots()
+    window.measure.refresh()
 
     for index in range(3):
         path = _write_target(tmp_path / f"ref{index}.txt", tilt_db=float(index + 1))

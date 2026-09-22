@@ -133,7 +133,7 @@ class RndBridge(QObject):
         self._window.measure.stop_channel_balance()
         self._window.measure.queue.attempts += 1
         self._window.measure.queue.state = QueueState.SWEEPING
-        self._window._apply_state_ui()
+        self._window.measure.state_changed.emit()
         self._window._rnd_widget.set_status(
             f"Sweeping attempt {self._window.measure.queue.attempts}..."
         )
@@ -233,7 +233,7 @@ class RndBridge(QObject):
             self._window.measure.queue.pending_curve = (freqs_ds, mag_ds)
             self._window._rnd_widget.set_review_curve(self._window.measure.queue.pending_curve)
             self._window.measure.queue.state = QueueState.PASS_FAIL
-            self._window._apply_state_ui()
+            self._window.measure.state_changed.emit()
             self._window._rnd_widget.set_status("Sweep complete. Waiting for review.")
             self._window._statusbar.showMessage("R&D sweep complete. Waiting for review.")
             QTimer.singleShot(0, self._show_rnd_review_dialog)
@@ -264,14 +264,14 @@ class RndBridge(QObject):
             )
             if choice == QMessageBox.StandardButton.Yes:
                 self._window.measure.queue.state = QueueState.IDLE
-                self._window._apply_state_ui()
+                self._window.measure.state_changed.emit()
                 QTimer.singleShot(150, self._start_rnd_sweep)
                 return
         self.sweep_active = False
         self._window.measure.queue.attempts = 0
         self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(0)
-        self._window._apply_state_ui()
+        self._window.measure.state_changed.emit()
         self._window.devices.start_level_monitor()
         self._window._rnd_widget.set_status("Ready")
         self._window._statusbar.showMessage(message)
@@ -313,7 +313,7 @@ class RndBridge(QObject):
             self._window._rnd_widget.set_review_curve(None)
             self._window.measure.queue.pending_curve = None
             self._window.measure.queue.state = QueueState.IDLE
-            self._window._apply_state_ui()
+            self._window.measure.state_changed.emit()
             self._window._statusbar.showMessage("R&D measurement rejected. Redoing...")
             QTimer.singleShot(100, self.start_measurement)
             return
@@ -361,7 +361,7 @@ class RndBridge(QObject):
         self._window.measure.queue.attempts = 0
         self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(100)
-        self._window._apply_state_ui()
+        self._window.measure.state_changed.emit()
         self._window.devices.start_level_monitor()
         self._window._rnd_widget.set_status("Ready")
         self._window._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
@@ -379,7 +379,7 @@ class RndBridge(QObject):
         self._window.measure.queue.attempts = 0
         self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(0)
-        self._window._apply_state_ui()
+        self._window.measure.state_changed.emit()
         self._window.devices.start_level_monitor()
         self._window._rnd_widget.set_status("Ready")
         self._window._statusbar.showMessage("R&D measurement canceled.")

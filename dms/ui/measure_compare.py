@@ -124,7 +124,7 @@ class MeasureCompare(QObject):
         for warning in warnings[:4]:
             self._window._log_event("WARNING", "measure", warning)
         self.sync_layers()
-        self._window.measure.update_plots()
+        self._window.measure.refresh()
         self._window._statusbar.showMessage(f"Target loaded: {Path(path_str).name}")
         self._window._log_event("INFO", "measure", "Target loaded", path=str(path_str))
         return True
@@ -136,7 +136,7 @@ class MeasureCompare(QObject):
         if getattr(self, "_delta_view_action", None) is not None:
             self._delta_view_action.setChecked(False)
         self.sync_layers()
-        self._window.measure.update_plots()
+        self._window.measure.refresh()
         self._window._statusbar.showMessage("Target cleared.")
 
     def _on_delta_view_toggled(self, checked: bool) -> None:
@@ -150,7 +150,7 @@ class MeasureCompare(QObject):
             return
         self._window._settings.set("measure_delta_view", bool(checked))
         self.sync_layers()
-        self._window.measure.update_plots()
+        self._window.measure.refresh()
         self._window._statusbar.showMessage("Delta view on." if checked else "Delta view off.")
 
     def load_reference(self, requested_path: str | None = None) -> bool:
@@ -307,4 +307,4 @@ class MeasureCompare(QObject):
         dialog.exec()
         self._window._settings.set("measure_delta_offset_mode", dialog.offset_mode())
         dialog.deleteLater()
-        self._window.measure.update_plots()
+        self._window.measure.refresh()

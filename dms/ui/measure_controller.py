@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import QObject, QThread, QTimer
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QCheckBox, QMessageBox
 
 from dms.audio_engine import SweepWorker
@@ -87,9 +87,16 @@ class _BalanceThread(QThread):
 
 
 class MeasureController(QObject):
+    #: Queue state or kept measurements changed; the window re-enables its
+    #: controls from them.
+    state_changed = pyqtSignal()
+    #: The curves to draw changed; True also draws the pending sweep.
+    curves_changed = pyqtSignal(bool)
+
     def __init__(self, window: MainWindow) -> None:
         super().__init__(window)
         self._window = window
+        self.curves_changed.connect(self._redraw)
         settings = window._settings
         self.queue = MeasurementQueue(max_attempts=MAX_SWEEP_ATTEMPTS)
         # dB SPL without a calibration falls back to reference mode; the note
@@ -155,9 +162,9 @@ class MeasureController(QObject):
         self._window.measure_tab.bottom_layout_combo.setVisible(enabled)
         self._window.measure_tab.ch_combo.setEnabled(not enabled)
         self.update_queue_progress()
-        self.update_plots()
+        self.curves_changed.emit(False)
         self._window.devices.start_level_monitor()
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         mode = "Two Channel" if enabled else "Single Channel"
         self._window._statusbar.showMessage(f"Measure mode: {mode}.")
 
@@ -203,15 +210,15 @@ class MeasureController(QObject):
             self._window.devices.stop_level_monitor()
         else:
             self._window.devices.start_level_monitor()
-            self.update_plots()
-        self._window._apply_state_ui()
+            self.curves_changed.emit(False)
+        self.state_changed.emit()
 
     def on_two_channel_bottom_mode_changed(self, _index: int) -> None:
         mode = str(self._window.measure_tab.bottom_layout_combo.currentData() or "combined")
         self.two_channel_bottom_mode = "separate" if mode == "separate" else "combined"
         self._window._settings.set("measure_two_channel_bottom_mode", self.two_channel_bottom_mode)
         self._window._plots.two.set_bottom_mode(self.two_channel_bottom_mode)
-        self.update_plots()
+        self.curves_changed.emit(False)
 
     def on_two_channel_selection_changed(self, selection: str) -> None:
         if selection in {"channel_1", "channel_2"}:
@@ -490,14 +497,14 @@ class MeasureController(QObject):
         self._window.measure_tab.queue_progress_label.setText(f"Kept: {kept_count}")
 
         self.queue.state = QueueState.QUEUE_RUNNING
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self._window._statusbar.showMessage("Queue started.")
         self.start_next_sweep()
 
     def start_next_sweep(self, *, second_stage: bool = False) -> None:
         if not self.queue_active():
             self.queue.state = QueueState.IDLE
-            self._window._apply_state_ui()
+            self.state_changed.emit()
             return
 
         if self.queue.index >= self.queue.target:
@@ -515,7 +522,7 @@ class MeasureController(QObject):
                 self.queue.pending_pair_first_diagnostics = None
         self.stop_channel_balance()
         self.queue.state = QueueState.SWEEPING
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self._window.measure_tab.sweep_progress.setValue(0)
 
         output_device = self._window.devices.current_output_device()
@@ -655,7 +662,7 @@ class MeasureController(QObject):
                     self.queue.pending_pair_first_diagnostics = self.queue.last_diagnostics
                     self.queue.start_second_stage = True
                     self.queue.state = QueueState.QUEUE_RUNNING
-                    self._window._apply_state_ui()
+                    self.state_changed.emit()
                     self._window._statusbar.showMessage(
                         "Channel 1/L complete. Starting channel 2/R."
                     )
@@ -697,8 +704,8 @@ class MeasureController(QObject):
                     channel_2_diagnostics=self.queue.last_diagnostics,
                 )
                 self.queue.state = QueueState.PASS_FAIL
-                self._window._apply_state_ui()
-                self.update_plots(show_pending=True)
+                self.state_changed.emit()
+                self.curves_changed.emit(True)
                 self._window._statusbar.showMessage(
                     "Two-channel pair complete. Waiting for review."
                 )
@@ -724,8 +731,8 @@ class MeasureController(QObject):
                 output_points=len(freqs_ds),
             )
             self.queue.state = QueueState.PASS_FAIL
-            self._window._apply_state_ui()
-            self.update_plots(show_pending=True)
+            self.state_changed.emit()
+            self.curves_changed.emit(True)
             timing_msg = ""
             if self.queue.last_timing_quality is not None:
                 start_conf, end_conf, drift_ms, snr_db = self.queue.last_timing_quality
@@ -806,7 +813,7 @@ class MeasureController(QObject):
             ):
                 diagnostics_text = "\n\n" + format_diagnostics_summary(self.queue.last_diagnostics)
             self.queue.state = QueueState.QUEUE_RUNNING
-            self._window._apply_state_ui()
+            self.state_changed.emit()
             self._window.devices.start_level_monitor()
             retry_subject = (
                 "The two-channel pair failed. Both channels will be measured again."
@@ -854,7 +861,7 @@ class MeasureController(QObject):
         self.queue.reset()
         self.queue.state = QueueState.IDLE
         self.update_queue_progress()
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self._window.devices.start_level_monitor()
         self._window._statusbar.showMessage(message)
         QMessageBox.warning(self._window, "Sweep Error", dialog_message)
@@ -886,14 +893,14 @@ class MeasureController(QObject):
             self.queue.attempts = 0
             self.recompute_two_channel_results()
             self.update_queue_progress()
-            self.update_plots()
+            self.curves_changed.emit(False)
             self._window.measure_io.mark_dirty()
             self._window.commands.trigger("measurement_kept")
             if self.queue.index >= self.queue.target:
                 self.finish_queue()
                 return
             self.queue.state = QueueState.QUEUE_RUNNING
-            self._window._apply_state_ui()
+            self.state_changed.emit()
             self.start_next_sweep()
             return
 
@@ -929,7 +936,7 @@ class MeasureController(QObject):
         self.recompute_average()
         self.recompute_variation()
         self.update_queue_progress()
-        self.update_plots()
+        self.curves_changed.emit(False)
         self._window.measure_io.mark_dirty()
         match = self._window.measure_compare.target_match_message()
         if match:
@@ -942,7 +949,7 @@ class MeasureController(QObject):
             return
 
         self.queue.state = QueueState.QUEUE_RUNNING
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self.start_next_sweep()
 
     def on_fail(self) -> None:
@@ -958,8 +965,8 @@ class MeasureController(QObject):
         self.queue.reset(keep_counters=True)
         self.queue.attempts = 0
         self.queue.state = QueueState.QUEUE_RUNNING
-        self._window._apply_state_ui()
-        self.update_plots()
+        self.state_changed.emit()
+        self.curves_changed.emit(False)
         self._window._statusbar.showMessage(
             f"Measurement {self.queue.index + 1} failed. Redoing same index."
         )
@@ -973,8 +980,8 @@ class MeasureController(QObject):
         self.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(0)
         self.update_queue_progress()
-        self.update_plots()
-        self._window._apply_state_ui()
+        self.curves_changed.emit(False)
+        self.state_changed.emit()
         self._window.devices.start_level_monitor()
         self._window._statusbar.showMessage("Queue canceled.")
 
@@ -982,7 +989,7 @@ class MeasureController(QObject):
         self.queue.reset()
         self.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(100)
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self._window.devices.start_level_monitor()
         match = self._window.measure_compare.target_match_message()
         self._window._statusbar.showMessage(
@@ -1071,8 +1078,8 @@ class MeasureController(QObject):
         )
         self.average = (freqs, mag_db)
 
-    def recompute_two_channel_results(self) -> None:
-        curves_by_key = {
+    def _two_channel_curves_by_key(self) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
+        return {
             "channel_1": channel_curves(self.two_channel_pairs, 1),
             "channel_2": channel_curves(self.two_channel_pairs, 2),
             "combined": combined_pair_curves(
@@ -1080,8 +1087,10 @@ class MeasureController(QObject):
                 n_points=_DISPLAY_AVG_POINTS,
             ),
         }
+
+    def recompute_two_channel_results(self) -> None:
         averages: dict[str, object] = {}
-        for key, curves in curves_by_key.items():
+        for key, curves in self._two_channel_curves_by_key().items():
             if not curves:
                 averages[key] = None
                 continue
@@ -1094,6 +1103,20 @@ class MeasureController(QObject):
                 normalize_ref=False,
             )
         self.two_channel_averages = averages
+        self._recompute_two_channel_variations()
+
+    def _recompute_two_channel_variations(self) -> None:
+        """Variation band per channel key, with the active HRTF applied."""
+        active_hrtf = self.hrtf if self.is_hrtf_active() else None
+        variations: dict[str, object] = {}
+        for key, curves in self._two_channel_curves_by_key().items():
+            raw_average = self.two_channel_averages.get(key)
+            variations[key] = self.variation_from_curves(
+                curves,
+                raw_average if isinstance(raw_average, tuple) else None,
+                hrtf=active_hrtf,
+            )
+        self.two_channel_variations = variations
 
     def active_two_channel_key(self) -> str:
         if self.two_channel_bottom_mode == "combined":
@@ -1203,7 +1226,11 @@ class MeasureController(QObject):
             fraction=_DISPLAY_AVG_SMOOTHING,
         )
 
-    def update_plots(self, *_args, show_pending: bool = False) -> None:
+    def refresh(self, *_args) -> None:
+        """Redraw the plots from the kept curves."""
+        self.curves_changed.emit(False)
+
+    def _redraw(self, show_pending: bool = False) -> None:
         overlay_freqs, overlay_series = self._distortion_overlay_series()
         self._window._plots.set_distortion_overlay(overlay_freqs, overlay_series)
         self._window.measure_compare.sync_layers()
@@ -1213,16 +1240,8 @@ class MeasureController(QObject):
             pairs = list(self.two_channel_pairs)
             if show_pending and self.queue.pending_pair is not None:
                 pairs.append(self.queue.pending_pair)
-            curves_by_key = {
-                "channel_1": channel_curves(self.two_channel_pairs, 1),
-                "channel_2": channel_curves(self.two_channel_pairs, 2),
-                "combined": combined_pair_curves(
-                    self.two_channel_pairs,
-                    n_points=_DISPLAY_AVG_POINTS,
-                ),
-            }
+            self._recompute_two_channel_variations()
             averages: dict[str, object] = {}
-            variations: dict[str, object] = {}
             for key in ("channel_1", "channel_2", "combined"):
                 raw_average = self.two_channel_averages.get(key)
                 if isinstance(raw_average, tuple):
@@ -1236,12 +1255,6 @@ class MeasureController(QObject):
                     )
                 else:
                     averages[key] = None
-                variations[key] = self.variation_from_curves(
-                    curves_by_key[key],
-                    raw_average if isinstance(raw_average, tuple) else None,
-                    hrtf=active_hrtf,
-                )
-            self.two_channel_variations = variations
             show_variation = self.bottom_view_mode() == "variation"
             if delta_on:
                 # Limitation: two-channel delta view replaces only the *active*
@@ -1261,7 +1274,7 @@ class MeasureController(QObject):
                 top_channel_1=channel_curves(pairs, 1),
                 top_channel_2=channel_curves(pairs, 2),
                 averages=averages,
-                variations=variations,
+                variations=self.two_channel_variations,
                 show_variation=show_variation,
             )
             self._window.measure_io.sync_export_button()
@@ -1298,9 +1311,6 @@ class MeasureController(QObject):
         if self.is_hrtf_active() and self.hrtf.is_variation:
             return "variation"
         return "variation" if self._window.measure_tab.variation_toggle.isChecked() else "average"
-
-    def on_bottom_view_changed(self, *_args) -> None:
-        self.update_plots()
 
     # ------------------------------------------------------------------
     # Distortion overlay
@@ -1341,7 +1351,7 @@ class MeasureController(QObject):
 
     def on_distortion_overlay_changed(self, *_args) -> None:
         self._window._settings.set("measure_distortion_overlay", self._distortion_overlay_enabled())
-        self.update_plots()
+        self.curves_changed.emit(False)
 
     def analyze_sweep(
         self,
@@ -1468,7 +1478,7 @@ class MeasureController(QObject):
             self._window._statusbar.showMessage(
                 "Level mode: dB SPL." if chosen == "dbspl" else "Level mode: 1 kHz reference."
             )
-        self.update_plots()
+        self.curves_changed.emit(False)
 
     def on_hrtf_selected(self) -> None:
         path = self._window.measure_tab.hrtf_combo.currentData()
@@ -1476,7 +1486,7 @@ class MeasureController(QObject):
             self.hrtf = None
             self._window._settings.set("hrtf_path", None)
             self._sync_hrtf_ui()
-            self.update_plots()
+            self.curves_changed.emit(False)
             self._window.measure_io.mark_dirty()
             self._window._statusbar.showMessage("HRTF cleared.")
             return
@@ -1488,7 +1498,7 @@ class MeasureController(QObject):
             self._window.measure_tab.hrtf_toggle.setChecked(True)
             if self.hrtf.is_variation:
                 self._window.measure_tab.variation_toggle.setChecked(True)
-            self.update_plots()
+            self.curves_changed.emit(False)
             self._window.measure_io.mark_dirty()
             kind = "population variation compensation" if self.hrtf.is_variation else "HRTF"
             self._window._statusbar.showMessage(f"Loaded {kind}: {Path(path).name}")
@@ -1497,7 +1507,7 @@ class MeasureController(QObject):
             self.hrtf = None
             self._window._settings.set("hrtf_path", None)
             self._sync_hrtf_ui()
-            self.update_plots()
+            self.curves_changed.emit(False)
 
     def import_dropped_measurement_files(self, paths: list[str]) -> None:
         if self.two_channel_enabled:
@@ -1537,7 +1547,7 @@ class MeasureController(QObject):
             self.recompute_average()
             self.recompute_variation()
             self.update_queue_progress()
-            self.update_plots()
+            self.curves_changed.emit(False)
             self._window.measure_io.mark_dirty()
 
         if loaded == 0 and failed:
@@ -1603,7 +1613,7 @@ class MeasureController(QObject):
             self.queue.pending_pair = None
             self.queue.pending_pair_first_raw = None
             self.queue.pending_pair_first_diagnostics = None
-            self.update_plots()
+            self.curves_changed.emit(False)
         else:
             self.kept_curves.clear()
             self.kept_sweep_meta.clear()
@@ -1619,7 +1629,7 @@ class MeasureController(QObject):
         self.update_queue_progress()
         self._window.measure_tab.sweep_progress.setValue(0)
         self._window.measure_io.sync_export_button()
-        self._window._apply_state_ui()
+        self.state_changed.emit()
         self._window.measure_io.mark_dirty()
 
     def confirm_clear_all(self) -> tuple[bool, bool]:
@@ -1664,8 +1674,8 @@ class MeasureController(QObject):
             self.recompute_average()
             self.recompute_variation()
         self.update_queue_progress()
-        self.update_plots()
-        self._window._apply_state_ui()
+        self.curves_changed.emit(False)
+        self.state_changed.emit()
         self._window.measure_io.mark_dirty()
         self._window._statusbar.showMessage("Last kept measurement removed.")
 

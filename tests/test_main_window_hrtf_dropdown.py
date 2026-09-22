@@ -14,10 +14,11 @@ def _window(make_main_window):
     window = make_main_window()
     window.update_count = 0
 
-    def _count_update() -> None:
+    def _count_update(_show_pending: bool) -> None:
         window.update_count += 1
 
-    window.measure.update_plots = _count_update
+    window.measure.curves_changed.disconnect()
+    window.measure.curves_changed.connect(_count_update)
     return window
 
 
@@ -81,7 +82,8 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
     assert window.measure_tab.hrtf_toggle.isChecked()
     assert window.measure_tab.hrtf_label.text() == "Fixture A"
     assert window.measure_tab.hrtf_label.toolTip() == str(hrtf_path)
-    assert window.update_count == 1
+    # One redraw from switching the compensation toggle on, one from the load.
+    assert window.update_count == 2
 
 
 def test_selecting_none_clears_hrtf_and_disables_compensation(

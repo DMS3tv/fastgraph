@@ -306,8 +306,8 @@ class MeasureIO(QObject):
         window.measure.recompute_variation()
         window.measure.recompute_two_channel_results()
         window.measure.update_queue_progress()
-        window.measure.update_plots()
-        window._apply_state_ui()
+        window.measure.refresh()
+        window.measure.state_changed.emit()
         window._refresh_window_title()
 
     def _apply_session_level_mode(self, level_mode: str) -> None:

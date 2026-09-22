@@ -4,16 +4,20 @@ import numpy as np
 
 from dms.measure_queue import QueueState
 
-_COUNTED = ("recompute_average", "recompute_variation", "update_queue_progress", "update_plots")
+_COUNTED = ("recompute_average", "recompute_variation", "update_queue_progress")
 
 
 def _counting_window(make_main_window, state: str = QueueState.IDLE):
     """A real window whose follow-up refreshes are replaced by counters."""
     window = make_main_window()
     window._state = state
-    calls = dict.fromkeys(_COUNTED, 0)
+    calls = dict.fromkeys((*_COUNTED, "curves_changed"), 0)
     for name in _COUNTED:
         setattr(window.measure, name, lambda name=name: calls.__setitem__(name, calls[name] + 1))
+    window.measure.curves_changed.disconnect()
+    window.measure.curves_changed.connect(
+        lambda _pending: calls.__setitem__("curves_changed", calls["curves_changed"] + 1)
+    )
     return window, calls
 
 
@@ -45,7 +49,7 @@ def test_import_dropped_measurement_files_appends_curves(
     assert calls["recompute_average"] == 1
     assert calls["recompute_variation"] == 1
     assert calls["update_queue_progress"] == 1
-    assert calls["update_plots"] == 1
+    assert calls["curves_changed"] == 1
     assert warnings
     assert "loaded 1, failed 1" in window._statusbar.currentMessage().lower()
 
@@ -72,4 +76,4 @@ def test_import_dropped_measurement_files_blocked_when_busy(
     assert info_calls
     assert "only available while idle" in info_calls[0][1].lower()
     assert "blocked" in window._statusbar.currentMessage().lower()
-    assert calls["update_plots"] == 0
+    assert calls["curves_changed"] == 0

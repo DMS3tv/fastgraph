@@ -4,6 +4,7 @@ import numpy as np
 
 from dms.processing import VariationBand
 from dms.session import SessionData
+from dms.two_channel import TwoChannelCurvePair
 
 
 def _band() -> VariationBand:
@@ -118,3 +119,47 @@ def test_export_variation_empty_state_has_variation_copy(make_main_window, monke
     window.measure_io.export()
 
     assert info_calls == [("Nothing to Export", "No variation band available yet.")]
+
+
+def test_two_channel_variation_exports_without_a_plot_redraw(
+    make_main_window, monkeypatch, tmp_path: Path
+) -> None:
+    written: dict[str, object] = {}
+    monkeypatch.setattr(
+        "dms.ui.measure_io.export_variation",
+        lambda **kwargs: written.update(kwargs),
+    )
+    info_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "dms.ui.measure_io.QMessageBox.information",
+        lambda _parent, title, message: info_calls.append((title, message)),
+    )
+    window = make_main_window(
+        settings={
+            "measure_two_channel_enabled": True,
+            "measure_two_channel_bottom_mode": "separate",
+        }
+    )
+    redraws: list[bool] = []
+    window.measure.curves_changed.connect(redraws.append)
+    freqs = np.array([100.0, 1000.0, 10000.0])
+
+    def flat(level: float):
+        return freqs, np.full(3, level)
+
+    window.measure.two_channel_pairs = [
+        TwoChannelCurvePair(flat(1.0), flat(-2.0)),
+        TwoChannelCurvePair(flat(3.0), flat(-6.0)),
+    ]
+    window.measure.recompute_two_channel_results()
+    window.measure.on_two_channel_selection_changed("channel_2")
+
+    window.measure_io.export_variation(str(tmp_path / "variation.txt"))
+
+    assert info_calls == []
+    assert redraws == []
+    assert written["n_sweeps"] == 2
+    # Channel 2 only: its two flat curves sit at -2 and -6 dB.
+    np.testing.assert_allclose(written["median_db"], -4.0, atol=1e-9)
+    np.testing.assert_allclose(written["p10_db"], -5.6, atol=1e-9)
+    np.testing.assert_allclose(written["p90_db"], -2.4, atol=1e-9)

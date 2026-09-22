@@ -247,10 +247,10 @@ def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -
     scheduled: list[dict] = []
     window.measure_io._measure_recovery.schedule = lambda snapshot: scheduled.append(snapshot)
 
-    window._state = QueueState.PASS_FAIL
-    window._queue_target = 1
-    window._queue_index = 0
-    window._pending_curve = _curve()
+    window.measure.queue.state = QueueState.PASS_FAIL
+    window.measure.queue.target = 1
+    window.measure.queue.index = 0
+    window.measure.queue.pending_curve = _curve()
     window.measure.on_keep()
 
     assert len(window.measure.kept_curves) == 1

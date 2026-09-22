@@ -452,7 +452,7 @@ def test_check_devices_defers_while_the_queue_holds_the_devices(
 
     refreshed: list[bool] = []
     window.devices.refresh_devices = lambda: refreshed.append(True)
-    window._queue_target = 1
+    window.measure.queue.target = 1
     _forbid_enumeration(monkeypatch)
 
     window.devices.check_devices(outputs[1:], inputs)
@@ -482,9 +482,9 @@ def test_sync_device_poller_pauses_while_busy(make_main_window) -> None:
 
     window.devices.device_poller = poller
     window.devices.sync_device_poller()
-    window._queue_target = 1
+    window.measure.queue.target = 1
     window.devices.sync_device_poller()
-    window._queue_target = 0
+    window.measure.queue.target = 0
     window.rnd.sweep_active = True
     window.devices.sync_device_poller()
     window.rnd.sweep_active = False

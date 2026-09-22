@@ -58,8 +58,8 @@ def _sweep_ready_window(make_main_window, monkeypatch, settings=None):
     )
     monkeypatch.setattr(measure_controller_module.QTimer, "singleShot", lambda *_args: None)
     window.measure.distortion_analysis_allowed = lambda: False
-    window._queue_target = 1
-    window._state = QueueState.SWEEPING
+    window.measure.queue.target = 1
+    window.measure.queue.state = QueueState.SWEEPING
     return window
 
 
@@ -107,7 +107,7 @@ def test_single_channel_sweep_is_normalized_then_downsampled_only(
 
     window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
-    pending = window._pending_curve
+    pending = window.measure.queue.pending_curve
     assert pending is not None
     assert len(pending[0]) == 600 and len(pending[1]) == 600
     assert _value_at_1khz(pending) == 0.0
@@ -129,7 +129,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
 
     window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
-    pending = window._pending_curve
+    pending = window.measure.queue.pending_curve
     assert len(pending[1]) == 600
     unshifted = downsample_to_log_points(_FREQS, _KNOWN, n_points=600, normalize_ref=False)
     np.testing.assert_allclose(pending[0], unshifted[0], rtol=0, atol=1e-9)
@@ -141,8 +141,10 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
     fallback.devices.current_input_device_info = lambda: {"name": "Uncalibrated"}
     fallback.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
     reference = downsample_to_log_points(_FREQS, normalize_at_1khz(_FREQS, _KNOWN), n_points=600)
-    np.testing.assert_allclose(fallback._pending_curve[1], reference[1], rtol=0, atol=1e-9)
-    assert _value_at_1khz(fallback._pending_curve) == 0.0
+    np.testing.assert_allclose(
+        fallback.measure.queue.pending_curve[1], reference[1], rtol=0, atol=1e-9
+    )
+    assert _value_at_1khz(fallback.measure.queue.pending_curve) == 0.0
 
 
 def test_sweep_worker_emits_aligned_recording_plus_tail(monkeypatch) -> None:

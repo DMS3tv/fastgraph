@@ -133,10 +133,10 @@ def test_delta_view_needs_a_target(make_main_window) -> None:
 
 def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
-    window._state = QueueState.PASS_FAIL
-    window._queue_target = 1
-    window._queue_index = 0
-    window._pending_curve = _curve()
+    window.measure.queue.state = QueueState.PASS_FAIL
+    window.measure.queue.target = 1
+    window.measure.queue.index = 0
+    window.measure.queue.pending_curve = _curve()
 
     summary = window.measure_compare.pending_deviation_summary()
     assert summary is not None
@@ -151,15 +151,15 @@ def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -
         assert summary in texts
     finally:
         window.measure.close_pass_fail_dialog()
-        window._state = QueueState.IDLE
+        window.measure.queue.state = QueueState.IDLE
 
 
 def test_keeping_appends_a_match_percentage(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
-    window._state = QueueState.PASS_FAIL
-    window._queue_target = 2
-    window._queue_index = 0
-    window._pending_curve = _curve()
+    window.measure.queue.state = QueueState.PASS_FAIL
+    window.measure.queue.target = 2
+    window.measure.queue.index = 0
+    window.measure.queue.pending_curve = _curve()
     window.measure.start_next_sweep = lambda **_kwargs: None
 
     window.measure.on_keep()

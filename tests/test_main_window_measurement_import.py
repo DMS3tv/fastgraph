@@ -10,7 +10,7 @@ _COUNTED = ("recompute_average", "recompute_variation", "update_queue_progress")
 def _counting_window(make_main_window, state: str = QueueState.IDLE):
     """A real window whose follow-up refreshes are replaced by counters."""
     window = make_main_window()
-    window._state = state
+    window.measure.queue.state = state
     calls = dict.fromkeys((*_COUNTED, "curves_changed"), 0)
     for name in _COUNTED:
         setattr(window.measure, name, lambda name=name: calls.__setitem__(name, calls[name] + 1))

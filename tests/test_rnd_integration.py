@@ -121,8 +121,8 @@ def test_rnd_toolbar_uses_compact_stacked_rows(qapp, make_main_window) -> None:
 
 def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
     window = make_main_window()
-    window._state = QueueState.PASS_FAIL
-    window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
+    window.measure.queue.state = QueueState.PASS_FAIL
+    window.measure.queue.pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window.devices._input_device_labels_by_index = {1: "Input A"}
     window.devices._output_device_labels_by_index = {2: "Output A"}
     window.measure_tab.in_dev_combo.addItem("Input A", 1)
@@ -177,9 +177,9 @@ def test_rnd_selected_item_photo_panel_tracks_measurement_photos(make_main_windo
 
 def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
     window = make_main_window()
-    window._state = QueueState.PASS_FAIL
-    window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
-    window._rnd_widget.set_review_curve(window._pending_curve)
+    window.measure.queue.state = QueueState.PASS_FAIL
+    window.measure.queue.pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
+    window._rnd_widget.set_review_curve(window.measure.queue.pending_curve)
     window.rnd.start_measurement = lambda: None
 
     class _Dialog:
@@ -189,7 +189,7 @@ def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
     window.rnd._handle_rnd_review_choice(_Dialog())
 
     assert window._rnd_widget.session.measurements == []
-    assert window._pending_curve is None
+    assert window.measure.queue.pending_curve is None
     assert window._rnd_widget._review_curve is None
 
 
@@ -897,11 +897,11 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
     window.measure_io.sync_export_button()
     assert window.measure_tab.send_to_rnd_btn.isEnabled()
 
-    window._state = QueueState.SWEEPING
+    window.measure.queue.state = QueueState.SWEEPING
     window.measure_io.sync_export_button()
     assert not window.measure_tab.send_to_rnd_btn.isEnabled()
     assert "idle" in window.measure_tab.send_to_rnd_btn.toolTip().lower()
-    window._state = QueueState.IDLE
+    window.measure.queue.state = QueueState.IDLE
 
 
 def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(

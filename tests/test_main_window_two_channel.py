@@ -171,7 +171,7 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
 def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> None:
     window = _window(make_main_window)
     window.measure_tab.measure_balance_button.setChecked(True)
-    window._state = QueueState.QUEUE_RUNNING
+    window.measure.queue.state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
 
     assert window.measure_tab.measure_submode_control.isEnabled() is False
@@ -324,23 +324,23 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
         lambda **_kwargs: next(responses),
     )
     monkeypatch.setattr(measure_controller_module.QTimer, "singleShot", lambda *_args: None)
-    window._queue_target = 1
-    window._state = QueueState.SWEEPING
-    window._two_channel_stage = 1
+    window.measure.queue.target = 1
+    window.measure.queue.state = QueueState.SWEEPING
+    window.measure.queue.stage = 1
 
     window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
-    assert window._pending_pair_first_raw is not None
-    assert window._start_second_pair_stage is True
+    assert window.measure.queue.pending_pair_first_raw is not None
+    assert window.measure.queue.start_second_stage is True
 
-    window._two_channel_stage = 2
-    window._state = QueueState.SWEEPING
+    window.measure.queue.stage = 2
+    window.measure.queue.state = QueueState.SWEEPING
     window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
-    assert window._pending_pair is not None
-    first = window._pending_pair.channel_1[1]
-    second = window._pending_pair.channel_2[1]
+    assert window.measure.queue.pending_pair is not None
+    first = window.measure.queue.pending_pair.channel_1[1]
+    second = window.measure.queue.pending_pair.channel_2[1]
     np.testing.assert_allclose(first - second, 4.0, atol=1e-8)
-    pair_freqs = window._pending_pair.channel_1[0]
+    pair_freqs = window.measure.queue.pending_pair.channel_1[0]
     first_reference = float(np.interp(1000.0, pair_freqs, first))
     second_reference = float(np.interp(1000.0, pair_freqs, second))
     reference_power = (10.0 ** (first_reference / 10.0) + 10.0 ** (second_reference / 10.0)) / 2.0
@@ -351,13 +351,13 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     monkeypatch, make_main_window
 ) -> None:
     window = _window(make_main_window)
-    window._queue_target = 1
-    window._queue_index = 0
-    window._current_sweep_attempts = 1
-    window._state = QueueState.SWEEPING
-    window._two_channel_stage = 2
-    window._pending_pair_first_raw = _curve(1.0)
-    window._pending_pair_first_diagnostics = object()
+    window.measure.queue.target = 1
+    window.measure.queue.index = 0
+    window.measure.queue.attempts = 1
+    window.measure.queue.state = QueueState.SWEEPING
+    window.measure.queue.stage = 2
+    window.measure.queue.pending_pair_first_raw = _curve(1.0)
+    window.measure.queue.pending_pair_first_diagnostics = object()
     scheduled = []
     monkeypatch.setattr(
         measure_controller_module.QMessageBox,
@@ -372,9 +372,9 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
 
     window.measure.on_sweep_error("Channel 2 stream failed.")
 
-    assert window._pending_pair_first_raw is None
-    assert window._pending_pair_first_diagnostics is None
-    assert window._two_channel_stage == 0
-    assert window._state == QueueState.QUEUE_RUNNING
+    assert window.measure.queue.pending_pair_first_raw is None
+    assert window.measure.queue.pending_pair_first_diagnostics is None
+    assert window.measure.queue.stage == 0
+    assert window.measure.queue.state == QueueState.QUEUE_RUNNING
     assert window.measure.start_next_sweep in scheduled
-    window._queue_target = 0
+    window.measure.queue.target = 0

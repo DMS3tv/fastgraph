@@ -122,7 +122,7 @@ def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_m
     assert window._inputs_btn.role() == "primary"
     assert window._inputs_btn._has_persistent_outline()
 
-    window._state = QueueState.QUEUE_RUNNING
+    window.measure.queue.state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
     assert window._inputs_btn.isEnabled()
     assert not window.measure_tab.out_dev_combo.isEnabled()
@@ -223,7 +223,7 @@ def test_settings_tab_saves_immediately_and_disables_edits_while_busy(make_main_
     settings_widget._confirm_clear_metadata.setChecked(False)
     assert window._settings.get("confirm_clear_metadata") is False
 
-    window._state = "queue_running"
+    window.measure.queue.state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
     assert window._tabs.isTabEnabled(window._tabs.indexOf(window._settings_scroll))
     assert not settings_widget._sweep_group.isEnabled()

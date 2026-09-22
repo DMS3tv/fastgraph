@@ -8,6 +8,7 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPen
 
+from dms.processing import VariationBand
 from dms.ui.style_tokens import ThemeTokens, tokens_for
 
 RETRO_GRAPH_MAX_BINS = 256
@@ -104,6 +105,11 @@ def retro_step_group(
         stepped[1::2] = values[:-1]
         stepped_values.append(stepped)
     return (stepped_freqs, *stepped_values)
+
+
+def retro_step_band(band: VariationBand) -> VariationBand:
+    """``retro_step_group`` for a whole variation band."""
+    return VariationBand(*retro_step_group(band.freqs, band[1:]))
 
 
 def retro_step_series(

@@ -46,7 +46,7 @@ from dms.graph_display import (
     uses_retro_steps,
 )
 from dms.hrtf import HRTFCurve
-from dms.processing import smooth_fractional_octave
+from dms.processing import VariationBand, smooth_fractional_octave
 from dms.rnd.models import (
     DEFAULT_COLORS,
     RnDGroup,
@@ -226,13 +226,13 @@ class RnDPlotWidget(QWidget):
         top_group_variations: list[
             tuple[
                 RnDGroup,
-                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                VariationBand,
             ]
         ],
         bottom_group_variations: list[
             tuple[
                 RnDGroup,
-                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                VariationBand,
             ]
         ],
         delta_mode_active: bool = False,
@@ -240,7 +240,7 @@ class RnDPlotWidget(QWidget):
         delta_group_variations: list[
             tuple[
                 RnDGroup,
-                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                VariationBand,
             ]
         ]
         | None = None,
@@ -376,9 +376,9 @@ class RnDPlotWidget(QWidget):
         self,
         plot: pg.PlotWidget,
         group: RnDGroup,
-        variation: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        variation: VariationBand,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
-        freqs, p10, p25, p75, p90, median = variation
+        freqs = variation.freqs
         qcolor = self._display_color(
             "#ff5078" if group.milestone else group.color or self._accent_color()
         )
@@ -386,21 +386,21 @@ class RnDPlotWidget(QWidget):
         outer.setAlpha(55 if not group.milestone else 75)
         inner = QColor(qcolor)
         inner.setAlpha(95 if not group.milestone else 118)
-        upper90 = self._plot_curve(plot, freqs, p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower10 = self._plot_curve(plot, freqs, p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        upper90 = self._plot_curve(plot, freqs, variation.p90, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        lower10 = self._plot_curve(plot, freqs, variation.p10, pen=pg.mkPen(color=(0, 0, 0, 0)))
         fill90 = pg.FillBetweenItem(upper90, lower10, brush=pg.mkBrush(outer))
         plot.addItem(fill90)
-        upper75 = self._plot_curve(plot, freqs, p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
-        lower25 = self._plot_curve(plot, freqs, p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        upper75 = self._plot_curve(plot, freqs, variation.p75, pen=pg.mkPen(color=(0, 0, 0, 0)))
+        lower25 = self._plot_curve(plot, freqs, variation.p25, pen=pg.mkPen(color=(0, 0, 0, 0)))
         fill75 = pg.FillBetweenItem(upper75, lower25, brush=pg.mkBrush(inner))
         plot.addItem(fill75)
         glow = QColor(qcolor)
         glow.setAlpha(58)
-        median_glow = self._plot_curve(plot, freqs, median, pen=pg.mkPen(glow, width=7.0))
+        median_glow = self._plot_curve(plot, freqs, variation.median, pen=pg.mkPen(glow, width=7.0))
         median_item = self._plot_curve(
             plot,
             freqs,
-            median,
+            variation.median,
             pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
         )
         self._items.extend(
@@ -415,7 +415,7 @@ class RnDPlotWidget(QWidget):
                 median_item,
             ]
         )
-        return [(freqs, p10), (freqs, p90)]
+        return [(freqs, variation.p10), (freqs, variation.p90)]
 
     def _draw_preference_bounds(
         self,
@@ -2092,7 +2092,7 @@ class RnDWidget(QWidget):
         list[
             tuple[
                 RnDGroup,
-                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                VariationBand,
             ]
         ],
         bool,
@@ -2105,7 +2105,7 @@ class RnDWidget(QWidget):
         variation_deltas: list[
             tuple[
                 RnDGroup,
-                tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+                VariationBand,
             ]
         ] = []
         for kind, owner, curve in items[1:]:
@@ -2114,12 +2114,18 @@ class RnDWidget(QWidget):
                 ref = np.interp(freqs, ref_freqs, ref_mag)
                 measurement_deltas.append((owner, freqs, mag - ref))
             else:
-                freqs, p10, p25, p75, p90, median = curve
-                ref = np.interp(freqs, ref_freqs, ref_mag)
+                ref = np.interp(curve.freqs, ref_freqs, ref_mag)
                 variation_deltas.append(
                     (
                         owner,
-                        (freqs, p10 - ref, p25 - ref, p75 - ref, p90 - ref, median - ref),
+                        VariationBand(
+                            curve.freqs,
+                            curve.p10 - ref,
+                            curve.p25 - ref,
+                            curve.median - ref,
+                            curve.p75 - ref,
+                            curve.p90 - ref,
+                        ),
                     )
                 )
         return measurement_deltas, variation_deltas, False
@@ -2129,8 +2135,7 @@ class RnDWidget(QWidget):
         if len(curve) == 2:
             freqs, mag = curve
             return freqs, mag
-        freqs, _p10, _p25, _p75, _p90, median = curve
-        return freqs, median
+        return curve.freqs, curve.median
 
     def _smooth_curve(self, freqs: np.ndarray, mag_db: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         fraction = int(self.session.smoothing_fraction or 48)

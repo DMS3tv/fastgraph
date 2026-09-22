@@ -8,7 +8,7 @@ from uuid import uuid4
 import numpy as np
 
 from dms.brand_brand import NON_BRAND_DEFAULT_COLORS as DEFAULT_COLORS
-from dms.processing import compute_rms_average, smooth_fractional_octave
+from dms.processing import VariationBand, percentile_band
 from dms.session import SessionData
 
 SCHEMA_VERSION = 1
@@ -337,26 +337,9 @@ def group_variation(
     measurements: list[RnDMeasurement],
     *,
     smoothing_fraction: int = 48,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+) -> VariationBand | None:
     if len(measurements) < 2:
         return None
-    curves = [(item.freqs, item.mag_db) for item in measurements]
-    base_freqs, _avg = compute_rms_average(curves, normalize_ref=True)
-    rows = []
-    for measurement in measurements:
-        values = np.interp(base_freqs, measurement.freqs, measurement.mag_db)
-        _, values = smooth_fractional_octave(
-            base_freqs,
-            values,
-            fraction=smoothing_fraction,
-        )
-        rows.append(values)
-    mat = np.vstack(rows)
-    return (
-        base_freqs,
-        np.percentile(mat, 10, axis=0),
-        np.percentile(mat, 25, axis=0),
-        np.percentile(mat, 75, axis=0),
-        np.percentile(mat, 90, axis=0),
-        np.percentile(mat, 50, axis=0),
+    return percentile_band(
+        [(item.freqs, item.mag_db) for item in measurements], smoothing=smoothing_fraction
     )

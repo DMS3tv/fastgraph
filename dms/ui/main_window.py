@@ -129,6 +129,7 @@ from dms.measurement_profiles import (
 )
 from dms.processing import (
     HarmonicAnalysis,
+    VariationBand,
     absolute_spl_offset_db,
     compute_frequency_response,
     compute_rms_average,
@@ -137,6 +138,7 @@ from dms.processing import (
     generate_log_sweep,
     harmonic_responses,
     normalize_at_1khz,
+    percentile_band,
     smooth_fractional_octave,
 )
 from dms.recovery import RecoveryCandidate, measure_recovery_manager, rnd_recovery_manager
@@ -1261,9 +1263,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
         self._average: tuple[np.ndarray, np.ndarray] | None = None
-        self._variation: (
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
-        ) = None
+        self._variation: VariationBand | None = None
         self._pending_curve: tuple[np.ndarray, np.ndarray] | None = None
         # Per-capture metadata kept positionally beside the curves, so a saved
         # session carries the diagnostics, timing and distortion the review
@@ -5054,7 +5054,7 @@ class MainWindow(QMainWindow):
         self,
         *,
         hrtf: HRTFCurve | None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    ) -> VariationBand | None:
         return MainWindow._variation_from_curves(
             self,
             self._kept_curves,
@@ -5068,42 +5068,17 @@ class MainWindow(QMainWindow):
         average: tuple[np.ndarray, np.ndarray] | None,
         *,
         hrtf: HRTFCurve | None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    ) -> VariationBand | None:
         if not curves or average is None:
             return None
-
-        base_freqs = average[0]
-        rows: list[np.ndarray] = []
-        for freqs, mag in curves:
-            values = np.interp(base_freqs, freqs, mag)
-            if hrtf is not None and not getattr(hrtf, "is_variation", False):
-                values = hrtf.apply(base_freqs, values)
-            _, values = smooth_fractional_octave(
-                base_freqs,
-                values,
-                fraction=_DISPLAY_AVG_SMOOTHING,
-            )
-            rows.append(values)
-
-        if not rows:
-            return None
-
-        mat = np.vstack(rows)
-        p10 = np.percentile(mat, 10, axis=0)
-        p25 = np.percentile(mat, 25, axis=0)
-        p75 = np.percentile(mat, 75, axis=0)
-        p90 = np.percentile(mat, 90, axis=0)
-        median = np.percentile(mat, 50, axis=0)
-        if hrtf is not None and getattr(hrtf, "is_variation", False):
-            p10, p25, median, p75, p90 = hrtf.apply_to_variation(
-                base_freqs,
-                p10,
-                p25,
-                median,
-                p75,
-                p90,
-            )
-        return (base_freqs, p10, p25, p75, p90, median)
+        variation_hrtf = hrtf is not None and getattr(hrtf, "is_variation", False)
+        band = percentile_band(
+            curves,
+            grid=average[0],
+            smoothing=_DISPLAY_AVG_SMOOTHING,
+            hrtf=None if variation_hrtf else hrtf,
+        )
+        return hrtf.apply_to_variation(band) if variation_hrtf else band
 
     def _average_curve_with_hrtf(
         self,
@@ -5863,23 +5838,21 @@ class MainWindow(QMainWindow):
                     else self._average,
                     hrtf=None,
                 )
-            freqs, p10, p25, p75, p90, median = (
-                source_variation if source_variation is not None else active_variation
-            )
+            band = source_variation if source_variation is not None else active_variation
             if active_hrtf is not None and not getattr(active_hrtf, "is_variation", False):
-                correction = active_hrtf.evaluate(freqs)
+                correction = active_hrtf.evaluate(band.freqs)
             curve = CurveData(
                 kind="variation",
-                freqs=np.array(freqs, dtype=float, copy=True),
-                p10_db=np.array(p10, dtype=float, copy=True)
+                freqs=np.array(band.freqs, dtype=float, copy=True),
+                p10_db=np.array(band.p10, dtype=float, copy=True)
                 + (correction if correction is not None else 0.0),
-                p25_db=np.array(p25, dtype=float, copy=True)
+                p25_db=np.array(band.p25, dtype=float, copy=True)
                 + (correction if correction is not None else 0.0),
-                median_db=np.array(median, dtype=float, copy=True)
+                median_db=np.array(band.median, dtype=float, copy=True)
                 + (correction if correction is not None else 0.0),
-                p75_db=np.array(p75, dtype=float, copy=True)
+                p75_db=np.array(band.p75, dtype=float, copy=True)
                 + (correction if correction is not None else 0.0),
-                p90_db=np.array(p90, dtype=float, copy=True)
+                p90_db=np.array(band.p90, dtype=float, copy=True)
                 + (correction if correction is not None else 0.0),
                 metadata={
                     **curator_metadata,
@@ -6132,7 +6105,6 @@ class MainWindow(QMainWindow):
                     "Selected group needs at least two measurements for a variation layer.",
                 )
                 return
-            freqs, p10, p25, p75, p90, median = variation
             group_metadata = shared_metadata(measurement.metadata for measurement in measurements)
             rigs = {measurement.rig.strip() for measurement in measurements}
             if len(rigs) == 1 and next(iter(rigs)):
@@ -6153,12 +6125,12 @@ class MainWindow(QMainWindow):
             )
             curve = CurveData(
                 kind="variation",
-                freqs=np.array(freqs, dtype=float, copy=True),
-                p10_db=np.array(p10, dtype=float, copy=True),
-                p25_db=np.array(p25, dtype=float, copy=True),
-                median_db=np.array(median, dtype=float, copy=True),
-                p75_db=np.array(p75, dtype=float, copy=True),
-                p90_db=np.array(p90, dtype=float, copy=True),
+                freqs=np.array(variation.freqs, dtype=float, copy=True),
+                p10_db=np.array(variation.p10, dtype=float, copy=True),
+                p25_db=np.array(variation.p25, dtype=float, copy=True),
+                median_db=np.array(variation.median, dtype=float, copy=True),
+                p75_db=np.array(variation.p75, dtype=float, copy=True),
+                p90_db=np.array(variation.p90, dtype=float, copy=True),
                 metadata=group_metadata,
             )
             name = f"{group.name} VAR"
@@ -6252,16 +6224,15 @@ class MainWindow(QMainWindow):
         path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
         if path is None:
             return
-        freqs, p10, p25, p75, p90, median = variation
         hrtf = None
         session = SessionData.from_dict({"rig": measurements[0].rig, **measurements[0].metadata})
         export_variation(
-            freqs=freqs,
-            p10_db=p10,
-            p25_db=p25,
-            median_db=median,
-            p75_db=p75,
-            p90_db=p90,
+            freqs=variation.freqs,
+            p10_db=variation.p10,
+            p25_db=variation.p25,
+            median_db=variation.median,
+            p75_db=variation.p75,
+            p90_db=variation.p90,
             session=session,
             output_path=path,
             compensated=compensated,
@@ -7207,15 +7178,14 @@ class MainWindow(QMainWindow):
         self._export_dir_input.setText(export_dir)
         self._settings.set("export_directory", export_dir)
 
-        freqs, p10, p25, p75, p90, median = active_variation
         try:
             export_variation(
-                freqs=freqs,
-                p10_db=p10,
-                p25_db=p25,
-                median_db=median,
-                p75_db=p75,
-                p90_db=p90,
+                freqs=active_variation.freqs,
+                p10_db=active_variation.p10,
+                p25_db=active_variation.p25,
+                median_db=active_variation.median,
+                p75_db=active_variation.p75,
+                p90_db=active_variation.p90,
                 session=export_session,
                 output_path=path,
                 compensated=compensated,
@@ -7417,14 +7387,13 @@ class MainWindow(QMainWindow):
                     (2, raw_variation, False),
                     (3, comp_variation, True),
                 ):
-                    freqs, p10, p25, p75, p90, median = variation
                     export_variation(
-                        freqs=freqs,
-                        p10_db=p10,
-                        p25_db=p25,
-                        median_db=median,
-                        p75_db=p75,
-                        p90_db=p90,
+                        freqs=variation.freqs,
+                        p10_db=variation.p10,
+                        p25_db=variation.p25,
+                        median_db=variation.median,
+                        p75_db=variation.p75,
+                        p90_db=variation.p90,
                         session=export_session,
                         output_path=temp_dir / filenames[index],
                         compensated=compensated,

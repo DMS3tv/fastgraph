@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from dms.hrtf import _Z_P75, _Z_P90, HRTFCurve, sigma_from_percentiles
+from dms.processing import VariationBand
 
 
 def _population_hrtf(tmp_path: Path, sigma: float = 2.0) -> HRTFCurve:
@@ -52,8 +53,8 @@ def test_independent_combination_adds_variance_in_quadrature(tmp_path: Path) -> 
     freqs = np.array([100.0, 1000.0, 10000.0])
     p10, p25, median, p75, p90 = _normal_band(freqs, 4.0, 1.5)
 
-    out = hrtf.apply_to_variation(freqs, p10, p25, median, p75, p90)
-    out_p10, out_p25, out_median, out_p75, out_p90 = out
+    out = hrtf.apply_to_variation(VariationBand(freqs, p10, p25, median, p75, p90))
+    out_p10, out_p25, out_median, out_p75, out_p90 = out.p10, out.p25, out.median, out.p75, out.p90
 
     expected_sigma = np.sqrt(1.5**2 + 2.0**2)
     np.testing.assert_allclose(out_median, 4.0, atol=1e-9)
@@ -70,7 +71,7 @@ def test_mono_hrtf_shifts_the_band_by_its_correction(tmp_path: Path) -> None:
     freqs = np.array([100.0, 1000.0, 10000.0])
     p10, p25, median, p75, p90 = _normal_band(freqs, 4.0, 1.5)
 
-    independent = hrtf.apply_to_variation(freqs, p10, p25, median, p75, p90)
+    independent = hrtf.apply_to_variation(VariationBand(freqs, p10, p25, median, p75, p90))
 
     correction = hrtf.evaluate(freqs)
     expected = (
@@ -80,5 +81,12 @@ def test_mono_hrtf_shifts_the_band_by_its_correction(tmp_path: Path) -> None:
         p75 - correction,
         p90 - correction,
     )
-    for produced, want in zip(independent, expected):
+    produced_bands = (
+        independent.p10,
+        independent.p25,
+        independent.median,
+        independent.p75,
+        independent.p90,
+    )
+    for produced, want in zip(produced_bands, expected, strict=True):
         np.testing.assert_array_equal(produced, want)

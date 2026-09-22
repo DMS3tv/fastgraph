@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QGroupBox, QToolButton
 from dms.curator.transforms import apply_layer_transform
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import QueueState
+from dms.processing import VariationBand
 from dms.session import SessionData
 
 
@@ -339,23 +340,23 @@ def test_send_variation_offsets_display_with_editable_hrtf(
     window._hrtf_toggle.setChecked(True)
     window._variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
-    rows = [np.array([value, value + 1.0]) for value in (-2.0, -1.0, 1.0, 2.0, 0.0)]
-    window._variation = (freqs, *rows)
-    expected = tuple(np.array(values, copy=True) for values in window._variation[1:])
+    rows = [np.array([value, value + 1.0]) for value in (-2.0, -1.0, 0.0, 1.0, 2.0)]
+    window._variation = VariationBand(freqs, *rows)
+    expected = tuple(np.array(values, copy=True) for values in rows)
 
     window._send_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
     assert layer.name == "DMS Demo COMP VAR"
-    median_offset = -float(np.interp(1000.0, freqs, expected[-1]))
+    median_offset = -float(np.interp(1000.0, freqs, expected[2]))
     for actual, wanted in zip(
         (
             displayed.p10_db,
             displayed.p25_db,
+            displayed.median_db,
             displayed.p75_db,
             displayed.p90_db,
-            displayed.median_db,
         ),
         expected,
     ):
@@ -384,7 +385,11 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
     window._recompute_average()
     window._update_plots()
-    expected = tuple(np.array(values, copy=True) for values in window._variation[1:])
+    band = window._variation
+    expected = tuple(
+        np.array(values, copy=True)
+        for values in (band.p10, band.p25, band.median, band.p75, band.p90)
+    )
 
     window._send_to_curator()
 
@@ -393,14 +398,14 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     assert layer.name == "DMS Demo COMP VAR"
     assert layer.hrtf is window._hrtf
     assert displayed.kind == "variation"
-    median_offset = -float(np.interp(1000.0, displayed.freqs, expected[-1]))
+    median_offset = -float(np.interp(1000.0, displayed.freqs, expected[2]))
     for actual, wanted in zip(
         (
             displayed.p10_db,
             displayed.p25_db,
+            displayed.median_db,
             displayed.p75_db,
             displayed.p90_db,
-            displayed.median_db,
         ),
         expected,
     ):
@@ -411,13 +416,13 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_
     window = _window(make_main_window)
     window._variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
-    window._variation = (
+    window._variation = VariationBand(
         freqs,
-        np.array([72.0, 73.0, 74.0]),
-        np.array([74.0, 75.0, 76.0]),
-        np.array([78.0, 79.0, 80.0]),
-        np.array([80.0, 81.0, 82.0]),
-        np.array([76.0, 77.0, 78.0]),
+        p10=np.array([72.0, 73.0, 74.0]),
+        p25=np.array([74.0, 75.0, 76.0]),
+        median=np.array([76.0, 77.0, 78.0]),
+        p75=np.array([78.0, 79.0, 80.0]),
+        p90=np.array([80.0, 81.0, 82.0]),
     )
 
     window._send_to_curator()

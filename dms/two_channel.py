@@ -10,14 +10,6 @@ import numpy as np
 from dms.processing import F_REF, GRID_POINTS, compute_rms_average, value_at
 
 Curve = tuple[np.ndarray, np.ndarray]
-Variation = tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-]
 
 
 @dataclass(frozen=True)

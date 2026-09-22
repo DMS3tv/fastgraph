@@ -19,6 +19,7 @@ import dms.ui.main_window as main_window_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import QueueState
+from dms.processing import VariationBand
 from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
@@ -556,7 +557,7 @@ def test_rnd_group_variation_uses_displayed_offsets(monkeypatch, make_main_windo
     def fake_group_variation(measurements, smoothing_fraction=48):
         captured.append([np.array(item.mag_db, copy=True) for item in measurements])
         freqs = np.array([100.0, 1000.0])
-        return (freqs, freqs * 0, freqs * 0, freqs * 0, freqs * 0, freqs * 0)
+        return VariationBand(freqs, freqs * 0, freqs * 0, freqs * 0, freqs * 0, freqs * 0)
 
     monkeypatch.setattr(rnd_widget_module, "group_variation", fake_group_variation)
     window._rnd_widget._plots.redraw = lambda **_kwargs: None
@@ -704,7 +705,7 @@ def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_wi
         freqs = np.array([100.0, 1000.0])
         base = 0.0 if items[0].name.startswith("A") else 5.0
         values = np.array([base, base])
-        return (freqs, values - 2.0, values - 1.0, values + 1.0, values + 2.0, values)
+        return VariationBand(freqs, values - 2.0, values - 1.0, values, values + 1.0, values + 2.0)
 
     monkeypatch.setattr(rnd_widget_module, "group_variation", fake_group_variation)
     calls: list[dict] = []
@@ -714,12 +715,12 @@ def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_wi
 
     variations = calls[-1]["delta_group_variations"]
     assert len(variations) == 1
-    _group, (_freqs, p10, p25, p75, p90, median) = variations[0]
-    assert np.allclose(p10, [3.0, 3.0])
-    assert np.allclose(p25, [4.0, 4.0])
-    assert np.allclose(median, [5.0, 5.0])
-    assert np.allclose(p75, [6.0, 6.0])
-    assert np.allclose(p90, [7.0, 7.0])
+    _group, band = variations[0]
+    assert np.allclose(band.p10, [3.0, 3.0])
+    assert np.allclose(band.p25, [4.0, 4.0])
+    assert np.allclose(band.median, [5.0, 5.0])
+    assert np.allclose(band.p75, [6.0, 6.0])
+    assert np.allclose(band.p90, [7.0, 7.0])
 
 
 def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, make_main_window) -> None:
@@ -836,13 +837,13 @@ def test_rnd_group_rows_receive_distinct_default_colors(make_main_window) -> Non
 def test_rnd_variation_renderer_draws_outer_inner_and_median(qapp) -> None:
     plot_widget = rnd_widget_module.RnDPlotWidget()
     freqs = np.array([100.0, 1000.0, 10000.0])
-    variation = (
+    variation = VariationBand(
         freqs,
-        np.array([-5.0, -4.0, -3.0]),
-        np.array([-2.0, -1.0, 0.0]),
-        np.array([2.0, 3.0, 4.0]),
-        np.array([5.0, 6.0, 7.0]),
-        np.array([0.0, 1.0, 2.0]),
+        p10=np.array([-5.0, -4.0, -3.0]),
+        p25=np.array([-2.0, -1.0, 0.0]),
+        median=np.array([0.0, 1.0, 2.0]),
+        p75=np.array([2.0, 3.0, 4.0]),
+        p90=np.array([5.0, 6.0, 7.0]),
     )
 
     curves = plot_widget._draw_variation(

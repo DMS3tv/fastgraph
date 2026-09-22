@@ -208,13 +208,9 @@ def test_group_variation_requires_two_measurements_and_returns_percentiles() -> 
     variation = group_variation([_measurement("a", "A"), _measurement("b", "B", 2.0)])
 
     assert variation is not None
-    freqs, p10, p25, p75, p90, median = variation
-    assert len(freqs) == 1200
-    assert p10.shape == freqs.shape
-    assert p25.shape == freqs.shape
-    assert p75.shape == freqs.shape
-    assert p90.shape == freqs.shape
-    assert median.shape == freqs.shape
+    assert len(variation.freqs) == 1200
+    for field in ("p10", "p25", "median", "p75", "p90"):
+        assert getattr(variation, field).shape == variation.freqs.shape
 
 
 def _former_measurement_session_data(measurement: RnDMeasurement) -> SessionData:

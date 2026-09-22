@@ -37,6 +37,7 @@ from dms.curator.export_image import (
 )
 from dms.curator.export_brand import brand_display_color
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
+from dms.processing import VariationBand
 from dms.theme import (
     DARK,
     DITHER,
@@ -283,14 +284,7 @@ def test_dither_curator_variation_median_matches_solid_measure_median(make_curat
     measure.update_curves(
         [],
         None,
-        variation=(
-            variation.freqs,
-            variation.p10_db,
-            variation.p25_db,
-            variation.p75_db,
-            variation.p90_db,
-            variation.median_db,
-        ),
+        variation=VariationBand(variation.freqs, *variation.bands()),
         bottom_mode="variation",
     )
     measure_median = measure._bot_extra_items[-1]

@@ -55,7 +55,13 @@ def test_one_measurement_gets_population_compensation_band(
     )
 
     assert variation is not None
-    _, p10, p25, p75, p90, median = variation
+    p10, p25, median, p75, p90 = (
+        variation.p10,
+        variation.p25,
+        variation.median,
+        variation.p75,
+        variation.p90,
+    )
     # One measurement has no spread of its own, so the band is the population
     # sigma alone, centred on the compensated measurement.
     comp = np.array([[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]])

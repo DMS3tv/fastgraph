@@ -5,6 +5,7 @@ normalization, and downsampling.
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
@@ -843,3 +844,39 @@ def smooth_fractional_octave(
 
     smoothed = np.interp(log_freqs, grid_log, smoothed_grid)
     return freqs, smoothed.astype(np.float64)
+
+
+class VariationBand(NamedTuple):
+    """A variation envelope on one frequency grid. Read it by name, never by position."""
+
+    freqs: np.ndarray
+    p10: np.ndarray
+    p25: np.ndarray
+    median: np.ndarray
+    p75: np.ndarray
+    p90: np.ndarray
+
+
+def percentile_band(
+    curves: Iterable[tuple[np.ndarray, np.ndarray]],
+    *,
+    grid: np.ndarray | None = None,
+    smoothing: int | None = None,
+    hrtf=None,
+) -> VariationBand:
+    """Interpolate curves onto ``grid``, compensate, smooth, then take percentiles.
+
+    ``grid`` defaults to :func:`log_grid`. ``hrtf`` is anything with an
+    ``apply(freqs, mag_db)`` method; ``smoothing`` is a fractional-octave width.
+    """
+    freqs = log_grid() if grid is None else grid
+    rows = []
+    for curve_freqs, mag_db in curves:
+        values = np.interp(freqs, curve_freqs, mag_db)
+        if hrtf is not None:
+            values = hrtf.apply(freqs, values)
+        if smoothing is not None:
+            _, values = smooth_fractional_octave(freqs, values, fraction=smoothing)
+        rows.append(values)
+    p10, p25, median, p75, p90 = np.percentile(np.vstack(rows), [10, 25, 50, 75, 90], axis=0)
+    return VariationBand(freqs, p10, p25, median, p75, p90)

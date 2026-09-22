@@ -8,6 +8,7 @@ from scipy.special import erf
 from dms.curator.models import CurveData, LayerState
 from dms.processing import (
     F_REF,
+    VariationBand,
     log_grid,
     sigma_from_percentiles,
     smooth_fractional_octave,
@@ -191,23 +192,20 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
 
 def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
     if curve.kind == "fr" and curve.mag_db is not None:
-        p10, p25, median, p75, p90 = hrtf.apply_to_magnitude_as_variation(
-            curve.freqs,
-            curve.mag_db,
-        )
+        band = hrtf.apply_to_magnitude_as_variation(curve.freqs, curve.mag_db)
     elif _is_complete_variation(curve):
-        p10, p25, median, p75, p90 = hrtf.apply_to_variation(curve.freqs, *curve.bands())
+        band = hrtf.apply_to_variation(VariationBand(curve.freqs, *curve.bands()))
     else:
         return curve
     return replace(
         curve,
         kind="variation",
         mag_db=None,
-        p10_db=p10,
-        p25_db=p25,
-        median_db=median,
-        p75_db=p75,
-        p90_db=p90,
+        p10_db=band.p10,
+        p25_db=band.p25,
+        median_db=band.median,
+        p75_db=band.p75,
+        p90_db=band.p90,
     )
 
 

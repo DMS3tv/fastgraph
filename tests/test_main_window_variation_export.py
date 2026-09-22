@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from dms.measure_queue import QueueState
+from dms.processing import VariationBand
 from dms.session import SessionData
 from dms.ui.main_window import MainWindow
 
@@ -58,13 +59,13 @@ def _fake_window(*, variation_mode: bool = False):
     fake = SimpleNamespace(
         _state=QueueState.IDLE,
         _average=(np.array([100.0]), np.array([1.0])),
-        _variation=(
+        _variation=VariationBand(
             np.array([100.0]),
-            np.array([-2.0]),
-            np.array([-1.0]),
-            np.array([1.0]),
-            np.array([2.0]),
-            np.array([0.0]),
+            p10=np.array([-2.0]),
+            p25=np.array([-1.0]),
+            median=np.array([0.0]),
+            p75=np.array([1.0]),
+            p90=np.array([2.0]),
         ),
         _variation_toggle=_FakeToggle(variation_mode),
         _export_btn=_FakeButton(),
@@ -122,13 +123,13 @@ def test_export_variation_uses_current_variation_data(monkeypatch, tmp_path: Pat
     settings = _FakeSettings()
     fake = SimpleNamespace(
         _variation_toggle=_FakeToggle(True),
-        _variation=(
+        _variation=VariationBand(
             np.array([100.0]),
-            np.array([-2.0]),
-            np.array([-1.0]),
-            np.array([1.0]),
-            np.array([2.0]),
-            np.array([0.0]),
+            p10=np.array([-2.0]),
+            p25=np.array([-1.0]),
+            median=np.array([0.0]),
+            p75=np.array([1.0]),
+            p90=np.array([2.0]),
         ),
         _average=(np.array([100.0]), np.array([1.0])),
         _session=SessionData(rig="GRAS", brand="DMS", model="Example"),

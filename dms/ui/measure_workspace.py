@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.graph_display import retro_step_group, retro_step_series, stipple_trace_pen
+from dms.graph_display import retro_step_band, retro_step_series, stipple_trace_pen
+from dms.processing import VariationBand
 from dms.theme import ensure_graph_color, brand_theme_colors, normalize_theme, theme_colors
 from dms.ui.dual_plot_widget import DualPlotWidget, _configure_plot_widget
 from dms.ui.modern_spinbox import ModernDoubleSpinBox
@@ -26,7 +27,6 @@ from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.style_tokens import tokens_for
 
 Curve = tuple[np.ndarray, np.ndarray]
-Variation = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 BLUE = "#3B82F6"
 RED = "#EF4444"
 
@@ -113,7 +113,7 @@ class _PlotPane(QWidget):
     def draw_result(
         self,
         curve: Curve | None,
-        variation: Variation | None,
+        variation: VariationBand | None,
         *,
         show_variation: bool,
         theme: str,
@@ -128,26 +128,25 @@ class _PlotPane(QWidget):
         base = accent or (tokens.trace_palette[0] if tokens.trace_palette else "#FCBE11")
         display_color = ensure_graph_color(base, colors["plot_bg"])
         if show_variation and variation is not None:
-            freqs, p10, p25, p75, p90, median = variation
+            band = variation
             if tokens.retro_graph and not brand_mode:
-                freqs, p10, p25, p75, p90, median = retro_step_group(
-                    freqs, (p10, p25, p75, p90, median)
-                )
+                band = retro_step_band(band)
+            freqs = band.freqs
             outer = QColor(display_color)
             outer.setAlpha(50)
             inner = QColor(display_color)
             inner.setAlpha(88)
-            u90 = self.plot.plot(freqs, p90, pen=pg.mkPen(None))
-            l10 = self.plot.plot(freqs, p10, pen=pg.mkPen(None))
-            u75 = self.plot.plot(freqs, p75, pen=pg.mkPen(None))
-            l25 = self.plot.plot(freqs, p25, pen=pg.mkPen(None))
+            u90 = self.plot.plot(freqs, band.p90, pen=pg.mkPen(None))
+            l10 = self.plot.plot(freqs, band.p10, pen=pg.mkPen(None))
+            u75 = self.plot.plot(freqs, band.p75, pen=pg.mkPen(None))
+            l25 = self.plot.plot(freqs, band.p25, pen=pg.mkPen(None))
             fill90 = pg.FillBetweenItem(u90, l10, brush=pg.mkBrush(outer))
             fill75 = pg.FillBetweenItem(u75, l25, brush=pg.mkBrush(inner))
             self.plot.addItem(fill90)
             self.plot.addItem(fill75)
-            median_item = self.plot.plot(freqs, median, pen=pg.mkPen(display_color, width=2.0))
+            median_item = self.plot.plot(freqs, band.median, pen=pg.mkPen(display_color, width=2.0))
             self._items.extend([u90, l10, u75, l25, fill90, fill75, median_item])
-            _auto_center(self.plot, [(freqs, p10), (freqs, p90)])
+            _auto_center(self.plot, [(freqs, band.p10), (freqs, band.p90)])
         elif curve is not None:
             freqs, values = curve
             if tokens.retro_graph and not brand_mode:
@@ -349,7 +348,7 @@ class TwoChannelMeasureWidget(QWidget):
         top_channel_1: list[Curve],
         top_channel_2: list[Curve],
         averages: dict[str, Curve | None],
-        variations: dict[str, Variation | None],
+        variations: dict[str, VariationBand | None],
         show_variation: bool,
     ) -> None:
         self._top_1.draw_curves(top_channel_1, theme=self._theme, brand_mode=self._brand_mode)

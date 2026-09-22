@@ -39,9 +39,9 @@ def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
     plot_layout = window._plots.layout()
     assert [plot_layout.itemAt(index).widget() for index in range(plot_layout.count())] == [
         window._plots._header_widget,
-        window._plots._top_frame,
+        window._plots.single._top_frame,
         window._plots._between_plots_widget,
-        window._plots._bot_frame,
+        window._plots.single._bot_frame,
         window._plots._footer_widget,
     ]
     assert window._clear_btn.objectName() == "btn_danger"
@@ -140,7 +140,7 @@ def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) ->
     qapp.processEvents()
 
     QTest.mouseClick(
-        window._plots._bot_plot.viewport(),
+        window._plots.single._bot_plot.viewport(),
         Qt.MouseButton.LeftButton,
         pos=QPoint(8, 8),
     )
@@ -200,7 +200,7 @@ def test_measure_plots_keep_frequency_endpoints_inside_view(qapp, make_main_wind
 
     expected_min = np.log10(20.0)
     expected_max = np.log10(20000.0)
-    for plot in (window._plots._top_plot, window._plots._bot_plot):
+    for plot in (window._plots.single._top_plot, window._plots.single._bot_plot):
         x_min, x_max = plot.getPlotItem().getViewBox().viewRange()[0]
         assert x_min < expected_min
         assert x_max > expected_max

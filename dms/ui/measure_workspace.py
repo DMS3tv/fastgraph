@@ -446,14 +446,17 @@ class TwoChannelMeasureWidget(QWidget):
             pane.apply_theme(self._theme, self._brand_mode)
         self._refresh_selection()
 
+    def _bottom_pane(self) -> _PlotPane:
+        if self._bottom_mode == "combined":
+            return self._combined
+        return self._bottom_1 if self._selection == "channel_1" else self._bottom_2
+
     def bottom_plot_global_rect(self) -> QRect:
-        pane = (
-            self._combined
-            if self._bottom_mode == "combined"
-            else (self._bottom_1 if self._selection == "channel_1" else self._bottom_2)
-        )
-        top_left = pane.plot.mapToGlobal(pane.plot.rect().topLeft())
-        return QRect(top_left, pane.plot.size())
+        plot = self._bottom_pane().plot
+        return QRect(plot.mapToGlobal(plot.rect().topLeft()), plot.size())
+
+    def bottom_plot_pixmap(self):
+        return self._bottom_pane().plot.grab()
 
 
 class MeasureWorkspace(QWidget):
@@ -471,13 +474,6 @@ class MeasureWorkspace(QWidget):
         layout.addWidget(self._stack)
         self.single = DualPlotWidget()
         self.two = TwoChannelMeasureWidget()
-        self._top_frame = self.single._top_frame
-        self._bot_frame = self.single._bot_frame
-        self._top_plot = self.single._top_plot
-        self._bot_plot = self.single._bot_plot
-        self._header_widget = None
-        self._between_plots_widget = None
-        self._footer_widget = None
         self._stack.addWidget(self.single)
         self._stack.addWidget(self.two)
         self.single.measurement_files_dropped.connect(self.measurement_files_dropped)
@@ -485,23 +481,20 @@ class MeasureWorkspace(QWidget):
         self.two.balance_start_requested.connect(self.balance_start_requested)
         self.two.balance_stop_requested.connect(self.balance_stop_requested)
         self.two.balance_parameters_changed.connect(self.balance_parameters_changed)
-        self._header: QWidget | None = None
-        self._between: QWidget | None = None
-        self._footer: QWidget | None = None
+        self._header_widget: QWidget | None = None
+        self._between_plots_widget: QWidget | None = None
+        self._footer_widget: QWidget | None = None
         self._two_enabled = False
 
     def set_header_widget(self, widget: QWidget) -> None:
-        self._header = widget
         self._header_widget = widget
         self._active().set_header_widget(widget)
 
     def set_between_plots_widget(self, widget: QWidget) -> None:
-        self._between = widget
         self._between_plots_widget = widget
         self._active().set_between_plots_widget(widget)
 
     def set_footer_widget(self, widget: QWidget) -> None:
-        self._footer = widget
         self._footer_widget = widget
         self._active().set_footer_widget(widget)
 
@@ -521,12 +514,12 @@ class MeasureWorkspace(QWidget):
         self._two_enabled = enabled
         self._stack.setCurrentWidget(self.two if enabled else self.single)
         active = self._active()
-        if self._header is not None:
-            active.set_header_widget(self._header)
-        if self._between is not None:
-            active.set_between_plots_widget(self._between)
-        if self._footer is not None:
-            active.set_footer_widget(self._footer)
+        if self._header_widget is not None:
+            active.set_header_widget(self._header_widget)
+        if self._between_plots_widget is not None:
+            active.set_between_plots_widget(self._between_plots_widget)
+        if self._footer_widget is not None:
+            active.set_footer_widget(self._footer_widget)
 
     def update_curves(self, *args, **kwargs) -> None:
         self.single.update_curves(*args, **kwargs)
@@ -547,22 +540,10 @@ class MeasureWorkspace(QWidget):
     def export_bottom_plot_image(self, output_path: str) -> bool:
         if not self._two_enabled:
             return self.single.export_bottom_plot_image(output_path)
-        pane = (
-            self.two._combined
-            if self.two._bottom_mode == "combined"
-            else (self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2)
-        )
-        return pane.plot.grab().save(output_path, "PNG")
+        return self.two.bottom_plot_pixmap().save(output_path, "PNG")
 
     def bottom_plot_pixmap(self):
-        if not self._two_enabled:
-            return self.single.bottom_plot_pixmap()
-        pane = (
-            self.two._combined
-            if self.two._bottom_mode == "combined"
-            else (self.two._bottom_1 if self.two._selection == "channel_1" else self.two._bottom_2)
-        )
-        return pane.plot.grab()
+        return self._active().bottom_plot_pixmap()
 
 
 def _auto_center(plot: pg.PlotWidget, curves: list[Curve]) -> None:

@@ -1,4 +1,5 @@
 import numpy as np
+from helpers import flat_curve
 
 from dms.two_channel import (
     TwoChannelCurvePair,
@@ -6,10 +7,6 @@ from dms.two_channel import (
     combined_pair_curves,
     shared_normalize_pair_at_1khz,
 )
-
-
-def _curve(level: float):
-    return np.array([100.0, 1000.0, 10000.0]), np.array([level, level, level])
 
 
 def test_shared_normalization_preserves_delta_and_sets_power_mean_reference() -> None:
@@ -25,13 +22,15 @@ def test_shared_normalization_preserves_delta_and_sets_power_mean_reference() ->
 
 
 def test_combined_curves_use_power_mean_without_renormalizing() -> None:
-    [combined] = combined_pair_curves([TwoChannelCurvePair(_curve(0.0), _curve(6.0))], n_points=3)
+    [combined] = combined_pair_curves(
+        [TwoChannelCurvePair(flat_curve(0.0), flat_curve(6.0))], n_points=3
+    )
     expected = 10.0 * np.log10((1.0 + 10.0**0.6) / 2.0)
     np.testing.assert_allclose(combined[1], expected)
 
 
 def test_pair_helpers_keep_channel_order() -> None:
-    pairs = [TwoChannelCurvePair(_curve(1.0), _curve(2.0))]
+    pairs = [TwoChannelCurvePair(flat_curve(1.0), flat_curve(2.0))]
     assert channel_curves(pairs, 1)[0][1][0] == 1.0
     assert channel_curves(pairs, 2)[0][1][0] == 2.0
     assert combined_pair_curves(pairs)

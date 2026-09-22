@@ -45,25 +45,7 @@ from dms.theme import (
     ensure_graph_color,
     theme_trace_palette,
 )
-from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
-
-
-@pytest.fixture
-def make_curator(qapp):
-    """Build ``CuratorWidget``s and delete every one of them after the test."""
-    created = []
-
-    def _make(*args, **kwargs):
-        widget = CuratorWidget(*args, **kwargs)
-        created.append(widget)
-        return widget
-
-    yield _make
-
-    for widget in created:
-        widget.close()
-        widget.deleteLater()
 
 
 def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(

@@ -3,19 +3,9 @@
 import time
 
 import pytest
+from helpers import pump_until
 
 from dms import audio_engine
-
-
-def _pump_until(qapp, predicate, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.005)
-    qapp.processEvents()
-    return bool(predicate())
 
 
 def _pump_for(qapp, seconds: float) -> None:
@@ -61,11 +51,11 @@ def test_poller_emits_only_when_the_device_set_changes(qapp, poller_devices) -> 
     poller.start()
     try:
         # The first poll is the baseline; an unchanged set never notifies.
-        assert _pump_until(qapp, lambda: poller_devices.polls >= 3)
+        assert pump_until(qapp, lambda: poller_devices.polls >= 3)
         assert seen == []
 
         poller_devices.outputs.append({"index": 3, "name": "Out 2", "hostapi": 0})
-        assert _pump_until(qapp, lambda: len(seen) == 1)
+        assert pump_until(qapp, lambda: len(seen) == 1)
         assert [d["index"] for d in seen[0][0]] == [1, 3]
         assert [d["index"] for d in seen[0][1]] == [2]
 
@@ -75,11 +65,11 @@ def test_poller_emits_only_when_the_device_set_changes(qapp, poller_devices) -> 
         assert len(seen) == 1
 
         poller_devices.inputs.append({"index": 4, "name": "In 2", "hostapi": 0})
-        assert _pump_until(qapp, lambda: len(seen) == 2)
+        assert pump_until(qapp, lambda: len(seen) == 2)
         assert [d["index"] for d in seen[1][1]] == [2, 4]
 
         poller_devices.outputs.pop()
-        assert _pump_until(qapp, lambda: len(seen) == 3)
+        assert pump_until(qapp, lambda: len(seen) == 3)
         assert [d["index"] for d in seen[2][0]] == [1]
     finally:
         poller.stop()
@@ -90,7 +80,7 @@ def test_poller_can_report_its_first_snapshot_on_request(qapp, poller_devices) -
     seen = _collect(poller)
     poller.start()
     try:
-        assert _pump_until(qapp, lambda: len(seen) == 1)
+        assert pump_until(qapp, lambda: len(seen) == 1)
         assert [d["index"] for d in seen[0][0]] == [1]
         assert [d["index"] for d in seen[0][1]] == [2]
         _pump_for(qapp, 0.15)
@@ -104,7 +94,7 @@ def test_poller_ignores_fields_that_are_not_device_identity(qapp, poller_devices
     seen = _collect(poller)
     poller.start()
     try:
-        assert _pump_until(qapp, lambda: poller_devices.polls >= 2)
+        assert pump_until(qapp, lambda: poller_devices.polls >= 2)
         poller_devices.outputs[0]["default_samplerate"] = 44100.0
         _pump_for(qapp, 0.2)
         assert seen == []
@@ -125,7 +115,7 @@ def test_pause_suppresses_both_polling_and_emission(qapp, poller_devices) -> Non
 
         poller.pause(False)
         assert poller.is_paused() is False
-        assert _pump_until(qapp, lambda: poller_devices.polls >= 2)
+        assert pump_until(qapp, lambda: poller_devices.polls >= 2)
         assert seen == []
 
         # Pausing again holds off a hotplug until the window resumes.
@@ -137,7 +127,7 @@ def test_pause_suppresses_both_polling_and_emission(qapp, poller_devices) -> Non
         assert seen == []
 
         poller.pause(False)
-        assert _pump_until(qapp, lambda: len(seen) == 1)
+        assert pump_until(qapp, lambda: len(seen) == 1)
         assert [d["index"] for d in seen[0][0]] == [1, 3]
     finally:
         poller.stop()
@@ -149,7 +139,7 @@ def test_stop_joins_the_thread_and_ends_polling(qapp, poller_devices) -> None:
     poller.start()
     thread = poller._thread
     assert thread is not None
-    assert _pump_until(qapp, lambda: poller_devices.polls >= 2)
+    assert pump_until(qapp, lambda: poller_devices.polls >= 2)
 
     poller.stop()
 
@@ -168,10 +158,10 @@ def test_stop_joins_the_thread_and_ends_polling(qapp, poller_devices) -> None:
     poller.stop()
     poller.start()
     try:
-        assert _pump_until(qapp, lambda: poller_devices.polls > polls_after_stop + 1)
+        assert pump_until(qapp, lambda: poller_devices.polls > polls_after_stop + 1)
         assert seen == []
         poller_devices.outputs.append({"index": 9, "name": "Out 3", "hostapi": 0})
-        assert _pump_until(qapp, lambda: len(seen) == 1)
+        assert pump_until(qapp, lambda: len(seen) == 1)
         assert [d["index"] for d in seen[0][0]] == [1, 3, 9]
     finally:
         poller.stop()

@@ -78,7 +78,7 @@ def _bluetooth_recording(
     return sweep, layout, rec.astype(np.float32)
 
 
-def _settings() -> AlignmentSettings:
+def _alignment_settings() -> AlignmentSettings:
     return AlignmentSettings(
         latency="high",
         bluetooth_headphone_mode=True,
@@ -105,7 +105,7 @@ FALLBACK_CASES = {
 def test_light_codec_degradation_keeps_marker_timing(name: str) -> None:
     sweep, layout, rec = _bluetooth_recording(**MARKER_CASES[name])
 
-    result = align_recording_to_layout(rec, sweep, layout, _settings())
+    result = align_recording_to_layout(rec, sweep, layout, _alignment_settings())
 
     assert result.diagnostics.alignment_mode == "marker"
     assert result.end.marker_confidence > 0.0
@@ -116,7 +116,7 @@ def test_light_codec_degradation_keeps_marker_timing(name: str) -> None:
 def test_heavy_codec_degradation_falls_back_to_sweep_with_warning(name: str) -> None:
     sweep, layout, rec = _bluetooth_recording(**FALLBACK_CASES[name])
 
-    result = align_recording_to_layout(rec, sweep, layout, _settings())
+    result = align_recording_to_layout(rec, sweep, layout, _alignment_settings())
 
     assert result.diagnostics.alignment_mode == "sweep_fallback"
     assert result.diagnostics.warning_reason == (MeasurementWarningReason.BLUETOOTH_SWEEP_FALLBACK)
@@ -136,7 +136,7 @@ def test_bluetooth_failure_diagnostics_carry_snr_and_integrity() -> None:
     alignment_module._BLUETOOTH_FALLBACK_MIN_SNR_DB = 200.0
     try:
         with pytest.raises(MeasurementAlignmentError) as exc:
-            align_recording_to_layout(rec, sweep, layout, _settings())
+            align_recording_to_layout(rec, sweep, layout, _alignment_settings())
     finally:
         alignment_module._BLUETOOTH_FALLBACK_MIN_SNR_DB = original
 
@@ -152,7 +152,7 @@ def test_bluetooth_silence_is_still_rejected() -> None:
     silence = rng.normal(0.0, 10.0 ** (-50.0 / 20.0), layout.total_samples).astype(np.float32)
 
     with pytest.raises(MeasurementAlignmentError) as exc:
-        align_recording_to_layout(silence, sweep, layout, _settings())
+        align_recording_to_layout(silence, sweep, layout, _alignment_settings())
 
     assert exc.value.reason in {
         MeasurementFailureReason.LOW_START_CONFIDENCE,
@@ -166,7 +166,7 @@ def test_failed_recording_dump_round_trips_and_replays(tmp_path) -> None:
     sweep, layout, _rec = _bluetooth_recording()
     rng = np.random.default_rng(11)
     silence = rng.normal(0.0, 10.0 ** (-50.0 / 20.0), layout.total_samples).astype(np.float32)
-    settings = _settings()
+    settings = _alignment_settings()
     with pytest.raises(MeasurementAlignmentError) as exc:
         align_recording_to_layout(silence, sweep, layout, settings)
 

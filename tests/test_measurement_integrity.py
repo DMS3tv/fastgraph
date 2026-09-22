@@ -31,7 +31,7 @@ FS = 48_000
 _RNG_SEED = 7
 
 
-def _layout(duration_s: float = 1.0):
+def _sweep_layout(duration_s: float = 1.0):
     sweep = generate_log_sweep(duration_s, FS)
     layout = build_measurement_layout(
         sweep=sweep,
@@ -133,7 +133,7 @@ GARBAGE_CASES = [
 
 @pytest.mark.parametrize("name", sorted(VALID_CASES))
 def test_valid_sweeps_are_accepted_with_default_gate(name: str) -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _recording(layout, **VALID_CASES[name])
 
     result = align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
@@ -146,7 +146,7 @@ def test_valid_sweeps_are_accepted_with_default_gate(name: str) -> None:
 
 @pytest.mark.parametrize("name", GARBAGE_CASES)
 def test_garbage_recordings_are_rejected_with_default_gate(name: str) -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _garbage(layout, name)
 
     with pytest.raises(MeasurementAlignmentError) as exc:
@@ -161,7 +161,7 @@ def test_garbage_recordings_are_rejected_with_default_gate(name: str) -> None:
 
 def test_echo_lowers_nextbest_but_not_background_confidence() -> None:
     """The regression that made the old min(bg, next) metric reject good sweeps."""
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _recording(layout, echo=(0.040, 0.9))
 
     result = align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
@@ -172,7 +172,7 @@ def test_echo_lowers_nextbest_but_not_background_confidence() -> None:
 
 
 def test_rolloff_raises_confidence_and_keeps_midband_margin() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     full = align_recording_to_layout(_recording(layout), sweep, layout, AlignmentSettings())
     rolled = align_recording_to_layout(
         _recording(layout, system=lambda x: _bandlimit(x, 200.0, 5_000.0)),
@@ -190,7 +190,7 @@ def test_rolloff_raises_confidence_and_keeps_midband_margin() -> None:
 
 
 def test_low_level_sweep_is_accepted_with_low_snr_warning() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _recording(layout, gain_db=-45.0, noise_dbfs=-50.0)
 
     result = align_recording_to_layout(rec, sweep, layout, AlignmentSettings())
@@ -202,7 +202,7 @@ def test_low_level_sweep_is_accepted_with_low_snr_warning() -> None:
 
 def test_gate_needs_both_metrics_to_fail() -> None:
     """Disabling either half of the conjunction disables the rejection."""
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _garbage(layout, "silence_minus40_noise")
     relaxed = AlignmentSettings(peak_correlation_min=0.0)
 
@@ -219,7 +219,7 @@ def test_gate_needs_both_metrics_to_fail() -> None:
 
 
 def test_peak_correlation_floor_rejects_silence_even_when_gate_is_off() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _garbage(layout, "silence_minus60_noise")
     settings = AlignmentSettings(
         start_alignment_confidence_min=0.0,
@@ -234,7 +234,7 @@ def test_peak_correlation_floor_rejects_silence_even_when_gate_is_off() -> None:
 
 
 def test_non_finite_samples_are_rejected() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _recording(layout)
     rec[len(rec) // 2] = np.nan
 
@@ -245,7 +245,7 @@ def test_non_finite_samples_are_rejected() -> None:
 
 
 def test_failure_diagnostics_carry_integrity_metrics() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _sweep_layout()
     rec = _garbage(layout, "silence_minus40_noise")
 
     with pytest.raises(MeasurementAlignmentError) as exc:

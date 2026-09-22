@@ -1,6 +1,7 @@
 """Target, reference-layer and delta-view bookkeeping in the bottom viewport."""
 
 import numpy as np
+from helpers import ramp_curve
 
 from dms.ui.dual_plot_widget import (
     _AVERAGE_TITLE,
@@ -10,28 +11,23 @@ from dms.ui.dual_plot_widget import (
 )
 
 
-def _curve(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
-    freqs = np.geomspace(20.0, 20000.0, 64)
-    return freqs, np.linspace(3.0, -3.0, 64) + offset
-
-
-def _widget(qapp) -> DualPlotWidget:
+def _plot_widget(qapp) -> DualPlotWidget:
     widget = DualPlotWidget()
-    widget.update_curves(kept=[_curve()], average=_curve(), variation=None)
+    widget.update_curves(kept=[ramp_curve()], average=ramp_curve(), variation=None)
     return widget
 
 
 def test_target_and_reference_layers_are_tracked_and_cleared(qapp) -> None:
-    widget = _widget(qapp)
+    widget = _plot_widget(qapp)
     try:
         assert widget._compare_items == []
 
-        widget.set_target_curve(*_curve(-1.0))
+        widget.set_target_curve(*ramp_curve(-1.0))
         assert len(widget._compare_items) == 1
         assert widget._compare_legend is not None
         assert widget._compare_legend.isVisible()
 
-        freqs, mag = _curve(2.0)
+        freqs, mag = ramp_curve(2.0)
         widget.set_reference_layers(
             [
                 ("Ref A", freqs, mag, "#4c9be8"),
@@ -51,9 +47,9 @@ def test_target_and_reference_layers_are_tracked_and_cleared(qapp) -> None:
 
 
 def test_reference_layers_reject_mismatched_arrays(qapp) -> None:
-    widget = _widget(qapp)
+    widget = _plot_widget(qapp)
     try:
-        freqs, mag = _curve()
+        freqs, mag = ramp_curve()
         widget.set_reference_layers(
             [
                 ("Short", freqs[:4], mag, "#4c9be8"),
@@ -66,9 +62,9 @@ def test_reference_layers_reject_mismatched_arrays(qapp) -> None:
 
 
 def test_delta_mode_retitles_pins_the_range_and_hides_comparisons(qapp) -> None:
-    widget = _widget(qapp)
+    widget = _plot_widget(qapp)
     try:
-        widget.set_target_curve(*_curve(-1.0))
+        widget.set_target_curve(*ramp_curve(-1.0))
         assert len(widget._compare_items) == 1
 
         widget.set_delta_mode(True)
@@ -92,9 +88,9 @@ def test_delta_mode_retitles_pins_the_range_and_hides_comparisons(qapp) -> None:
 
 
 def test_clear_all_removes_every_comparison_item(qapp) -> None:
-    widget = _widget(qapp)
+    widget = _plot_widget(qapp)
     try:
-        freqs, mag = _curve()
+        freqs, mag = ramp_curve()
         widget.set_target_curve(freqs, mag - 1.0)
         widget.set_reference_layers([("Ref", freqs, mag, "#4c9be8")])
         widget.set_delta_mode(True)

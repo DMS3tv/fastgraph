@@ -12,7 +12,7 @@ from dms.processing import VariationBand
 from dms.session import SessionData
 
 
-def _window(make_main_window):
+def _curator_window(make_main_window):
     return make_main_window(
         session=SessionData(rig="Test Rig", brand="DMS", model="Demo"),
         confirm_rnd_close=False,
@@ -20,7 +20,7 @@ def _window(make_main_window):
 
 
 def test_curator_is_middle_tab(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     assert [window._tabs.tabText(i) for i in range(window._tabs.count())] == [
         "Measure",
         "R&&D",
@@ -32,7 +32,7 @@ def test_curator_is_middle_tab(make_main_window) -> None:
 
 
 def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
 
     assert window._plots._between_plots_widget.objectName() == "measure_interplot_controls"
     assert window._plots._footer_widget.objectName() == "measure_export_controls"
@@ -51,7 +51,7 @@ def test_measure_controls_are_embedded_around_plots(make_main_window) -> None:
 
 
 def test_session_and_bluetooth_controls_precede_tabs(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -83,7 +83,7 @@ def test_session_and_bluetooth_controls_precede_tabs(qapp, make_main_window) -> 
 
 
 def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     measure = window._tabs.widget(0)
 
     assert measure.layout().count() == 1
@@ -106,7 +106,7 @@ def test_measure_queue_bar_replaces_sidebar_and_wraps_progress(make_main_window)
 
 
 def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -137,7 +137,7 @@ def test_inputs_overlay_animates_closes_and_is_read_only_while_busy(qapp, make_m
 
 
 def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     window._open_inputs_overlay()
@@ -156,7 +156,7 @@ def test_inputs_overlay_closes_after_an_outside_click(qapp, make_main_window) ->
 
 
 def test_inputs_overlay_closes_on_tab_change(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.show()
     window._open_inputs_overlay()
     window.measure_tab.inputs_overlay_animation.setCurrentTime(180)
@@ -167,7 +167,7 @@ def test_inputs_overlay_closes_on_tab_change(qapp, make_main_window) -> None:
 
 
 def test_metadata_button_opens_dropdown_and_saves_session(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -198,7 +198,7 @@ def test_metadata_button_opens_dropdown_and_saves_session(qapp, make_main_window
 
 
 def test_measure_plots_keep_frequency_endpoints_inside_view(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     qapp.processEvents()
@@ -212,7 +212,7 @@ def test_measure_plots_keep_frequency_endpoints_inside_view(qapp, make_main_wind
 
 
 def test_settings_tab_saves_immediately_and_disables_edits_while_busy(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     settings_widget = window._settings_widget
 
     settings_widget._fs.setCurrentIndex(settings_widget._fs.findData(96000))
@@ -234,7 +234,7 @@ def test_settings_tab_saves_immediately_and_disables_edits_while_busy(make_main_
 
 
 def test_settings_column_is_compact_and_left_aligned(qapp, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.resize(1280, 800)
     window.show()
     window._tabs.setCurrentWidget(window._settings_scroll)
@@ -247,7 +247,7 @@ def test_settings_column_is_compact_and_left_aligned(qapp, make_main_window) -> 
 
 
 def test_window_title_refreshes_when_metadata_is_cleared(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window._confirm_clear_metadata = lambda: (True, False)
     window._clear_metadata()
 
@@ -255,7 +255,7 @@ def test_window_title_refreshes_when_metadata_is_cleared(make_main_window) -> No
 
 
 def test_metadata_clear_confirmation_and_preference(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
 
     window._confirm_clear_metadata = lambda: (False, True)
     window._clear_metadata()
@@ -273,7 +273,7 @@ def test_metadata_clear_confirmation_and_preference(make_main_window) -> None:
 
 
 def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window.measure.kept_curves = [curve]
     window.measure.recompute_average()
@@ -304,7 +304,7 @@ def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> No
 def test_send_average_offsets_display_and_preserves_editable_hrtf(
     make_main_window, tmp_path: Path
 ) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n10000 3\n", encoding="utf-8")
     window.measure.hrtf = HRTFCurve(str(hrtf_path))
@@ -338,7 +338,7 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(
 def test_send_variation_offsets_display_with_editable_hrtf(
     make_main_window, tmp_path: Path
 ) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     window.measure.hrtf = HRTFCurve(str(hrtf_path))
@@ -378,7 +378,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     make_main_window,
     tmp_path: Path,
 ) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     hrtf_path = tmp_path / "population.txt"
     hrtf_path.write_text(
         "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
@@ -418,7 +418,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
 
 
 def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
     window.measure.variation = VariationBand(
@@ -447,7 +447,7 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_
 def test_curator_console_commands_update_workspace_and_log(
     make_main_window, tmp_path: Path
 ) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
 
@@ -477,7 +477,7 @@ def test_curator_console_commands_update_workspace_and_log(
 
 
 def test_curator_console_full_command_surface(make_main_window, tmp_path: Path) -> None:
-    window = _window(make_main_window)
+    window = _curator_window(make_main_window)
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("100 0 1 2 3 4\n1000 1 2 3 4 5\n", encoding="utf-8")

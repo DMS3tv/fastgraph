@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import measure_session
 
 import dms.measure_persistence as persistence
 from dms.file_io import ensure_extension, same_session_file
@@ -19,30 +20,17 @@ from dms.measure_persistence import (
 from dms.measure_session import (
     MEASURE_SESSION_EXTENSION,
     MEASURE_SESSION_SCHEMA_VERSION,
-    MeasureSession,
     UnsupportedMeasureSessionVersion,
 )
-from dms.session import SessionData
-from dms.two_channel import TwoChannelCurvePair
 
-
-def _curve(offset: float = 0.0, points: int = 64):
-    freqs = np.geomspace(20.0, 20000.0, points)
-    return freqs, np.linspace(-3.0, 3.0, points) + offset
-
-
-def _session(model: str = "Demo") -> MeasureSession:
-    session = MeasureSession(
-        metadata=SessionData(rig="Rig", brand="DMS", model=model),
-        two_channel=True,
-        level_mode="dbspl",
-        hrtf_path="/tmp/hrtf.txt",
-        hrtf_name="Fixture",
-        hrtf_enabled=True,
-    )
-    session.add_sweep(*_curve(), note=model)
-    session.add_pair(TwoChannelCurvePair(channel_1=_curve(1.0), channel_2=_curve(-1.0)))
-    return session
+# Every persisted field set, so round trips cover all of them.
+_PERSISTED = {
+    "two_channel": True,
+    "level_mode": "dbspl",
+    "hrtf_path": "/tmp/hrtf.txt",
+    "hrtf_name": "Fixture",
+    "hrtf_enabled": True,
+}
 
 
 @pytest.mark.parametrize(
@@ -63,7 +51,7 @@ def test_measure_session_extension_is_complete(
 
 
 def test_save_normalizes_the_extension_and_records_the_path(tmp_path: Path) -> None:
-    session = _session()
+    session = measure_session(**_PERSISTED)
 
     written = save_measure_session(session, tmp_path / "unit")
 
@@ -73,7 +61,7 @@ def test_save_normalizes_the_extension_and_records_the_path(tmp_path: Path) -> N
 
 
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
-    session = _session()
+    session = measure_session(**_PERSISTED)
     path = save_measure_session(session, tmp_path / "unit")
 
     loaded = load_measure_session(path)
@@ -96,7 +84,7 @@ def test_atomic_replace_failure_keeps_the_previous_file(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "unit.fastgraph-measure.json"
-    save_measure_session(_session("First"), path)
+    save_measure_session(measure_session("First", **_PERSISTED), path)
     real_replace = os.replace
 
     def fail_target_replace(source, destination):
@@ -106,7 +94,7 @@ def test_atomic_replace_failure_keeps_the_previous_file(
 
     monkeypatch.setattr(os, "replace", fail_target_replace)
     with pytest.raises(OSError, match="simulated interruption"):
-        save_measure_session(_session("Second"), path)
+        save_measure_session(measure_session("Second", **_PERSISTED), path)
 
     monkeypatch.setattr(os, "replace", real_replace)
     assert load_measure_session(path).metadata.model == "First"
@@ -119,7 +107,7 @@ def test_unserializable_state_never_replaces_a_good_file(
 ) -> None:
     """Parse-back validation: bad bytes are caught before the swap."""
     path = tmp_path / "unit.fastgraph-measure.json"
-    save_measure_session(_session("First"), path)
+    save_measure_session(measure_session("First", **_PERSISTED), path)
 
     monkeypatch.setattr(
         persistence.MeasureSession,
@@ -127,7 +115,7 @@ def test_unserializable_state_never_replaces_a_good_file(
         staticmethod(lambda data: (_ for _ in ()).throw(ValueError("bad snapshot"))),
     )
     with pytest.raises(ValueError, match="bad snapshot"):
-        save_measure_session(_session("Second"), path)
+        save_measure_session(measure_session("Second", **_PERSISTED), path)
 
     monkeypatch.undo()
     assert load_measure_session(path).metadata.model == "First"
@@ -135,7 +123,7 @@ def test_unserializable_state_never_replaces_a_good_file(
 
 def test_corrupt_file_raises_and_names_the_backup(tmp_path: Path) -> None:
     path = tmp_path / "unit.fastgraph-measure.json"
-    save_measure_session(_session(), path)
+    save_measure_session(measure_session(**_PERSISTED), path)
     path.write_text("{ not json", encoding="utf-8")
 
     with pytest.raises(MeasureSessionLoadError) as excinfo:
@@ -154,7 +142,7 @@ def test_missing_file_raises_a_load_error(tmp_path: Path) -> None:
 
 def test_a_newer_session_is_reported_as_unsupported_not_corrupt(tmp_path: Path) -> None:
     path = tmp_path / "unit.fastgraph-measure.json"
-    save_measure_session(_session(), path)
+    save_measure_session(measure_session(**_PERSISTED), path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["schema_version"] = MEASURE_SESSION_SCHEMA_VERSION + 1
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -169,7 +157,7 @@ def test_a_newer_session_is_reported_as_unsupported_not_corrupt(tmp_path: Path) 
 
 def test_same_session_file_compares_real_locations(tmp_path: Path) -> None:
     path = tmp_path / "unit.fastgraph-measure.json"
-    save_measure_session(_session(), path)
+    save_measure_session(measure_session(**_PERSISTED), path)
 
     assert same_session_file(path, tmp_path / "." / "unit.fastgraph-measure.json")
     assert same_session_file(str(path), path)

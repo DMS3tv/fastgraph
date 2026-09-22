@@ -96,7 +96,7 @@ def test_console_help_contains_review_and_export_commands(make_main_window) -> N
 # --- incremental rendering -------------------------------------------------
 
 
-def _widget(qapp, capacity: int = 5000):
+def _console_widget(qapp, capacity: int = 5000):
     """A ConsoleWidget plus a counter of full document rebuilds.
 
     Only ``_refresh`` re-serializes the whole store, so counting calls to
@@ -121,7 +121,7 @@ def _lines(widget) -> list[str]:
 
 
 def test_new_events_append_without_rebuilding_the_document(qapp) -> None:
-    store, widget, rebuilds = _widget(qapp)
+    store, widget, rebuilds = _console_widget(qapp)
     try:
         store.publish("INFO", "sweep", "first")
         # The first event introduces a new source, which does force one rebuild.
@@ -138,7 +138,7 @@ def test_new_events_append_without_rebuilding_the_document(qapp) -> None:
 
 
 def test_events_that_fail_the_filter_are_not_appended(qapp) -> None:
-    store, widget, rebuilds = _widget(qapp)
+    store, widget, rebuilds = _console_widget(qapp)
     try:
         store.publish("INFO", "sweep", "visible")
         store.publish("ERROR", "sweep", "also visible")
@@ -157,7 +157,7 @@ def test_events_that_fail_the_filter_are_not_appended(qapp) -> None:
 
 
 def test_search_change_rebuilds_the_document(qapp) -> None:
-    store, widget, rebuilds = _widget(qapp)
+    store, widget, rebuilds = _console_widget(qapp)
     try:
         store.publish("INFO", "sweep", "alpha")
         store.publish("INFO", "sweep", "beta")
@@ -171,7 +171,7 @@ def test_search_change_rebuilds_the_document(qapp) -> None:
 
 
 def test_a_new_source_rebuilds_so_the_filter_combo_stays_current(qapp) -> None:
-    store, widget, rebuilds = _widget(qapp)
+    store, widget, rebuilds = _console_widget(qapp)
     try:
         store.publish("INFO", "sweep", "one")
         rebuilds["count"] = 0
@@ -184,7 +184,7 @@ def test_a_new_source_rebuilds_so_the_filter_combo_stays_current(qapp) -> None:
 
 
 def test_the_document_is_trimmed_when_the_store_trims(qapp) -> None:
-    store, widget, _rebuilds = _widget(qapp, capacity=5)
+    store, widget, _rebuilds = _console_widget(qapp, capacity=5)
     try:
         for index in range(12):
             store.publish("INFO", "sweep", f"event {index}")
@@ -197,7 +197,7 @@ def test_the_document_is_trimmed_when_the_store_trims(qapp) -> None:
 
 
 def test_clear_empties_the_view(qapp) -> None:
-    store, widget, _rebuilds = _widget(qapp)
+    store, widget, _rebuilds = _console_widget(qapp)
     try:
         store.publish("INFO", "sweep", "one")
         store.clear()

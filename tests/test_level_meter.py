@@ -1,7 +1,6 @@
-import time
-
 import numpy as np
 import pytest
+from helpers import pump_until
 from PyQt6.QtCore import Qt
 
 from dms import audio_engine
@@ -105,18 +104,6 @@ def test_fastgraph95_level_meter_uses_separate_progress_blocks(qapp) -> None:
         assert not meter.grab().toImage().isNull()
 
 
-def _pump_until(qapp, predicate, timeout: float = 3.0) -> bool:
-    """Spin the GUI event loop until ``predicate`` holds or time runs out."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.01)
-    qapp.processEvents()
-    return bool(predicate())
-
-
 def test_level_monitor_callback_never_emits_from_the_audio_thread(qapp) -> None:
     """B10: the PortAudio callback stores a float; it must not touch Qt."""
     monitor = audio_engine.LevelMonitor()
@@ -147,13 +134,13 @@ def test_level_monitor_emits_the_latest_value_from_the_gui_timer(qapp) -> None:
     monitor._start_emit_timer()
     try:
         assert monitor._emit_timer.interval() == audio_engine.LEVEL_EMIT_INTERVAL_MS
-        assert _pump_until(qapp, lambda: bool(emitted))
+        assert pump_until(qapp, lambda: bool(emitted))
         assert emitted[-1] == pytest.approx(monitor.latest_dbfs())
     finally:
         monitor._stop_emit_timer()
 
     count = len(emitted)
-    _pump_until(qapp, lambda: False, timeout=0.2)
+    pump_until(qapp, lambda: False, timeout=0.2)
     assert len(emitted) == count
 
 
@@ -174,7 +161,7 @@ def test_dual_level_monitor_callback_stores_both_channels(qapp) -> None:
 
     monitor._start_emit_timer()
     try:
-        assert _pump_until(qapp, lambda: bool(emitted))
+        assert pump_until(qapp, lambda: bool(emitted))
         assert emitted[-1] == pytest.approx((left, right))
     finally:
         monitor._stop_emit_timer()

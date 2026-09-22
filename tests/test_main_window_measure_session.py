@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import ramp_curve
 from PyQt6.QtWidgets import QMessageBox
 
 import dms.ui.measure_controller as measure_controller_module
@@ -15,11 +16,6 @@ from dms.recovery import RecoveryCandidate
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
 from dms.ui.measure_dialogs import MeasureRecoveryDialog
-
-
-def _curve(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
-    freqs = np.geomspace(20.0, 20000.0, 48)
-    return freqs, np.linspace(4.0, -4.0, 48) + offset
 
 
 def _hrtf_name() -> str:
@@ -65,7 +61,7 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     window = make_main_window()
     hrtf_name = _hrtf_name()
 
-    window.measure.kept_curves.extend([_curve(), _curve(1.0)])
+    window.measure.kept_curves.extend([ramp_curve(), ramp_curve(1.0)])
     window.measure.kept_sweep_meta.extend(
         [
             {"timing_quality": (12.0, 11.0, 2.0, 40.0)},
@@ -110,7 +106,7 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
 def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main_window) -> None:
     window = make_main_window(settings={"measure_two_channel_enabled": True})
     window.measure.two_channel_pairs.append(
-        TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(2.0))
+        TwoChannelCurvePair(channel_1=ramp_curve(), channel_2=ramp_curve(2.0))
     )
     window.measure.kept_pair_meta.append({})
     window.measure.recompute_two_channel_results()
@@ -126,7 +122,7 @@ def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main
     assert other.measure.two_channel_enabled is True
     assert len(other.measure.two_channel_pairs) == 1
     np.testing.assert_allclose(
-        other.measure.two_channel_pairs[0].channel_2[1], _curve(2.0)[1], atol=1e-5
+        other.measure.two_channel_pairs[0].channel_2[1], ramp_curve(2.0)[1], atol=1e-5
     )
 
 
@@ -137,7 +133,7 @@ def test_dirty_flag_and_window_title_track_the_session(
     assert window.measure_io.dirty is False
     assert "•" not in window.windowTitle()
 
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(ramp_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure.recompute_average()
     window.measure_io.mark_dirty()
@@ -166,7 +162,7 @@ def test_save_as_asks_before_replacing_another_file(
     tmp_path, monkeypatch, make_main_window
 ) -> None:
     window = make_main_window()
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(ramp_curve())
     window.measure.kept_sweep_meta.append({})
 
     existing = tmp_path / "taken.fastgraph-measure.json"
@@ -222,7 +218,7 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
         ),
     )
 
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(ramp_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure_io.mark_dirty()
 
@@ -250,7 +246,7 @@ def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -
     window.measure.queue.state = QueueState.PASS_FAIL
     window.measure.queue.target = 1
     window.measure.queue.index = 0
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = ramp_curve()
     window.measure.on_keep()
 
     assert len(window.measure.kept_curves) == 1
@@ -264,7 +260,7 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
     recovered = MeasureSession(
         metadata=SessionData(rig="Rig", brand="Recovered", model="Unit"),
     )
-    freqs, mag_db = _curve(3.0)
+    freqs, mag_db = ramp_curve(3.0)
     recovered.add_sweep(freqs, mag_db)
     candidate = RecoveryCandidate(
         path=Path("current.fastgraph-measure.json"),
@@ -309,7 +305,7 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
 
 def test_console_session_commands_save_and_load(tmp_path, make_main_window) -> None:
     window = make_main_window()
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(ramp_curve())
     window.measure.kept_sweep_meta.append({})
     path = tmp_path / "console.fastgraph-measure.json"
 

@@ -3,23 +3,10 @@
 from pathlib import Path
 
 import numpy as np
+from helpers import population_hrtf
 
 from dms.hrtf import _Z_P75, _Z_P90, HRTFCurve, sigma_from_percentiles
 from dms.processing import VariationBand
-
-
-def _population_hrtf(tmp_path: Path, sigma: float = 2.0) -> HRTFCurve:
-    """A population HRTF whose band is an exact normal of width ``sigma``."""
-    path = tmp_path / "population.txt"
-    lines = []
-    for freq in (20.0, 1000.0, 20000.0):
-        median = 0.0
-        lines.append(
-            f"{freq} {median - _Z_P90 * sigma} {median - _Z_P75 * sigma} "
-            f"{median} {median + _Z_P75 * sigma} {median + _Z_P90 * sigma}"
-        )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return HRTFCurve(str(path))
 
 
 def _mono_hrtf(tmp_path: Path) -> HRTFCurve:
@@ -49,7 +36,7 @@ def test_sigma_estimate_from_normal_percentiles() -> None:
 
 
 def test_independent_combination_adds_variance_in_quadrature(tmp_path: Path) -> None:
-    hrtf = _population_hrtf(tmp_path, sigma=2.0)
+    hrtf = population_hrtf(tmp_path, sigma=2.0)
     freqs = np.array([100.0, 1000.0, 10000.0])
     p10, p25, median, p75, p90 = _normal_band(freqs, 4.0, 1.5)
 

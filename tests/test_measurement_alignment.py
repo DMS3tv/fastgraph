@@ -31,7 +31,7 @@ def _recording_from_layout(layout, delay_samples: int = 0) -> np.ndarray:
     return rec
 
 
-def _layout(fs: int = 8_000, bluetooth: bool = False):
+def _short_layout(fs: int = 8_000, bluetooth: bool = False):
     sweep = _test_sweep(2_048)
     layout = build_measurement_layout(
         sweep=sweep,
@@ -44,7 +44,7 @@ def _layout(fs: int = 8_000, bluetooth: bool = False):
 
 
 def test_aligns_clean_non_bluetooth_recording_with_fixed_latency() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
     delay = 137
     rec = _recording_from_layout(layout, delay_samples=delay)
 
@@ -64,7 +64,7 @@ def test_aligns_clean_non_bluetooth_recording_with_fixed_latency() -> None:
 
 
 def test_standard_mode_has_no_timing_marker_failure_when_markers_are_absent() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
     rec = _recording_from_layout(layout)
 
     result = align_recording_to_layout(
@@ -117,7 +117,7 @@ def test_retryable_timing_failure_keeps_string_fallback_without_reason() -> None
 
 
 def test_bluetooth_high_latency_recording_can_lock_to_start_marker() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.45 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
 
@@ -141,7 +141,7 @@ def test_bluetooth_high_latency_recording_can_lock_to_start_marker() -> None:
 
 
 def test_low_start_confidence_raises_existing_message() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
 
     with pytest.raises(ValueError, match="Low start-alignment confidence"):
@@ -157,7 +157,7 @@ def test_low_start_confidence_raises_existing_message() -> None:
 
 
 def test_low_start_confidence_includes_structured_diagnostics() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
 
     with pytest.raises(MeasurementAlignmentError, match="Low start-alignment confidence") as exc:
@@ -181,7 +181,7 @@ def test_low_start_confidence_includes_structured_diagnostics() -> None:
 
 
 def test_missing_end_marker_uses_bluetooth_sweep_fallback() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
     rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
         : layout.sweep_end_sample - layout.excitation_start_sample
@@ -209,7 +209,7 @@ def test_missing_end_marker_uses_bluetooth_sweep_fallback() -> None:
 
 
 def test_low_snr_missing_markers_still_fails_with_marker_diagnostics() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rng = np.random.default_rng(20260524)
     rec = rng.normal(0.0, 0.05, layout.total_samples).astype(np.float32)
     rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
@@ -237,7 +237,7 @@ def test_low_snr_missing_markers_still_fails_with_marker_diagnostics() -> None:
 
 
 def test_excessive_timing_drift_raises_existing_message() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
     rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
@@ -269,7 +269,7 @@ def test_excessive_timing_drift_raises_existing_message() -> None:
 
 
 def test_timing_drift_failure_includes_marker_diagnostics() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     drift = int(round(0.18 * layout.fs))
     rec = np.zeros(layout.total_samples + drift + 256, dtype=np.float32)
     rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
@@ -305,7 +305,7 @@ def test_timing_drift_failure_includes_marker_diagnostics() -> None:
 
 
 def test_bluetooth_marginal_drift_succeeds_with_warning() -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1388 * layout.fs))
     rec = _recording_with_shifted_end_markers(layout, drift, marker_scale=1.0)
 
@@ -320,7 +320,7 @@ def test_bluetooth_marginal_drift_succeeds_with_warning() -> None:
 
 
 def test_bluetooth_marginal_drift_accepts_weak_but_consistent_end_markers(monkeypatch) -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1391 * layout.fs))
     start_result = StartAlignmentResult(
         selected_sweep_start=layout.sweep_start_sample,
@@ -364,7 +364,7 @@ def test_bluetooth_marginal_drift_accepts_weak_but_consistent_end_markers(monkey
 
 
 def test_bluetooth_weak_end_markers_use_sweep_fallback(monkeypatch) -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1391 * layout.fs))
     start_result = StartAlignmentResult(
         selected_sweep_start=layout.sweep_start_sample,
@@ -414,7 +414,7 @@ def test_bluetooth_weak_end_markers_use_sweep_fallback(monkeypatch) -> None:
 
 
 def test_bluetooth_extreme_drift_still_fails() -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.180 * layout.fs))
     rec = _recording_with_shifted_end_markers(layout, drift)
 
@@ -430,7 +430,7 @@ def test_bluetooth_extreme_drift_still_fails() -> None:
 
 
 def test_bluetooth_end_marker_search_covers_marginal_ceiling_plus_slack() -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.165 * layout.fs))
     rec = _recording_with_shifted_end_markers(layout, drift, marker_scale=1.0)
 
@@ -444,7 +444,7 @@ def test_bluetooth_end_marker_search_covers_marginal_ceiling_plus_slack() -> Non
 
 
 def test_bluetooth_marginal_drift_with_excessive_spacing_error_fails() -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1388 * layout.fs))
     spacing_extra = int(round(0.030 * layout.fs))
     rec = _recording_with_shifted_end_markers(
@@ -461,7 +461,7 @@ def test_bluetooth_marginal_drift_with_excessive_spacing_error_fails() -> None:
 
 
 def test_short_recording_raises_existing_message() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
 
     with pytest.raises(ValueError, match="Recording shorter than expected"):
         align_recording_to_layout(
@@ -473,7 +473,7 @@ def test_short_recording_raises_existing_message() -> None:
 
 
 def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
     rec = _recording_from_layout(layout)
     rec[: layout.sweep_start_sample] = 0.01
     noise_start = layout.sweep_end_sample
@@ -491,7 +491,7 @@ def test_snr_estimation_uses_controlled_pre_and_post_noise() -> None:
 
 
 def test_successful_alignment_returns_matching_diagnostics() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.2 * layout.fs))
     result = align_recording_to_layout(
         _recording_from_layout(layout, delay_samples=delay),
@@ -513,7 +513,7 @@ def test_successful_alignment_returns_matching_diagnostics() -> None:
 
 
 def test_format_diagnostics_summary_is_plain_actionable_text() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     result = align_recording_to_layout(
         _recording_from_layout(layout, delay_samples=123),
         sweep,
@@ -532,7 +532,7 @@ def test_format_diagnostics_summary_is_plain_actionable_text() -> None:
 
 
 def test_standard_diagnostics_summary_omits_marker_timing_fields() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
     result = align_recording_to_layout(
         _recording_from_layout(layout),
         sweep,
@@ -550,7 +550,7 @@ def test_standard_diagnostics_summary_omits_marker_timing_fields() -> None:
 
 
 def test_format_diagnostics_summary_includes_warning_text() -> None:
-    sweep, layout = _layout(fs=48_000, bluetooth=True)
+    sweep, layout = _short_layout(fs=48_000, bluetooth=True)
     drift = int(round(0.1388 * layout.fs))
     result = align_recording_to_layout(
         _recording_with_shifted_end_markers(layout, drift),
@@ -566,7 +566,7 @@ def test_format_diagnostics_summary_includes_warning_text() -> None:
 
 
 def test_format_diagnostics_summary_includes_sweep_fallback_reason() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = np.zeros(layout.total_samples, dtype=np.float32)
     rec[layout.excitation_start_sample : layout.sweep_end_sample] = layout.excitation[
         : layout.sweep_end_sample - layout.excitation_start_sample
@@ -591,7 +591,7 @@ def test_format_diagnostics_summary_includes_sweep_fallback_reason() -> None:
 
 
 def test_end_marker_choice_prefers_acceptable_lower_drift_candidate() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = _recording_from_layout(layout)
     actual = layout.sweep_start_sample
     misleading_candidate = actual - int(round(0.04 * layout.fs))
@@ -684,7 +684,7 @@ def _time_stretch(signal: np.ndarray, stretch: float) -> np.ndarray:
 
 
 def test_random_bluetooth_latency_jitter_aligns_when_markers_are_intact() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rng = np.random.default_rng(20260505)
     base_delay = int(round(0.35 * layout.fs))
     jitters = rng.integers(
@@ -708,7 +708,7 @@ def test_random_bluetooth_latency_jitter_aligns_when_markers_are_intact() -> Non
 
 
 def test_missing_start_audio_fails_or_locks_to_remaining_valid_marker_evidence() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.25 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     clip_until = delay + layout.sweep_start_sample + int(round(0.08 * layout.fs))
@@ -723,7 +723,7 @@ def test_missing_start_audio_fails_or_locks_to_remaining_valid_marker_evidence()
 
 
 def test_truncated_tail_audio_can_use_bluetooth_sweep_fallback() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.2 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     trunc_at = delay + layout.sweep_end_sample + int(round(0.01 * layout.fs))
@@ -736,7 +736,7 @@ def test_truncated_tail_audio_can_use_bluetooth_sweep_fallback() -> None:
 
 
 def test_truncated_sweep_window_still_fails() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.2 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     trunc_at = delay + layout.sweep_end_sample - int(round(0.05 * layout.fs))
@@ -754,7 +754,7 @@ def test_truncated_sweep_window_still_fails() -> None:
 
 
 def test_false_marker_peak_does_not_beat_valid_marker_pair() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.32 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     false_offset = int(round(0.16 * layout.fs))
@@ -773,7 +773,7 @@ def test_false_marker_peak_does_not_beat_valid_marker_pair() -> None:
 
 
 def test_single_band_marker_like_peak_does_not_beat_coded_marker_pair() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.31 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     false_offset = int(round(0.14 * layout.fs))
@@ -790,7 +790,7 @@ def test_single_band_marker_like_peak_does_not_beat_coded_marker_pair() -> None:
 
 
 def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.22 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     rec[
@@ -819,7 +819,7 @@ def test_marker_identity_rejects_reversed_coded_marker_order() -> None:
 
 
 def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.22 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     rec[
@@ -840,7 +840,7 @@ def test_duplicated_same_coded_marker_does_not_pass_as_valid_pair() -> None:
 
 
 def test_loud_reversed_marker_artifacts_do_not_displace_ordered_pair() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.24 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     spacing = len(layout.end_marker) + layout.end_marker_pair_gap_samples
@@ -857,7 +857,7 @@ def test_loud_reversed_marker_artifacts_do_not_displace_ordered_pair() -> None:
 
 
 def test_codec_like_marker_ringing_keeps_drift_near_true_marker() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.28 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
     rec = np.convolve(rec, _ringing_kernel(layout.fs), mode="full").astype(np.float32)
@@ -871,7 +871,7 @@ def test_codec_like_marker_ringing_keeps_drift_near_true_marker() -> None:
 
 
 def test_sample_rate_drift_produces_drift_failure_when_large() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     rec = _recording_from_layout(layout)
     drift = int(round(0.18 * layout.fs))
     rec[
@@ -941,7 +941,7 @@ def test_bluetooth_profile_tail_covers_high_output_latency_recording_window() ->
 
 
 def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     bad_rec = np.zeros(layout.total_samples, dtype=np.float32)
 
     with pytest.raises(ValueError, match="Low start-alignment confidence"):
@@ -957,7 +957,7 @@ def test_retry_after_bad_run_can_succeed_with_same_layout() -> None:
 
 
 def test_alignment_returns_post_sweep_tail_in_standard_mode() -> None:
-    sweep, layout = _layout()
+    sweep, layout = _short_layout()
     delay = 137
     rec = _recording_from_layout(layout, delay_samples=delay)
     decay = 0.01 * np.sin(np.arange(layout.post_silence_samples, dtype=np.float32) * 0.05).astype(
@@ -978,7 +978,7 @@ def test_alignment_returns_post_sweep_tail_in_standard_mode() -> None:
 
 
 def test_alignment_tail_stops_before_end_markers_in_bluetooth_mode() -> None:
-    sweep, layout = _layout(bluetooth=True)
+    sweep, layout = _short_layout(bluetooth=True)
     delay = int(round(0.18 * layout.fs))
     rec = _recording_from_layout(layout, delay_samples=delay)
 
@@ -1006,7 +1006,7 @@ def test_alignment_tail_stops_before_end_markers_in_bluetooth_mode() -> None:
 
 def test_aligned_recording_length_is_unchanged() -> None:
     for bluetooth in (False, True):
-        sweep, layout = _layout(bluetooth=bluetooth)
+        sweep, layout = _short_layout(bluetooth=bluetooth)
         delay = int(round(0.18 * layout.fs)) if bluetooth else 137
         rec = _recording_from_layout(layout, delay_samples=delay)
         settings = (

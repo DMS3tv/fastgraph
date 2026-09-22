@@ -1,7 +1,7 @@
 from dms import audio_engine
 
 
-def _window(make_main_window, settings: dict, *, stub_devices: bool = False):
+def _device_window(make_main_window, settings: dict, *, stub_devices: bool = False):
     """A real window built on whatever device functions the test patched.
 
     Patch ``get_*_devices`` and friends before calling this: the window
@@ -114,7 +114,7 @@ def test_windows_normal_mode_shows_only_preferred_wasapi_devices(
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
 
     assert window.measure_tab.in_dev_combo.count() == 1
@@ -140,7 +140,7 @@ def test_windows_advanced_mode_shows_all_backends(make_main_window, monkeypatch)
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
 
     assert window.measure_tab.in_dev_combo.count() == 4
@@ -167,7 +167,7 @@ def test_windows_legacy_duplicate_resolves_to_wasapi_in_normal_mode(
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
 
     assert window.measure_tab.in_dev_combo.currentData() == 43
@@ -188,7 +188,7 @@ def test_windows_input_selection_auto_matches_output_backend(make_main_window, m
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
     window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
     window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(43))
@@ -216,7 +216,7 @@ def test_windows_mismatched_backends_block_queue_start(make_main_window, monkeyp
         lambda _parent, title, message: warnings.append((title, message)),
     )
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
     # Input first: choosing an input re-matches the output, so the mismatch
     # only survives when the output is changed afterwards.
@@ -240,7 +240,7 @@ def test_windows_default_non_bluetooth_latency_is_high_until_user_override(
     }
     monkeypatch.setattr("dms.ui.device_controller.is_windows_audio_host", lambda: True)
 
-    window = _window(make_main_window, settings, stub_devices=True)
+    window = _device_window(make_main_window, settings, stub_devices=True)
     assert window.devices.sweep_latency_mode() == "high"
 
     window._settings.set("latency_user_override", True)
@@ -255,7 +255,7 @@ def test_non_windows_latency_behavior_is_unchanged(make_main_window, monkeypatch
     }
     monkeypatch.setattr("dms.ui.device_controller.is_windows_audio_host", lambda: False)
 
-    window = _window(make_main_window, settings, stub_devices=True)
+    window = _device_window(make_main_window, settings, stub_devices=True)
     assert window.devices.sweep_latency_mode() == "low"
 
 
@@ -310,7 +310,7 @@ def test_manual_refresh_reinitializes_backend_before_enumerating(
 
     monkeypatch.setattr("dms.ui.device_controller.refresh_audio_backend", refresh_backend)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     stops = _count_level_monitor_stops(window)
     window.devices.refresh_devices()
     calls.clear()
@@ -338,7 +338,7 @@ def test_manual_refresh_preserves_valid_device_selection(make_main_window, monke
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
     monkeypatch.setattr("dms.ui.device_controller.refresh_audio_backend", lambda: True)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
     window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
     window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(17))
@@ -379,7 +379,7 @@ def test_manual_refresh_falls_back_when_selected_device_disappears(
 
     monkeypatch.setattr("dms.ui.device_controller.refresh_audio_backend", refresh_backend)
 
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
     window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
     window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(17))
@@ -416,7 +416,7 @@ def test_check_devices_uses_the_lists_the_poller_hands_it(make_main_window, monk
     monkeypatch.setattr("dms.ui.device_controller.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
 
     refreshed: list[bool] = []
@@ -447,7 +447,7 @@ def test_check_devices_defers_while_the_queue_holds_the_devices(
     monkeypatch.setattr("dms.ui.device_controller.get_output_devices", lambda: outputs)
     monkeypatch.setattr("dms.ui.device_controller.get_input_devices", lambda: inputs)
     monkeypatch.setattr("dms.ui.device_controller.device_channel_count", lambda _device, _kind: 2)
-    window = _window(make_main_window, settings)
+    window = _device_window(make_main_window, settings)
     window.devices.refresh_devices()
 
     refreshed: list[bool] = []
@@ -473,7 +473,7 @@ def test_sync_device_poller_pauses_while_busy(make_main_window) -> None:
 
     poller = _Poller()
 
-    window = _window(make_main_window, settings, stub_devices=True)
+    window = _device_window(make_main_window, settings, stub_devices=True)
     window.devices.device_poller.stop()
     del window.devices.device_poller
 

@@ -75,7 +75,7 @@ def _spectral_division(
     return freqs[mask], mag_db[mask]
 
 
-def _curve(recording: np.ndarray, sweep: np.ndarray, response=compute_frequency_response):
+def _plotted_curve(recording: np.ndarray, sweep: np.ndarray, response=compute_frequency_response):
     """The 600-point normalized curve the application would plot."""
     freqs, mag_db = response(recording, sweep, FS, F_LOW, F_HIGH)
     # A fixed grid so the windowed and legacy paths — whose first FFT bin
@@ -109,8 +109,8 @@ def test_deconvolved_ir_matches_legacy_response_within_0_1_db() -> None:
     sweep = _sweep()
     recording = _record(sweep)
 
-    freqs_win, mag_win = _curve(recording, sweep)
-    freqs_legacy, mag_legacy = _curve(recording, sweep, response=_spectral_division)
+    freqs_win, mag_win = _plotted_curve(recording, sweep)
+    freqs_legacy, mag_legacy = _plotted_curve(recording, sweep, response=_spectral_division)
 
     np.testing.assert_allclose(freqs_win, freqs_legacy)
     band = (freqs_win >= 20.0) & (freqs_win <= 20000.0)
@@ -216,8 +216,8 @@ def test_windowing_rejects_harmonic_energy() -> None:
     clean = signal.sosfilt(system, drive)
     distorted = signal.sosfilt(system, drive + 0.05 * drive**2 + 0.02 * drive**3)
 
-    freqs, clean_db = _curve(clean, sweep)
-    _, distorted_db = _curve(distorted, sweep)
+    freqs, clean_db = _plotted_curve(clean, sweep)
+    _, distorted_db = _plotted_curve(distorted, sweep)
 
     # Above 15 kHz the second harmonic of the excitation folds back around
     # Nyquist, which is a property of the test signal rather than of the
@@ -225,15 +225,15 @@ def test_windowing_rejects_harmonic_energy() -> None:
     band = (freqs >= 20.0) & (freqs <= 15000.0)
     assert np.max(np.abs(distorted_db[band] - clean_db[band])) < 0.1
 
-    _, clean_raw = _curve(clean, sweep, response=_spectral_division)
-    _, distorted_raw = _curve(distorted, sweep, response=_spectral_division)
+    _, clean_raw = _plotted_curve(clean, sweep, response=_spectral_division)
+    _, distorted_raw = _plotted_curve(distorted, sweep, response=_spectral_division)
     # Without the window the same distortion visibly bends the curve.
     assert np.max(np.abs(distorted_raw[band] - clean_raw[band])) > 0.2
 
 
 def test_band_edge_rolloff_has_no_ripple() -> None:
     sweep = _sweep()
-    freqs, mag_db = _curve(_record(sweep), sweep)
+    freqs, mag_db = _plotted_curve(_record(sweep), sweep)
 
     top = freqs >= 18000.0
     bottom = freqs <= 25.0

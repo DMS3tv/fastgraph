@@ -14,7 +14,8 @@ Responsibilities:
   ``ThemeController`` re-applies the application stylesheet to all of them.
   That was the cause of the suite's quadratic slowdown.
 - Warn (not fail) when a test leaves a large number of new widgets alive.
-- Offer ``make_main_window`` so window tests share one construction path.
+- Offer ``make_main_window`` and ``make_curator`` so window tests share one
+  construction path.
 """
 
 from __future__ import annotations
@@ -121,6 +122,25 @@ def console_events(qapp):
     handler = install_console_handler(store)
     yield store
     logging.getLogger("dms").removeHandler(handler)
+
+
+@pytest.fixture
+def make_curator(qapp):
+    """Build ``CuratorWidget``s and delete every one of them after the test."""
+    from dms.ui.curator_widget import CuratorWidget
+
+    created = []
+
+    def _make(*args, **kwargs):
+        widget = CuratorWidget(*args, **kwargs)
+        created.append(widget)
+        return widget
+
+    yield _make
+
+    for widget in created:
+        widget.close()
+        widget.deleteLater()
 
 
 @pytest.fixture

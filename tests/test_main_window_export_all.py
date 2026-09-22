@@ -15,12 +15,9 @@ def _standard_hrtf(tmp_path: Path) -> HRTFCurve:
     return HRTFCurve(str(path))
 
 
-def _population_hrtf(tmp_path: Path) -> HRTFCurve:
+def _stepped_population_hrtf(tmp_path: Path) -> HRTFCurve:
     path = tmp_path / "population.txt"
-    path.write_text(
-        "100 1 2 3 4 5\n1000 2 3 4 5 6\n",
-        encoding="utf-8",
-    )
+    path.write_text("100 1 2 3 4 5\n1000 2 3 4 5 6\n", encoding="utf-8")
     return HRTFCurve(str(path))
 
 
@@ -102,7 +99,7 @@ def test_export_all_uses_population_median_and_variation_envelope(
     tmp_path: Path,
 ) -> None:
     window, _events, _triggers, _statuses = _batch_window(
-        make_main_window, tmp_path, _population_hrtf(tmp_path)
+        make_main_window, tmp_path, _stepped_population_hrtf(tmp_path)
     )
     monkeypatch.setattr(measure_io_module.QMessageBox, "information", lambda *_args: None)
 

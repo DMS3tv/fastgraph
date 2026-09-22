@@ -11,7 +11,7 @@ from dms.ui.dual_plot_widget import _AVERAGE_TITLE, _DELTA_TITLE
 from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
 
 
-def _curve() -> tuple[np.ndarray, np.ndarray]:
+def _shaped_curve() -> tuple[np.ndarray, np.ndarray]:
     """A measurement with a broad bass lift and a treble dip."""
     freqs = np.geomspace(20.0, 20000.0, 240)
     octaves = np.log2(freqs / 1000.0)
@@ -33,7 +33,7 @@ def _write_target(path: Path, tilt_db: float = 6.0) -> Path:
 
 def _window_with_target(make_main_window, tmp_path, **kwargs):
     window = make_main_window(**kwargs)
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(_shaped_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure.recompute_average()
     window.measure.refresh()
@@ -136,7 +136,7 @@ def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -
     window.measure.queue.state = QueueState.PASS_FAIL
     window.measure.queue.target = 1
     window.measure.queue.index = 0
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = _shaped_curve()
 
     summary = window.measure_compare.pending_deviation_summary()
     assert summary is not None
@@ -159,7 +159,7 @@ def test_keeping_appends_a_match_percentage(tmp_path, make_main_window) -> None:
     window.measure.queue.state = QueueState.PASS_FAIL
     window.measure.queue.target = 2
     window.measure.queue.index = 0
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = _shaped_curve()
     window.measure.start_next_sweep = lambda **_kwargs: None
 
     window.measure.on_keep()
@@ -204,7 +204,7 @@ def test_eq_suggestion_needs_a_target_and_an_average(tmp_path, make_main_window)
 
 def test_reference_layers_draw_and_clear(tmp_path, make_main_window) -> None:
     window = make_main_window()
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(_shaped_curve())
     window.measure.kept_sweep_meta.append({})
     window.measure.recompute_average()
     window.measure.refresh()

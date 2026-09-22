@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
+from helpers import measure_session
 from PyQt6.QtTest import QTest
 
 from dms.measure_session import (
@@ -15,23 +15,6 @@ from dms.measure_session import (
 )
 from dms.recovery import RecoveryManager, measure_recovery_manager
 from dms.session import SessionData
-from dms.two_channel import TwoChannelCurvePair
-
-
-def _curve(offset: float = 0.0, points: int = 32):
-    freqs = np.geomspace(20.0, 20000.0, points)
-    return freqs, np.linspace(-2.0, 2.0, points) + offset
-
-
-def _session(model: str = "First", two_channel: bool = False) -> MeasureSession:
-    session = MeasureSession(
-        metadata=SessionData(rig="Rig", brand="DMS", model=model),
-        two_channel=two_channel,
-    )
-    session.add_sweep(*_curve(), note=model)
-    if two_channel:
-        session.add_pair(TwoChannelCurvePair(channel_1=_curve(1.0), channel_2=_curve(-1.0)))
-    return session
 
 
 def _manager(tmp_path: Path, **kwargs) -> RecoveryManager:
@@ -40,7 +23,7 @@ def _manager(tmp_path: Path, **kwargs) -> RecoveryManager:
 
 def test_snapshot_write_creates_the_current_generation(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    session = _session()
+    session = measure_session()
 
     manager._save_snapshot(session.to_dict())
 
@@ -57,8 +40,8 @@ def test_snapshot_write_creates_the_current_generation(tmp_path: Path) -> None:
 
 def test_second_snapshot_rotates_current_into_previous(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session("First").to_dict())
-    manager._save_snapshot(_session("Second").to_dict())
+    manager._save_snapshot(measure_session("First").to_dict())
+    manager._save_snapshot(measure_session("Second").to_dict())
 
     assert manager.restore(manager.candidates()[0]).metadata.model == "Second"
     previous = MeasureSession.from_dict(
@@ -73,8 +56,8 @@ def test_candidates_fall_back_to_previous_and_quarantine_broken_current(
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session("First").to_dict())
-    manager._save_snapshot(_session("Second").to_dict())
+    manager._save_snapshot(measure_session("First").to_dict())
+    manager._save_snapshot(measure_session("Second").to_dict())
     manager.current_path.write_text("{broken", encoding="utf-8")
 
     with caplog.at_level("WARNING", logger="dms.recovery"):
@@ -90,9 +73,9 @@ def test_candidates_fall_back_to_previous_and_quarantine_broken_current(
 
 def test_candidates_are_newest_first_with_deferred_bundles(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session("Deferred", two_channel=True).to_dict())
+    manager._save_snapshot(measure_session("Deferred", two_channel=True).to_dict())
     kept = manager.keep_for_later(manager.candidates()[0])
-    manager._save_snapshot(_session("Active").to_dict())
+    manager._save_snapshot(measure_session("Active").to_dict())
 
     candidates = manager.candidates()
 
@@ -107,7 +90,7 @@ def test_candidates_are_newest_first_with_deferred_bundles(tmp_path: Path) -> No
 
 def test_defer_moves_the_bundle_and_survives_a_clean_exit(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session().to_dict())
+    manager._save_snapshot(measure_session().to_dict())
 
     kept = manager.keep_for_later(manager.candidates()[0])
 
@@ -122,8 +105,8 @@ def test_defer_moves_the_bundle_and_survives_a_clean_exit(tmp_path: Path) -> Non
 
 def test_discard_removes_both_active_generations(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session("First").to_dict())
-    manager._save_snapshot(_session("Second").to_dict())
+    manager._save_snapshot(measure_session("First").to_dict())
+    manager._save_snapshot(measure_session("Second").to_dict())
 
     manager.discard(manager.candidates()[0])
 
@@ -135,7 +118,7 @@ def test_discard_removes_both_active_generations(tmp_path: Path) -> None:
 
 def test_a_newer_schema_is_reported_not_quarantined(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session().to_dict())
+    manager._save_snapshot(measure_session().to_dict())
     payload = json.loads(manager.current_path.read_text(encoding="utf-8"))
     payload["schema_version"] = MEASURE_SESSION_SCHEMA_VERSION + 1
     manager.current_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -154,7 +137,7 @@ def test_clean_exit_marker_suppresses_recovery_on_the_next_start(
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session().to_dict())
+    manager._save_snapshot(measure_session().to_dict())
     leftover = manager.current_path.read_text(encoding="utf-8")
 
     manager.shutdown_clean()
@@ -179,7 +162,7 @@ def test_a_new_snapshot_clears_the_clean_exit_marker(qapp, tmp_path: Path) -> No
     saves: list[bool] = []
     resumed.save_succeeded.connect(lambda: saves.append(True))
     resumed.enable()
-    resumed.schedule(_session().to_dict())
+    resumed.schedule(measure_session().to_dict())
     for _ in range(20):
         QTest.qWait(10)
         if saves:
@@ -197,9 +180,9 @@ def test_schedule_debounces_a_burst_into_one_save(qapp, tmp_path: Path) -> None:
     manager.save_succeeded.connect(lambda: saves.append(True))
     manager.enable()
 
-    manager.schedule(_session("First").to_dict())
-    manager.schedule(_session("Second").to_dict())
-    manager.schedule(_session("Third").to_dict())
+    manager.schedule(measure_session("First").to_dict())
+    manager.schedule(measure_session("Second").to_dict())
+    manager.schedule(measure_session("Third").to_dict())
 
     for _ in range(20):
         QTest.qWait(10)
@@ -222,7 +205,7 @@ def test_maximum_interval_saves_during_continuous_changes(
     manager.enable()
 
     for _ in range(6):
-        manager.schedule(_session().to_dict())
+        manager.schedule(measure_session().to_dict())
         QTest.qWait(10)
     for _ in range(20):
         QTest.qWait(10)
@@ -236,7 +219,7 @@ def test_maximum_interval_saves_during_continuous_changes(
 
 def test_an_empty_snapshot_clears_the_active_generations(qapp, tmp_path: Path) -> None:
     manager = _manager(tmp_path, debounce_ms=10, maximum_ms=40)
-    manager._save_snapshot(_session().to_dict())
+    manager._save_snapshot(measure_session().to_dict())
     manager.enable()
 
     manager.schedule(MeasureSession(metadata=SessionData("Rig", "DMS", "Empty")).to_dict())
@@ -255,7 +238,7 @@ def test_failed_rotation_keeps_the_newest_snapshot_and_flags_degraded(
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path)
-    manager._save_snapshot(_session("First").to_dict())
+    manager._save_snapshot(measure_session("First").to_dict())
     assert manager.rotation_degraded is False
     real_copy = manager._copy
 
@@ -265,14 +248,14 @@ def test_failed_rotation_keeps_the_newest_snapshot_and_flags_degraded(
         return real_copy(source, destination)
 
     monkeypatch.setattr(manager, "_copy", fail_previous)
-    manager._save_snapshot(_session("Second").to_dict())
+    manager._save_snapshot(measure_session("Second").to_dict())
 
     assert manager.rotation_degraded is True
     assert manager.restore(manager.candidates()[0]).metadata.model == "Second"
     assert not manager.staging_path.exists()
 
     monkeypatch.setattr(manager, "_copy", real_copy)
-    manager._save_snapshot(_session("Third").to_dict())
+    manager._save_snapshot(measure_session("Third").to_dict())
     assert manager.rotation_degraded is False
     manager.shutdown_clean()
 
@@ -287,7 +270,7 @@ def test_a_failing_save_reports_instead_of_raising(qapp, tmp_path: Path) -> None
         raise OSError("simulated disk failure")
 
     manager._save = explode
-    manager.schedule(_session().to_dict())
+    manager.schedule(measure_session().to_dict())
     for _ in range(20):
         QTest.qWait(10)
         if failures:

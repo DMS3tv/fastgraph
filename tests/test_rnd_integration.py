@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pyqtgraph as pg
 import pytest
+from helpers import rnd_measurement
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (
@@ -20,27 +21,12 @@ import dms.ui.rnd_widget as rnd_widget_module
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import QueueState
 from dms.processing import VariationBand
-from dms.rnd.models import RnDGroup, RnDMeasurement
+from dms.rnd.models import RnDGroup
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
 from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95
 from dms.ui.measure_dialogs import RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
-
-
-def _measurement(mid: str = "m1", name: str = "R&D One") -> RnDMeasurement:
-    return RnDMeasurement(
-        id=mid,
-        name=name,
-        freqs=np.array([100.0, 1000.0]),
-        mag_db=np.array([1.0, 0.0]),
-        metadata={"brand": "DMS", "model": "Demo", "rig": "Rig"},
-        rig="Rig",
-        input_device_label="Input",
-        input_channel_index=0,
-        input_channel_label="Channel 1",
-        output_device_label="Output",
-    )
 
 
 def test_rnd_tab_and_settings_folder_control(tmp_path, make_main_window) -> None:
@@ -161,7 +147,7 @@ def test_rnd_review_curve_is_temporary_and_copied(make_main_window) -> None:
 
 def test_rnd_selected_item_photo_panel_tracks_measurement_photos(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement()
+    measurement = rnd_measurement()
     window._rnd_widget.add_measurement(measurement)
 
     photo = window._rnd_widget.photo_store.add_image(
@@ -197,7 +183,7 @@ def test_rnd_dirty_state_ignores_selection_and_tracks_content(make_main_window) 
     window = make_main_window()
     window.rnd._recovery.enable()
 
-    window._rnd_widget.add_measurement(_measurement())
+    window._rnd_widget.add_measurement(rnd_measurement())
     assert window.rnd.dirty is True
 
     window.rnd.dirty = False
@@ -212,7 +198,7 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
     tmp_path, monkeypatch, make_main_window
 ) -> None:
     window = make_main_window()
-    window._rnd_widget.add_measurement(_measurement("current", "Current"))
+    window._rnd_widget.add_measurement(rnd_measurement("current", "Current"))
     save_path = tmp_path / "saved.fastgraph-rnd.json"
     monkeypatch.setattr(
         rnd_bridge_module.QFileDialog,
@@ -225,7 +211,7 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
 
     incoming_path = tmp_path / "incoming.fastgraph-rnd.json"
     incoming = window._rnd_widget.session.__class__(
-        measurements=[_measurement("incoming", "Incoming")],
+        measurements=[rnd_measurement("incoming", "Incoming")],
         ungrouped_order=["incoming"],
     )
     save_rnd_session(incoming, RnDPhotoStore(), incoming_path)
@@ -247,7 +233,7 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
 
     merge_path = tmp_path / "merge.fastgraph-rnd.json"
     merge = window._rnd_widget.session.__class__(
-        measurements=[_measurement("merge", "Merge")],
+        measurements=[rnd_measurement("merge", "Merge")],
         ungrouped_order=["merge"],
     )
     save_rnd_session(merge, RnDPhotoStore(), merge_path)
@@ -266,7 +252,7 @@ def test_rnd_manual_save_completes_partial_extension(
     tmp_path, monkeypatch, make_main_window
 ) -> None:
     window = make_main_window()
-    window._rnd_widget.add_measurement(_measurement())
+    window._rnd_widget.add_measurement(rnd_measurement())
     selected_path = tmp_path / "prototype.fastgraph-rnd"
     expected_path = tmp_path / "prototype.fastgraph-rnd.json"
     monkeypatch.setattr(
@@ -309,7 +295,7 @@ def test_rnd_close_prompt_paths(
     expected,
 ) -> None:
     window = make_main_window(confirm_rnd_close=False)
-    window._rnd_widget.add_measurement(_measurement())
+    window._rnd_widget.add_measurement(rnd_measurement())
     monkeypatch.setattr(QMessageBox, "exec", lambda self: result)
     window.rnd.save_session = lambda: save_result
 
@@ -322,7 +308,7 @@ def test_startup_recovery_restores_before_app_start_automation(
     make_main_window,
 ) -> None:
     window = make_main_window()
-    recovered = _measurement("recovered", "Recovered")
+    recovered = rnd_measurement("recovered", "Recovered")
     session = window._rnd_widget.session.__class__(
         measurements=[recovered],
         ungrouped_order=["recovered"],
@@ -365,8 +351,8 @@ def test_startup_recovery_restores_before_app_start_automation(
 
 def test_rnd_group_toggles_and_curator_send(make_main_window) -> None:
     window = make_main_window()
-    first = _measurement("m1", "First")
-    second = _measurement("m2", "Second")
+    first = rnd_measurement("m1", "First")
+    second = rnd_measurement("m2", "Second")
     second.mag_db = np.array([2.0, 1.0])
     group = RnDGroup(
         id="g1",
@@ -396,8 +382,8 @@ def test_rnd_group_toggles_and_curator_send(make_main_window) -> None:
 
 def test_rnd_group_variation_follows_group_viewport_visibility(make_main_window) -> None:
     window = make_main_window()
-    first = _measurement("m1", "First")
-    second = _measurement("m2", "Second")
+    first = rnd_measurement("m1", "First")
+    second = rnd_measurement("m2", "Second")
     second.mag_db = np.array([2.0, 1.0])
     # View 2 draws the rows that are pinned, so the band needs pinned rows.
     first.pinned = True
@@ -434,7 +420,7 @@ def test_rnd_group_variation_follows_group_viewport_visibility(make_main_window)
 
 def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Only")
+    measurement = rnd_measurement("m1", "Only")
     group = RnDGroup(
         id="g1",
         name="Prototype A",
@@ -460,8 +446,8 @@ def test_rnd_var_enabled_hides_traces_when_group_has_one_measurement(make_main_w
 def test_rnd_group_view_2_honours_each_row_checkbox(make_main_window) -> None:
     """C2: a group's View 2 toggle gates the group; the row gates the row."""
     window = make_main_window()
-    first = _measurement("m1", "First")
-    second = _measurement("m2", "Second")
+    first = rnd_measurement("m1", "First")
+    second = rnd_measurement("m2", "Second")
     first.pinned = True
     second.pinned = False
     group = RnDGroup(id="g1", name="Prototype A", pinned=True, measurement_ids=["m1", "m2"])
@@ -489,7 +475,7 @@ def test_rnd_group_view_2_honours_each_row_checkbox(make_main_window) -> None:
 
 def test_rnd_offsets_are_additive_for_display_and_curator_send(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Offset Target")
+    measurement = rnd_measurement("m1", "Offset Target")
     measurement.vertical_offset_db = 3.0
     group = RnDGroup(
         id="g1",
@@ -520,7 +506,7 @@ def test_rnd_offsets_are_additive_for_display_and_curator_send(make_main_window)
 
 def test_rnd_offset_rows_update_selected_measurement_and_group(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Offset Target")
+    measurement = rnd_measurement("m1", "Offset Target")
     group = RnDGroup(id="g1", name="Prototype A", measurement_ids=["m1"])
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.groups = [group]
@@ -536,8 +522,8 @@ def test_rnd_offset_rows_update_selected_measurement_and_group(make_main_window)
 
 def test_rnd_group_variation_uses_displayed_offsets(monkeypatch, make_main_window) -> None:
     window = make_main_window()
-    first = _measurement("m1", "First")
-    second = _measurement("m2", "Second")
+    first = rnd_measurement("m1", "First")
+    second = rnd_measurement("m2", "Second")
     first.vertical_offset_db = 2.0
     second.mag_db = np.array([2.0, 1.0])
     second.vertical_offset_db = -1.0
@@ -582,7 +568,7 @@ def test_rnd_bounds_toggle_passes_enabled_bounds_to_both_viewports(make_main_win
 
 def test_rnd_smoothing_control_changes_displayed_curve(monkeypatch, make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Smooth Me")
+    measurement = rnd_measurement("m1", "Smooth Me")
     calls: list[int] = []
 
     def fake_smooth(freqs, mag_db, fraction):
@@ -600,7 +586,7 @@ def test_rnd_smoothing_control_changes_displayed_curve(monkeypatch, make_main_wi
 
 def test_rnd_export_uses_selected_smoothing(tmp_path, monkeypatch, make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Export Smooth")
+    measurement = rnd_measurement("m1", "Export Smooth")
     window._rnd_widget.session.smoothing_fraction = 6
     captured: dict[str, object] = {}
 
@@ -620,7 +606,7 @@ def test_rnd_export_uses_selected_smoothing(tmp_path, monkeypatch, make_main_win
 
 def test_rnd_export_header_records_smoothing_and_offset(tmp_path, make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Export Offset")
+    measurement = rnd_measurement("m1", "Export Offset")
     measurement.vertical_offset_db = -3.5
     window._rnd_widget.session.smoothing_fraction = 12
     output = tmp_path / "offset.txt"
@@ -634,9 +620,9 @@ def test_rnd_export_header_records_smoothing_and_offset(tmp_path, make_main_wind
 
 def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(make_main_window) -> None:
     window = make_main_window()
-    first = _measurement("m1", "Reference")
+    first = rnd_measurement("m1", "Reference")
     first.pinned = True
-    second = _measurement("m2", "Delta")
+    second = rnd_measurement("m2", "Delta")
     second.pinned = True
     second.mag_db = np.array([4.0, 1.5])
     window._rnd_widget.session.measurements = [first, second]
@@ -656,7 +642,7 @@ def test_rnd_delta_mode_uses_first_bottom_measurement_as_reference(make_main_win
 
 def test_rnd_delta_mode_with_one_bottom_item_hides_normal_bottom(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Reference")
+    measurement = rnd_measurement("m1", "Reference")
     measurement.pinned = True
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.ungrouped_order = ["m1"]
@@ -691,10 +677,10 @@ def test_rnd_delta_mode_supports_group_variation_bands(monkeypatch, make_main_wi
         measurement_ids=["b1", "b2"],
     )
     measurements = [
-        _measurement("a1", "A 1"),
-        _measurement("a2", "A 2"),
-        _measurement("b1", "B 1"),
-        _measurement("b2", "B 2"),
+        rnd_measurement("a1", "A 1"),
+        rnd_measurement("a2", "A 2"),
+        rnd_measurement("b1", "B 1"),
+        rnd_measurement("b2", "B 2"),
     ]
     for measurement in measurements:
         measurement.pinned = True
@@ -741,9 +727,9 @@ def test_rnd_tree_multiselect_and_scrollbar_are_enabled(qapp, make_main_window) 
 
 def test_rnd_new_group_moves_selected_measurements_in_visual_order(make_main_window) -> None:
     window = make_main_window()
-    first = _measurement("m1", "First")
-    second = _measurement("m2", "Second")
-    third = _measurement("m3", "Third")
+    first = rnd_measurement("m1", "First")
+    second = rnd_measurement("m2", "Second")
+    third = rnd_measurement("m3", "Third")
     window._rnd_widget.session.measurements = [first, second, third]
     window._rnd_widget.session.ungrouped_order = ["m1", "m2", "m3"]
     window._rnd_widget.replace_session(window._rnd_widget.session)
@@ -783,7 +769,7 @@ def test_rnd_default_hrtf_is_applied_to_new_measurements(make_main_window) -> No
         window._rnd_widget._default_hrtf_combo.findData("fixture.txt")
     )
 
-    window._rnd_widget.add_measurement(_measurement("m1", "Default HRTF"))
+    window._rnd_widget.add_measurement(rnd_measurement("m1", "Default HRTF"))
 
     assert window._rnd_widget.session.hrtf_path == "fixture.txt"
     assert window._rnd_widget.session.measurements[0].hrtf_path == "fixture.txt"
@@ -798,7 +784,7 @@ def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
     monkeypatch.setattr(rnd_widget_module, "HRTF_DIR", hrtf_dir)
     window = make_main_window()
-    measurement = _measurement("m1", "Portable HRTF")
+    measurement = rnd_measurement("m1", "Portable HRTF")
     measurement.hrtf_name = "Fixture A"
     measurement.hrtf_path = str(tmp_path / "old" / "Fixture A.txt")
 
@@ -811,7 +797,7 @@ def test_rnd_hrtf_path_resolves_by_saved_name_on_new_machine(
 
 def test_rnd_export_blocks_missing_hrtf(tmp_path, monkeypatch, make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Missing HRTF")
+    measurement = rnd_measurement("m1", "Missing HRTF")
     measurement.hrtf_name = "Fixture Gone"
     measurement.hrtf_path = str(tmp_path / "missing" / "Fixture Gone.txt")
     warnings: list[tuple] = []
@@ -860,9 +846,9 @@ def test_rnd_variation_renderer_draws_outer_inner_and_median(qapp) -> None:
 
 def test_rnd_merge_session_remaps_colliding_ids_and_names(make_main_window) -> None:
     window = make_main_window()
-    window._rnd_widget.add_measurement(_measurement("same", "Duplicate"))
+    window._rnd_widget.add_measurement(rnd_measurement("same", "Duplicate"))
     incoming = window._rnd_widget.session.__class__(
-        measurements=[_measurement("same", "Duplicate")],
+        measurements=[rnd_measurement("same", "Duplicate")],
         groups=[RnDGroup(id="group", name="Imported", measurement_ids=["same"])],
         ungrouped_order=[],
     )
@@ -1048,7 +1034,7 @@ def test_measure_var_sends_all_kept_curves_as_one_group(
 
 def test_rnd_tree_uses_view_checkboxes_without_show_column(make_main_window) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "First")
+    measurement = rnd_measurement("m1", "First")
     group = RnDGroup(
         id="g1",
         name="Prototype",
@@ -1154,7 +1140,7 @@ def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
         assert plot_widget.bottom_plot.getPlotItem().titleLabel.text == "View 2"
         assert plot_widget.top_plot.getPlotItem().titleLabel.opts["color"] == expected_color
         assert plot_widget.bottom_plot.getPlotItem().titleLabel.opts["color"] == expected_color
-    measurement = _measurement()
+    measurement = rnd_measurement()
     plot_widget.redraw(
         top_measurements=[(measurement, measurement.mag_db)],
         pinned_measurements=[],
@@ -1227,7 +1213,7 @@ def test_rnd_default_splitter_stays_half_across_window_sizes(
 def test_rnd_rows_reject_drops_onto_items(make_main_window) -> None:
     """C3: measurements reorder between rows; a group stays a drop target."""
     window = make_main_window()
-    measurement = _measurement("m1", "First")
+    measurement = rnd_measurement("m1", "First")
     group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m1"])
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.groups = [group]
@@ -1251,7 +1237,7 @@ def test_rnd_nested_group_returns_its_measurements_to_the_parent(
     window = make_main_window()
     outer = RnDGroup(id="outer", name="Outer", measurement_ids=[])
     inner = RnDGroup(id="inner", name="Inner", measurement_ids=[])
-    measurement = _measurement("m1", "Nested")
+    measurement = rnd_measurement("m1", "Nested")
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.groups = [outer, inner]
     window._rnd_widget.session.ungrouped_order = ["m1"]
@@ -1292,7 +1278,7 @@ def test_rnd_remove_takes_every_selected_row_after_one_prompt(
 ) -> None:
     """C9: multi-select Remove asks once and removes everything selected."""
     window = make_main_window()
-    measurements = [_measurement(f"m{i}", f"Row {i}") for i in range(1, 4)]
+    measurements = [rnd_measurement(f"m{i}", f"Row {i}") for i in range(1, 4)]
     group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m3"])
     window._rnd_widget.session.measurements = measurements
     window._rnd_widget.session.groups = [group]
@@ -1327,7 +1313,7 @@ def test_rnd_remove_can_be_declined_and_keeps_single_row_behaviour(
     make_main_window,
 ) -> None:
     window = make_main_window()
-    measurement = _measurement("m1", "Only")
+    measurement = rnd_measurement("m1", "Only")
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.ungrouped_order = ["m1"]
     window._rnd_widget._sync_tree()
@@ -1353,7 +1339,7 @@ def test_rnd_remove_can_be_declined_and_keeps_single_row_behaviour(
 def test_rnd_group_rename_keeps_parenthesised_names(make_main_window) -> None:
     """C10: only the row's own " (3)" count suffix is stripped."""
     window = make_main_window()
-    measurement = _measurement("m1", "First")
+    measurement = rnd_measurement("m1", "First")
     group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m1"])
     window._rnd_widget.session.measurements = [measurement]
     window._rnd_widget.session.groups = [group]
@@ -1407,7 +1393,7 @@ def test_rnd_photo_caption_survives_removing_another_photo(
 ) -> None:
     """A caption typed in the viewer is kept even when a photo is removed."""
     window = make_main_window()
-    measurement = _measurement("m1", "With Photos")
+    measurement = rnd_measurement("m1", "With Photos")
     store = window._rnd_widget.photo_store
     image = QImage(16, 16, QImage.Format.Format_RGB32)
     measurement.photos.append(store.add_image(image, display_name="One"))
@@ -1442,7 +1428,7 @@ def test_rnd_save_as_over_another_session_asks_first(
 ) -> None:
     """C1: the canonical extension is added after the dialog's own check."""
     window = make_main_window()
-    window._rnd_widget.add_measurement(_measurement())
+    window._rnd_widget.add_measurement(rnd_measurement())
     existing = tmp_path / "prototype.fastgraph-rnd.json"
     existing.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(

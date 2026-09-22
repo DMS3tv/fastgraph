@@ -13,6 +13,7 @@ import time
 
 import numpy as np
 import pytest
+from helpers import pump_until
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from dms.ui.sweep_runner import SweepRunner
@@ -63,18 +64,6 @@ class FakeSweepWorker(QObject):
             self.timing_quality.emit(12.0, 9.0, 1.5, 22.0)
             self.measurement_diagnostics.emit({"failure_reason": None})
             self.finished.emit(np.zeros(4, dtype=np.float32), np.ones(4, dtype=np.float32))
-
-
-def pump_until(qapp, predicate, timeout: float = 5.0) -> bool:
-    """Run the event loop until ``predicate`` is true or the timeout expires."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return True
-        time.sleep(0.01)
-    qapp.processEvents()
-    return bool(predicate())
 
 
 @pytest.fixture

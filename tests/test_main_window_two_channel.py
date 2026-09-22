@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from helpers import flat_curve
 from PyQt6.QtCore import QEvent, QSize
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
@@ -29,7 +30,7 @@ from dms.ui.modern_button import (
 )
 
 
-def _window(make_main_window, *, theme: str = DARK) -> MainWindow:
+def _two_channel_window(make_main_window, *, theme: str = DARK) -> MainWindow:
     return make_main_window(
         theme=theme,
         settings={
@@ -58,13 +59,6 @@ def _independent_dither_label_width(label: str) -> int:
         + 2 * _FLAT_LABEL_HORIZONTAL_INSET
         + 2 * border_width
         + _FLAT_PAINT_RECT_WIDTH_LOSS
-    )
-
-
-def _curve(level: float):
-    return (
-        np.array([100.0, 1000.0, 10000.0]),
-        np.array([level, level, level]),
     )
 
 
@@ -127,7 +121,7 @@ def _settle_segment_width_refresh(qapp, window: MainWindow) -> None:
 
 
 def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
 
     assert window.measure.two_channel_enabled is True
     assert window._plots._stack.currentWidget() is window._plots.two
@@ -142,7 +136,7 @@ def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_
 def test_measure_submode_segments_change_mode_and_stop_generator(
     monkeypatch, make_main_window
 ) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
     stop_calls = []
     monkeypatch.setattr(
         window.measure,
@@ -169,7 +163,7 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
 
 
 def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
     window.measure_tab.measure_balance_button.setChecked(True)
     window.measure.queue.state = QueueState.QUEUE_RUNNING
     window._apply_state_ui()
@@ -183,7 +177,7 @@ def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> N
 def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
     qapp, make_main_window
 ) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
     window.show()
     _settle_segment_width_refresh(qapp, window)
 
@@ -225,7 +219,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
     qapp,
     make_main_window,
 ) -> None:
-    startup_window = _window(make_main_window, theme=DITHER)
+    startup_window = _two_channel_window(make_main_window, theme=DITHER)
     startup_window.show()
     _process_theme_change(qapp)
     startup_button = startup_window.measure_tab.start_queue_btn
@@ -240,7 +234,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
     startup_window.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
-    switch_window = _window(make_main_window, theme=DARK)
+    switch_window = _two_channel_window(make_main_window, theme=DARK)
     switch_window.show()
     _process_theme_change(qapp)
     switch_button = switch_window.measure_tab.start_queue_btn
@@ -264,7 +258,7 @@ def test_measure_button_width_matches_dither_startup_and_switch_paths(
 
 
 def test_measure_submode_accessibility_and_responsive_width(make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
 
     assert window.measure_tab.measure_submode_control.accessibleName() == "Measure mode"
     assert window.measure_tab.measure_submode_control.toolTip()
@@ -290,10 +284,10 @@ def test_measure_submode_accessibility_and_responsive_width(make_main_window) ->
 
 
 def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window) -> None:
-    window = _window(make_main_window)
-    window.measure.kept_curves = [_curve(9.0)]
+    window = _two_channel_window(make_main_window)
+    window.measure.kept_curves = [flat_curve(9.0)]
     window.measure.recompute_average()
-    window.measure.two_channel_pairs = [TwoChannelCurvePair(_curve(1.0), _curve(-2.0))]
+    window.measure.two_channel_pairs = [TwoChannelCurvePair(flat_curve(1.0), flat_curve(-2.0))]
     window.measure.recompute_two_channel_results()
 
     window.measure_tab.two_channel_toggle.setChecked(False)
@@ -310,7 +304,7 @@ def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window
 
 
 def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main_window) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
     freqs = np.array([100.0, 1000.0, 10000.0])
     responses = iter(
         [
@@ -350,13 +344,13 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
 def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     monkeypatch, make_main_window
 ) -> None:
-    window = _window(make_main_window)
+    window = _two_channel_window(make_main_window)
     window.measure.queue.target = 1
     window.measure.queue.index = 0
     window.measure.queue.attempts = 1
     window.measure.queue.state = QueueState.SWEEPING
     window.measure.queue.stage = 2
-    window.measure.queue.pending_pair_first_raw = _curve(1.0)
+    window.measure.queue.pending_pair_first_raw = flat_curve(1.0)
     window.measure.queue.pending_pair_first_diagnostics = object()
     scheduled = []
     monkeypatch.setattr(

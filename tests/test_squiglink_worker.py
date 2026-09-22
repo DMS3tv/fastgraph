@@ -3,22 +3,11 @@ trusting a new SSH host key."""
 
 import time
 
+from helpers import pump_until
 from PyQt6.QtCore import QThread, QTimer
 
 from dms.squiglink import SquiglinkHostKeyMismatch, SquiglinkHostKeyUnknown
 from dms.ui.squiglink_worker import SquiglinkUploadWorker
-
-
-def _pump(qapp, predicate, timeout_s: float = 5.0) -> bool:
-    """Spin the GUI event loop until ``predicate`` holds or time runs out."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return True
-        QThread.msleep(5)
-    qapp.processEvents()
-    return predicate()
 
 
 class _Harness:
@@ -57,7 +46,7 @@ class _Harness:
     def run(self, timeout_s: float = 5.0) -> None:
         self.timer.start()
         self.thread.start()
-        _pump(self.qapp, lambda: self.result is not None or self.error is not None, timeout_s)
+        pump_until(self.qapp, lambda: self.result is not None or self.error is not None, timeout_s)
         self.timer.stop()
         self.thread.quit()
         self.thread.wait(2000)

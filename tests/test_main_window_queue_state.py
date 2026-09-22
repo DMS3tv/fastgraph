@@ -5,8 +5,8 @@ SweepRunner integration. Each test names the audit finding it pins.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+from helpers import flat_curve
 
 import dms.ui.device_controller as device_controller_module
 import dms.ui.measure_controller as measure_controller_module
@@ -15,16 +15,11 @@ from dms.measure_queue import MeasurementQueue, QueueState
 from dms.two_channel import TwoChannelCurvePair
 
 
-def _curve(level: float = 0.0):
-    freqs = np.array([20.0, 1000.0, 20000.0])
-    return freqs, np.full(3, level)
-
-
 def _pair():
-    return TwoChannelCurvePair(channel_1=_curve(0.0), channel_2=_curve(1.0))
+    return TwoChannelCurvePair(channel_1=flat_curve(0.0), channel_2=flat_curve(1.0))
 
 
-def _silence_dialogs(monkeypatch, *, expect_question: bool = True):
+def _silence_queue_dialogs(monkeypatch, *, expect_question: bool = True):
     calls = {"question": 0, "warning": 0}
 
     def question(*_args, **_kwargs):
@@ -54,7 +49,7 @@ def test_state_shims_round_trip_through_the_queue(make_main_window) -> None:
     window.measure.queue.target = 4
     window.measure.queue.index = 2
     window.measure.queue.attempts = 1
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = flat_curve()
     assert (
         window.measure.queue.target,
         window.measure.queue.index,
@@ -71,7 +66,7 @@ def test_state_shims_round_trip_through_the_queue(make_main_window) -> None:
 def test_terminal_error_resets_queue_counters(make_main_window, monkeypatch) -> None:
     """B4: a non-retryable error must not leave a phantom queue behind."""
     window = make_main_window()
-    calls = _silence_dialogs(monkeypatch)
+    calls = _silence_queue_dialogs(monkeypatch)
     window.measure.queue.target = 3
     window.measure.queue.index = 1
     window.measure.queue.attempts = 1
@@ -98,7 +93,7 @@ def test_manual_fail_restores_the_retry_budget(make_main_window, monkeypatch) ->
     window.measure.queue.target = 2
     window.measure.queue.index = 0
     window.measure.queue.attempts = 2
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = flat_curve()
     window.measure.queue.state = QueueState.PASS_FAIL
 
     window.measure.on_fail()
@@ -119,7 +114,7 @@ def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
     window.measure.queue.state = QueueState.PASS_FAIL
     window.measure.queue.stage = 2
     window.measure.queue.pending_pair = _pair()
-    window.measure.queue.pending_pair_first_raw = _curve()
+    window.measure.queue.pending_pair_first_raw = flat_curve()
     window.measure.queue.pending_pair_first_diagnostics = object()
 
     window.measure.cancel_queue()
@@ -135,7 +130,7 @@ def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
 def test_device_error_is_terminal_in_two_channel_mode(make_main_window, monkeypatch) -> None:
     """B8: an unplugged interface must not prompt three pair retries."""
     window = make_main_window(settings={"measure_two_channel_enabled": True})
-    calls = _silence_dialogs(monkeypatch)
+    calls = _silence_queue_dialogs(monkeypatch)
     window.measure.queue.target = 2
     window.measure.queue.index = 0
     window.measure.queue.attempts = 1
@@ -152,13 +147,13 @@ def test_device_error_is_terminal_in_two_channel_mode(make_main_window, monkeypa
 
 def test_stream_error_still_offers_pair_retry(make_main_window, monkeypatch) -> None:
     window = make_main_window(settings={"measure_two_channel_enabled": True})
-    calls = _silence_dialogs(monkeypatch)
+    calls = _silence_queue_dialogs(monkeypatch)
     window.measure.queue.target = 2
     window.measure.queue.index = 0
     window.measure.queue.attempts = 1
     window.measure.queue.state = QueueState.SWEEPING
     window.measure.queue.stage = 2
-    window.measure.queue.pending_pair_first_raw = _curve()
+    window.measure.queue.pending_pair_first_raw = flat_curve()
 
     window.measure.on_sweep_error("Channel 2 stream failed.")
 
@@ -204,7 +199,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
     window.measure.queue.target = 1
     window.measure.queue.index = 0
     monkeypatch.setattr(window.devices, "current_output_device", lambda: None)
-    calls = _silence_dialogs(monkeypatch)
+    calls = _silence_queue_dialogs(monkeypatch)
     window.measure.start_next_sweep()
 
     assert stopped == [True]
@@ -257,7 +252,7 @@ def test_vanished_device_aborts_even_during_review(make_main_window, monkeypatch
     window.devices._last_output_devices = [(1, "Out", 0)]
     window.devices._last_input_devices = [(2, "In", 0)]
     window.measure.queue.target = 2
-    window.measure.queue.pending_curve = _curve()
+    window.measure.queue.pending_curve = flat_curve()
     window.measure.queue.state = QueueState.PASS_FAIL
 
     window.devices.check_devices()
@@ -287,7 +282,7 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
     confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window.measure_io)  # noqa: E731
     assert confirm() is True
 
-    window.measure.kept_curves.append(_curve())
+    window.measure.kept_curves.append(flat_curve())
     # The prompt is about *unsaved* work now, so keeping a curve has to mark
     # the Measure session dirty the way ``_on_keep`` does.
     window.measure_io.mark_dirty()

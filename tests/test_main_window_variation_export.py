@@ -25,7 +25,7 @@ def _set_variation_mode(window, checked: bool) -> None:
     window.measure_tab.variation_toggle.blockSignals(False)
 
 
-def _window(make_main_window, *, variation_mode: bool = False, **kwargs):
+def _variation_window(make_main_window, *, variation_mode: bool = False, **kwargs):
     window = make_main_window(**kwargs)
     _set_variation_mode(window, variation_mode)
     window.measure.average = (np.array([100.0]), np.array([1.0]))
@@ -36,7 +36,7 @@ def _window(make_main_window, *, variation_mode: bool = False, **kwargs):
 def test_sync_export_button_switches_label_and_keeps_upload_average_based(
     make_main_window,
 ) -> None:
-    window = _window(make_main_window, variation_mode=True)
+    window = _variation_window(make_main_window, variation_mode=True)
     window.measure.average = (np.array([100.0]), np.array([1.0]))
     window.measure.variation = None
 
@@ -59,7 +59,7 @@ def test_sync_export_button_switches_label_and_keeps_upload_average_based(
 def test_sync_export_button_disables_upload_without_average_even_with_variation(
     make_main_window,
 ) -> None:
-    window = _window(make_main_window, variation_mode=True)
+    window = _variation_window(make_main_window, variation_mode=True)
     window.measure.average = None
 
     window.measure_io.sync_export_button()
@@ -83,7 +83,7 @@ def test_export_variation_uses_current_variation_data(
         lambda **kwargs: written.update(kwargs),
     )
 
-    window = _window(
+    window = _variation_window(
         make_main_window,
         variation_mode=True,
         session=SessionData(rig="GRAS", brand="DMS", model="Example"),
@@ -113,7 +113,7 @@ def test_export_variation_empty_state_has_variation_copy(make_main_window, monke
         lambda _parent, title, message: info_calls.append((title, message)),
     )
 
-    window = _window(make_main_window, variation_mode=True)
+    window = _variation_window(make_main_window, variation_mode=True)
     window.measure.variation = None
 
     window.measure_io.export()

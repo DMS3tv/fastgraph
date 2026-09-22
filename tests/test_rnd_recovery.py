@@ -4,13 +4,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import rnd_measurement
 from PyQt6.QtGui import QImage
 from PyQt6.QtTest import QTest
 
 import dms.rnd.persistence as persistence
 from dms.file_io import ensure_extension
 from dms.recovery import rnd_recovery_manager
-from dms.rnd.models import RnDGroup, RnDMeasurement, RnDSession
+from dms.rnd.models import RnDGroup, RnDSession
 from dms.rnd.persistence import (
     RND_SESSION_EXTENSION,
     load_rnd_session,
@@ -19,24 +20,8 @@ from dms.rnd.persistence import (
 from dms.rnd.photos import RnDPhotoStore, attachment_directory
 
 
-def _measurement(mid: str = "m1", name: str = "One") -> RnDMeasurement:
-    return RnDMeasurement(
-        id=mid,
-        name=name,
-        freqs=np.array([100.0, 1000.0]),
-        mag_db=np.array([1.0, 0.0]),
-        metadata={"brand": "DMS"},
-        rig="Rig",
-        input_device_label="Input",
-        input_channel_index=0,
-        input_channel_label="Channel 1",
-        output_device_label="Output",
-        notes="Pads changed",
-    )
-
-
-def _session(name: str = "One") -> RnDSession:
-    measurement = _measurement(name=name)
+def _rnd_session(name: str = "One") -> RnDSession:
+    measurement = rnd_measurement(name=name, notes="Pads changed")
     group = RnDGroup(id="g1", name="Prototype", measurement_ids=["m1"])
     return RnDSession(
         measurements=[measurement],
@@ -72,7 +57,7 @@ def test_rnd_session_extension_is_complete(
 
 def test_atomic_session_save_round_trips_state_and_photos(tmp_path: Path) -> None:
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     image = QImage(64, 64, QImage.Format.Format_RGB32)
     session.measurements[0].photos.append(store.add_image(image, display_name="Pads"))
     path = tmp_path / "session.fastgraph-rnd.json"
@@ -93,7 +78,7 @@ def test_atomic_replace_failure_keeps_last_valid_manifest(
 ) -> None:
     store = RnDPhotoStore()
     path = tmp_path / "session.fastgraph-rnd.json"
-    first = _session("First")
+    first = _rnd_session("First")
     save_rnd_session(first, store, path)
     real_replace = os.replace
 
@@ -104,7 +89,7 @@ def test_atomic_replace_failure_keeps_last_valid_manifest(
 
     monkeypatch.setattr(persistence.os, "replace", fail_manifest_replace)
     with pytest.raises(OSError, match="simulated interruption"):
-        save_rnd_session(_session("Second"), store, path)
+        save_rnd_session(_rnd_session("Second"), store, path)
 
     loaded, _missing = load_rnd_session(path)
     assert loaded.measurements[0].name == "First"
@@ -114,14 +99,14 @@ def test_recovery_falls_back_to_previous_and_quarantines_invalid_current(
     tmp_path: Path,
 ) -> None:
     store = RnDPhotoStore()
-    current_session = _session("First")
+    current_session = _rnd_session("First")
     manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(current_session, store),
     )
     first_snapshot, first_sources = persistence.session_snapshot(current_session, store)
     manager._save_snapshot(first_snapshot, first_sources)
-    second_session = _session("Second")
+    second_session = _rnd_session("Second")
     second_snapshot, second_sources = persistence.session_snapshot(second_session, store)
     manager._save_snapshot(second_snapshot, second_sources)
     manager.current_path.write_text("{broken", encoding="utf-8")
@@ -138,7 +123,7 @@ def test_recovery_falls_back_to_previous_and_quarantines_invalid_current(
 
 def test_keep_for_later_preserves_bundle_and_clears_active(tmp_path: Path) -> None:
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
@@ -159,7 +144,7 @@ def test_keep_for_later_preserves_bundle_and_clears_active(tmp_path: Path) -> No
 
 def test_recovery_debounces_rapid_changes_and_clears_error(qapp, tmp_path: Path) -> None:
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     snapshots = 0
 
     def provider():
@@ -196,7 +181,7 @@ def test_recovery_maximum_timer_saves_during_continuous_changes(
     tmp_path: Path,
 ) -> None:
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
@@ -225,7 +210,7 @@ def test_save_as_to_another_session_keeps_that_sessions_photos(tmp_path: Path) -
     """C1: only a save back to the session's own file prunes attachments."""
     store = RnDPhotoStore()
     image = QImage(32, 32, QImage.Format.Format_RGB32)
-    existing = _session("Existing")
+    existing = _rnd_session("Existing")
     existing.measurements[0].photos.append(store.add_image(image, display_name="Pads"))
     destination = tmp_path / "existing.fastgraph-rnd.json"
     save_rnd_session(existing, store, destination)
@@ -234,7 +219,7 @@ def test_save_as_to_another_session_keeps_that_sessions_photos(tmp_path: Path) -
     )
     assert stranger_photo.is_file()
 
-    incoming = _session("Incoming")
+    incoming = _rnd_session("Incoming")
     incoming.source_path = str(tmp_path / "elsewhere.fastgraph-rnd.json")
     save_rnd_session(incoming, RnDPhotoStore(), destination)
 
@@ -249,7 +234,7 @@ def test_save_as_to_another_session_keeps_that_sessions_photos(tmp_path: Path) -
 def test_loading_a_session_records_its_path(tmp_path: Path) -> None:
     store = RnDPhotoStore()
     path = tmp_path / "session.fastgraph-rnd.json"
-    save_rnd_session(_session(), store, path)
+    save_rnd_session(_rnd_session(), store, path)
 
     loaded, _missing = load_rnd_session(path, RnDPhotoStore())
 
@@ -260,7 +245,7 @@ def test_photo_file_names_from_json_cannot_escape_their_directories(tmp_path: Pa
     """C7: ``file_name`` is attacker-controlled text, so it is basenamed."""
     store = RnDPhotoStore()
     image = QImage(16, 16, QImage.Format.Format_RGB32)
-    session = _session()
+    session = _rnd_session()
     photo = store.add_image(image, display_name="Pads")
     session.measurements[0].photos.append(photo)
     path = tmp_path / "session.fastgraph-rnd.json"
@@ -287,7 +272,7 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
 ) -> None:
     """C5: a broken current -> previous copy must not cost the new snapshot."""
     store = RnDPhotoStore()
-    session = _session("First")
+    session = _rnd_session("First")
     manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
@@ -304,7 +289,7 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
         return real_copy(source, destination)
 
     monkeypatch.setattr(manager, "_copy", fail_previous)
-    second = _session("Second")
+    second = _rnd_session("Second")
     second_snapshot, second_sources = persistence.session_snapshot(second, store)
     manager._save_snapshot(second_snapshot, second_sources)
 
@@ -322,7 +307,7 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
 def test_newer_schema_is_reported_not_quarantined(caplog, tmp_path: Path) -> None:
     """C8: a session from a newer Fastgraph is intact; only junk is quarantined."""
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
@@ -352,7 +337,7 @@ def test_newer_schema_is_reported_not_quarantined(caplog, tmp_path: Path) -> Non
 
 def test_quarantine_moves_the_photo_sidecar_with_the_manifest(tmp_path: Path) -> None:
     store = RnDPhotoStore()
-    session = _session()
+    session = _rnd_session()
     image = QImage(16, 16, QImage.Format.Format_RGB32)
     session.measurements[0].photos.append(store.add_image(image, display_name="Pads"))
     manager = rnd_recovery_manager(

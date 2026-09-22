@@ -9,7 +9,7 @@ def _write_hrtf(path: Path) -> None:
     path.write_text("100 1\n1000 2\n", encoding="utf-8")
 
 
-def _window(make_main_window):
+def _refresh_counting_window(make_main_window):
     """A real window whose plot refreshes are counted instead of drawn."""
     window = make_main_window()
     window.update_count = 0
@@ -30,7 +30,7 @@ def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(
     _write_hrtf(hrtf_dir / "Beta.txt")
     _write_hrtf(hrtf_dir / "Alpha.txt")
     monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
-    window = _window(make_main_window)
+    window = _refresh_counting_window(make_main_window)
 
     window.measure.refresh_hrtf_options()
 
@@ -68,7 +68,7 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
     hrtf_path = hrtf_dir / "Fixture A.txt"
     _write_hrtf(hrtf_path)
     monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
-    window = _window(make_main_window)
+    window = _refresh_counting_window(make_main_window)
     window.measure.refresh_hrtf_options()
 
     window.measure_tab.hrtf_combo.setCurrentIndex(
@@ -94,7 +94,7 @@ def test_selecting_none_clears_hrtf_and_disables_compensation(
     hrtf_path = hrtf_dir / "Fixture A.txt"
     _write_hrtf(hrtf_path)
     monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
-    window = _window(make_main_window)
+    window = _refresh_counting_window(make_main_window)
     window.measure.refresh_hrtf_options()
     window.measure_tab.hrtf_combo.setCurrentIndex(
         window.measure_tab.hrtf_combo.findData(str(hrtf_path))
@@ -119,7 +119,7 @@ def test_restore_ignores_missing_or_legacy_custom_hrtf_path(
     custom_path = tmp_path / "Custom.txt"
     _write_hrtf(custom_path)
     monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
-    window = _window(make_main_window)
+    window = _refresh_counting_window(make_main_window)
     window._settings.set("hrtf_path", str(custom_path))
 
     window.measure.restore_hrtf_state()

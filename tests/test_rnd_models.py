@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import rnd_measurement
 from PyQt6.QtGui import QImage
 
 from dms.rnd.models import (
@@ -17,24 +18,9 @@ from dms.rnd.photos import RnDPhotoStore, attachment_directory
 from dms.session import SessionData
 
 
-def _measurement(mid: str, name: str, shift: float = 0.0) -> RnDMeasurement:
-    return RnDMeasurement(
-        id=mid,
-        name=name,
-        freqs=np.array([100.0, 1000.0, 10000.0]),
-        mag_db=np.array([1.0 + shift, 0.0 + shift, -1.0 + shift]),
-        metadata={"brand": "DMS", "model": "Demo", "rig": "Rig"},
-        rig="Rig",
-        input_device_label="Input",
-        input_channel_index=0,
-        input_channel_label="Channel 1",
-        output_device_label="Output",
-    )
-
-
 def test_rnd_session_round_trip_and_order_repair() -> None:
-    first = _measurement("a", "A")
-    second = _measurement("b", "B", 1.0)
+    first = rnd_measurement("a", "A")
+    second = rnd_measurement("b", "B", 1.0)
     first.vertical_offset_db = 1.5
     first.hrtf_name = "Fixture A"
     first.hrtf_path = "old/path/Fixture A.txt"
@@ -84,7 +70,7 @@ def test_rnd_session_round_trip_and_order_repair() -> None:
 
 def test_rnd_session_old_offset_and_bounds_fields_default_to_zero_and_off() -> None:
     session = RnDSession(
-        measurements=[_measurement("a", "A")],
+        measurements=[rnd_measurement("a", "A")],
         groups=[RnDGroup(id="g", name="Group", measurement_ids=["a"])],
         ungrouped_order=[],
     )
@@ -123,7 +109,7 @@ def test_rnd_session_rejects_unknown_schema() -> None:
 
 def test_rnd_session_reads_older_schema_and_flags_newer_one() -> None:
     """C8: only a *newer* file is refused, and with its own exception type."""
-    measurement = _measurement("a", "A")
+    measurement = rnd_measurement("a", "A")
     older = RnDSession(measurements=[measurement], ungrouped_order=["a"]).to_dict()
     older["schema_version"] = 0
     older.pop("smoothing_fraction")
@@ -144,7 +130,7 @@ def test_rnd_session_reads_older_schema_and_flags_newer_one() -> None:
 
 
 def test_rnd_photo_round_trip_and_legacy_default() -> None:
-    measurement = _measurement("a", "A")
+    measurement = rnd_measurement("a", "A")
     measurement.photos.append(RnDPhoto(id="p", display_name="Pad", caption="New pads"))
     group = RnDGroup(id="g", name="Group", photos=[RnDPhoto(id="q", display_name="Fixture")])
     session = RnDSession(measurements=[measurement], groups=[group], ungrouped_order=["a"])
@@ -165,7 +151,7 @@ def test_rnd_photo_store_saves_sidecar_hydrates_and_preserves_unrelated_files(
     store = RnDPhotoStore()
     image = QImage(1800, 900, QImage.Format.Format_RGB32)
     photo = store.add_image(image, display_name="Webcam")
-    measurement = _measurement("a", "A")
+    measurement = rnd_measurement("a", "A")
     measurement.photos.append(photo)
     session = RnDSession(measurements=[measurement], ungrouped_order=["a"])
     path = tmp_path / "demo.fastgraph-rnd.json"
@@ -203,9 +189,9 @@ def test_generate_measurement_name_uses_metadata_and_channel_with_suffix() -> No
 
 
 def test_group_variation_requires_two_measurements_and_returns_percentiles() -> None:
-    assert group_variation([_measurement("a", "A")]) is None
+    assert group_variation([rnd_measurement("a", "A")]) is None
 
-    variation = group_variation([_measurement("a", "A"), _measurement("b", "B", 2.0)])
+    variation = group_variation([rnd_measurement("a", "A"), rnd_measurement("b", "B", 2.0)])
 
     assert variation is not None
     assert len(variation.freqs) == 1200
@@ -263,7 +249,7 @@ def _former_measurement_session_data(measurement: RnDMeasurement) -> SessionData
     ],
 )
 def test_session_data_from_measurement_metadata_matches_the_former_reader(metadata) -> None:
-    measurement = _measurement("m1", "One")
+    measurement = rnd_measurement("m1", "One")
     measurement.metadata = metadata
 
     rebuilt = SessionData.from_dict({"rig": measurement.rig, **measurement.metadata})

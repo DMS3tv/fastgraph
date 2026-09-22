@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from helpers import ramp_curve
 
 from dms.measure_session import (
     MEASURE_SESSION_SCHEMA_VERSION,
@@ -17,12 +18,6 @@ from dms.measurement_alignment import MeasurementDiagnostics
 from dms.processing import HarmonicAnalysis
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
-
-
-def _curve(offset: float = 0.0, points: int = 600):
-    freqs = np.geomspace(20.0, 20000.0, points)
-    mag_db = np.linspace(-5.0, 5.0, points) + offset
-    return freqs, mag_db
 
 
 def _session_data() -> SessionData:
@@ -72,7 +67,7 @@ def _populated(two_channel: bool = False) -> MeasureSession:
         hrtf_enabled=True,
         notes="Pads reseated",
     )
-    freqs, mag_db = _curve()
+    freqs, mag_db = ramp_curve()
     session.add_sweep(
         freqs,
         mag_db,
@@ -81,11 +76,11 @@ def _populated(two_channel: bool = False) -> MeasureSession:
         distortion=_harmonics(),
         note="first",
     )
-    session.add_sweep(*_curve(1.0))
+    session.add_sweep(*ramp_curve(1.0))
     session.add_pair(
         TwoChannelCurvePair(
-            channel_1=_curve(0.5),
-            channel_2=_curve(-0.5),
+            channel_1=ramp_curve(0.5),
+            channel_2=ramp_curve(-0.5),
             channel_1_diagnostics=_diagnostics(),
             channel_2_diagnostics={"fs": 48000},
         )
@@ -125,7 +120,7 @@ def test_round_trip_preserves_sweeps_pairs_and_settings() -> None:
 
 
 def test_arrays_round_trip_within_serialization_tolerance() -> None:
-    freqs, mag_db = _curve()
+    freqs, mag_db = ramp_curve()
     mag_db = mag_db + 1e-9  # below the six-decimal rounding
     session = MeasureSession(metadata=_session_data())
     session.add_sweep(freqs, mag_db)
@@ -137,7 +132,7 @@ def test_arrays_round_trip_within_serialization_tolerance() -> None:
 
 
 def test_older_files_load_with_this_versions_defaults() -> None:
-    freqs, mag_db = _curve(points=8)
+    freqs, mag_db = ramp_curve(points=8)
     legacy = {
         "schema_version": 0,
         "metadata": {"rig": "Rig", "brand": "DMS", "model": "Old"},
@@ -172,19 +167,19 @@ def test_is_empty_tracks_both_workspaces() -> None:
     session = MeasureSession(metadata=_session_data())
     assert session.is_empty() is True
 
-    session.add_sweep(*_curve())
+    session.add_sweep(*ramp_curve())
     assert session.is_empty() is False
 
     paired = MeasureSession(metadata=_session_data(), two_channel=True)
     assert paired.is_empty() is True
-    paired.add_pair(_curve(), _curve(-1.0))
+    paired.add_pair(ramp_curve(), ramp_curve(-1.0))
     assert paired.is_empty() is False
     assert paired.kept_count() == 1
 
 
 def test_from_window_state_mirrors_the_measure_tab() -> None:
-    kept_curves = [_curve(), _curve(1.0), _curve(2.0)]
-    pairs = [TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(-1.0))]
+    kept_curves = [ramp_curve(), ramp_curve(1.0), ramp_curve(2.0)]
+    pairs = [TwoChannelCurvePair(channel_1=ramp_curve(), channel_2=ramp_curve(-1.0))]
 
     session = MeasureSession.from_window_state(
         session_data=_session_data(),
@@ -220,18 +215,18 @@ def test_curves_and_pair_objects_follow_the_active_workspace() -> None:
     single = _populated(two_channel=False)
     curves = single.curves()
     assert len(curves) == 2
-    assert curves[0][0].shape == (600,)
+    assert curves[0][0].shape == ramp_curve()[0].shape
 
     paired = _populated(two_channel=True)
-    paired.add_pair(_curve(2.0), _curve(-2.0))
+    paired.add_pair(ramp_curve(2.0), ramp_curve(-2.0))
 
     assert len(paired.pair_objects()) == 2
     assert all(isinstance(item, TwoChannelCurvePair) for item in paired.pair_objects())
     left = paired.curves(selection="channel_1")
     assert len(left) == 2
-    _assert_curves_close(left[:1], [_curve(0.5)])
+    _assert_curves_close(left[:1], [ramp_curve(0.5)])
     right = paired.curves(selection="channel_2")
-    _assert_curves_close(right[:1], [_curve(-0.5)])
+    _assert_curves_close(right[:1], [ramp_curve(-0.5)])
     combined = paired.curves(n_points=256)
     assert len(combined) == 2
     assert combined[0][0].shape == (256,)

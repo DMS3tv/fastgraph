@@ -24,7 +24,7 @@ for the tests written specifically for this document.
 
 `generate_log_sweep` in `dms/processing.py` builds a Farina logarithmic sine
 sweep with 10 ms raised-cosine fades at each end and returns float32.
-`MainWindow._start_next_sweep` multiplies it by the output-level gain. The
+`MeasureController.start_next_sweep` multiplies it by the output-level gain. The
 scaled sweep is both what plays and what the deconvolution later uses as its
 reference, so the gain cancels out of the transfer function.
 
@@ -95,13 +95,13 @@ not change the linear response of that system by more than 0.2 dB.
 
 ## 5. Level reference and resampling
 
-In `MainWindow._on_sweep_finished`:
+In `MeasureController.on_sweep_finished`:
 
 - **1 kHz reference mode** (default): `normalize_at_1khz` subtracts the
   linearly interpolated value at 1000 Hz. Constant offset.
 - **dB SPL mode**: `absolute_spl_offset_db` adds one constant derived from
   the calibrated microphone sensitivity and the output level. No
-  re-zeroing. If the input device is not calibrated the window falls back
+  re-zeroing. If the input device is not calibrated the controller falls back
   to the 1 kHz mode and says so in the status bar.
 - Two-channel mode: `shared_normalize_pair_at_1khz` in `dms/two_channel.py`
   subtracts one shared offset from both channels so their relative level
@@ -120,12 +120,12 @@ offset), `tests/test_two_channel.py`.
 
 ## 6. Keep, average, variation, HRTF
 
-- `MainWindow._on_keep` stores the 600-point curve unchanged.
-- `MainWindow._recompute_average` calls `compute_rms_average`: every kept
+- `MeasureController.on_keep` stores the 600-point curve unchanged.
+- `MeasureController.recompute_average` calls `compute_rms_average`: every kept
   curve is interpolated onto a shared 1200-point log grid and the curves
   are combined as a power mean, then re-zeroed at 1 kHz unless in dB SPL
   mode.
-- `MainWindow._variation_from_curves` builds the population band: each
+- `MeasureController.variation_from_curves` builds the population band: each
   curve interpolated onto the grid, HRTF applied, smoothed at 1/48 octave,
   then the 10th/25th/50th/75th/90th percentiles across curves.
 - HRTF compensation is `HRTFCurve.apply` in `dms/hrtf.py`:
@@ -142,7 +142,7 @@ re-zeroes only when asked), `tests/test_hrtf_edges.py`,
 
 ## 7. Display
 
-`MainWindow._bottom_curve_for_display` smooths the average with
+`MeasureController.bottom_curve_for_display` smooths the average with
 `smooth_fractional_octave` at 1/48 octave for the bottom plot. Kept curves
 on the top plot are drawn unsmoothed.
 
@@ -171,7 +171,7 @@ decimals and records what was done in the header: `* Smoothing: 1/48 octave`,
 file, and the number of averaged sweeps. It writes the values it is given.
 
 - **Export Average**, **Export All** and the **Squiglink upload** all write
-  `_bottom_curve_for_display()`: the same smoothed, compensated curve the
+  `MeasureController.bottom_curve_for_display()`: the same smoothed, compensated curve the
   bottom plot shows. The rule is *export what you display*.
 - **Export Variation** writes the six-column percentile band.
 - `upload_export_sftp` in `dms/squiglink.py` sends the exported file with

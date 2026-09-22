@@ -1,7 +1,8 @@
 """
 Main application window.
-Orchestrates: device selectors, level meter, dual plot, queue control,
-pass/fail UI, HRTF selector, settings/calibration, and export.
+Builds the tabs, the tab header, the Inputs and metadata overlays, keyboard
+shortcuts and theme, and wires the controllers together. Measure state and the
+measurement queue live in ``MeasureController`` (``window.measure``).
 """
 
 import contextlib

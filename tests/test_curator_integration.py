@@ -315,7 +315,7 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(
     window._update_plots()
     expected_freqs, expected_mag = window._bottom_curve_for_display()
 
-    window._send_to_curator()
+    window.rnd.send_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
@@ -349,7 +349,7 @@ def test_send_variation_offsets_display_with_editable_hrtf(
     window._variation = VariationBand(freqs, *rows)
     expected = tuple(np.array(values, copy=True) for values in rows)
 
-    window._send_to_curator()
+    window.rnd.send_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
@@ -396,7 +396,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
         for values in (band.p10, band.p25, band.median, band.p75, band.p90)
     )
 
-    window._send_to_curator()
+    window.rnd.send_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
@@ -430,7 +430,7 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_
         p90=np.array([80.0, 81.0, 82.0]),
     )
 
-    window._send_to_curator()
+    window.rnd.send_to_curator()
 
     state = window._curator_widget.graph_state
     layer = state.layers[0]

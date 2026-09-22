@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import dms.ui.main_window as main_window_module
+import dms.ui.rnd_bridge as rnd_bridge_module
 import dms.ui.rnd_widget as rnd_widget_module
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import QueueState
@@ -130,7 +130,7 @@ def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
     window.measure_tab.ch_combo.clear()
     window.measure_tab.ch_combo.addItem("Channel 1", 0)
 
-    window._keep_rnd_measurement(change_status="changed", notes="Pad revision")
+    window.rnd._keep_rnd_measurement(change_status="changed", notes="Pad revision")
 
     measurement = window._rnd_widget.session.measurements[0]
     assert measurement.name == "DMS Demo - Rig - Input A - Channel 1"
@@ -145,7 +145,7 @@ def test_rnd_review_curve_is_temporary_and_copied(make_main_window) -> None:
     window = make_main_window()
     freqs = np.array([100.0, 1000.0])
     mag_db = np.array([1.0, 0.0])
-    window._rnd_dirty = False
+    window.rnd.dirty = False
 
     window._rnd_widget.set_review_curve((freqs, mag_db))
     freqs[:] = 0.0
@@ -156,7 +156,7 @@ def test_rnd_review_curve_is_temporary_and_copied(make_main_window) -> None:
     np.testing.assert_array_equal(preview[0], np.array([100.0, 1000.0]))
     np.testing.assert_array_equal(preview[1], np.array([1.0, 0.0]))
     assert window._rnd_widget.session.measurements == []
-    assert window._rnd_dirty is False
+    assert window.rnd.dirty is False
 
 
 def test_rnd_selected_item_photo_panel_tracks_measurement_photos(make_main_window) -> None:
@@ -180,13 +180,13 @@ def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
     window._state = QueueState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     window._rnd_widget.set_review_curve(window._pending_curve)
-    window._start_rnd_measurement = lambda: None
+    window.rnd.start_measurement = lambda: None
 
     class _Dialog:
         def choice(self):
             return RnDReviewDialog.FAIL
 
-    window._handle_rnd_review_choice(_Dialog())
+    window.rnd._handle_rnd_review_choice(_Dialog())
 
     assert window._rnd_widget.session.measurements == []
     assert window._pending_curve is None
@@ -195,17 +195,17 @@ def test_rnd_fail_review_does_not_keep(make_main_window) -> None:
 
 def test_rnd_dirty_state_ignores_selection_and_tracks_content(make_main_window) -> None:
     window = make_main_window()
-    window._rnd_recovery.enable()
+    window.rnd._recovery.enable()
 
     window._rnd_widget.add_measurement(_measurement())
-    assert window._rnd_dirty is True
+    assert window.rnd.dirty is True
 
-    window._rnd_dirty = False
+    window.rnd.dirty = False
     window._rnd_widget.selection_changed.emit()
-    assert window._rnd_dirty is False
+    assert window.rnd.dirty is False
 
     window._rnd_widget._notes_edit.setPlainText("Changed")
-    assert window._rnd_dirty is True
+    assert window.rnd.dirty is True
 
 
 def test_rnd_manual_save_and_load_modes_update_dirty_state(
@@ -215,13 +215,13 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
     window._rnd_widget.add_measurement(_measurement("current", "Current"))
     save_path = tmp_path / "saved.fastgraph-rnd.json"
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        rnd_bridge_module.QFileDialog,
         "getSaveFileName",
         lambda *args, **kwargs: (str(save_path), ""),
     )
 
-    assert window._save_rnd_session() is True
-    assert window._rnd_dirty is False
+    assert window.rnd.save_session() is True
+    assert window.rnd.dirty is False
 
     incoming_path = tmp_path / "incoming.fastgraph-rnd.json"
     incoming = window._rnd_widget.session.__class__(
@@ -230,20 +230,20 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
     )
     save_rnd_session(incoming, RnDPhotoStore(), incoming_path)
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        rnd_bridge_module.QFileDialog,
         "getOpenFileName",
         lambda *args, **kwargs: (str(incoming_path), ""),
     )
-    window._choose_rnd_load_mode = lambda: "clear"
+    window.rnd._choose_rnd_load_mode = lambda: "clear"
     monkeypatch.setattr(
         QMessageBox,
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.No,
     )
 
-    window._load_rnd_session()
+    window.rnd.load_session()
     assert window._rnd_widget.session.measurements[0].name == "Incoming"
-    assert window._rnd_dirty is False
+    assert window.rnd.dirty is False
 
     merge_path = tmp_path / "merge.fastgraph-rnd.json"
     merge = window._rnd_widget.session.__class__(
@@ -252,14 +252,14 @@ def test_rnd_manual_save_and_load_modes_update_dirty_state(
     )
     save_rnd_session(merge, RnDPhotoStore(), merge_path)
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        rnd_bridge_module.QFileDialog,
         "getOpenFileName",
         lambda *args, **kwargs: (str(merge_path), ""),
     )
-    window._choose_rnd_load_mode = lambda: "merge"
+    window.rnd._choose_rnd_load_mode = lambda: "merge"
 
-    window._load_rnd_session()
-    assert window._rnd_dirty is True
+    window.rnd.load_session()
+    assert window.rnd.dirty is True
 
 
 def test_rnd_manual_save_completes_partial_extension(
@@ -270,25 +270,25 @@ def test_rnd_manual_save_completes_partial_extension(
     selected_path = tmp_path / "prototype.fastgraph-rnd"
     expected_path = tmp_path / "prototype.fastgraph-rnd.json"
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        rnd_bridge_module.QFileDialog,
         "getSaveFileName",
         lambda *args, **kwargs: (str(selected_path), ""),
     )
 
-    assert window._save_rnd_session() is True
+    assert window.rnd.save_session() is True
     assert expected_path.is_file()
     assert not selected_path.exists()
-    assert window._rnd_dirty is False
+    assert window.rnd.dirty is False
 
 
 def test_rnd_recovery_warning_persists_until_success(make_main_window) -> None:
     window = make_main_window()
 
-    window._on_rnd_recovery_failed("disk full")
+    window.rnd._on_rnd_recovery_failed("disk full")
     window._rnd_widget.set_status("Ready")
     assert window._rnd_widget._status_label.text() == "R&D recovery save failed"
 
-    window._on_rnd_recovery_saved()
+    window.rnd._on_rnd_recovery_saved()
     assert window._rnd_widget._status_label.text() == "Ready"
 
 
@@ -311,10 +311,10 @@ def test_rnd_close_prompt_paths(
     window = make_main_window(confirm_rnd_close=False)
     window._rnd_widget.add_measurement(_measurement())
     monkeypatch.setattr(QMessageBox, "exec", lambda self: result)
-    window._save_rnd_session = lambda: save_result
+    window.rnd.save_session = lambda: save_result
 
-    assert window._confirm_rnd_close() is expected
-    window._confirm_rnd_close = lambda: True
+    assert window.rnd.confirm_close() is expected
+    window.rnd.confirm_close = lambda: True
 
 
 def test_startup_recovery_restores_before_app_start_automation(
@@ -330,7 +330,7 @@ def test_startup_recovery_restores_before_app_start_automation(
     save_rnd_session(
         session,
         RnDPhotoStore(),
-        window._rnd_recovery.current_path,
+        window.rnd._recovery.current_path,
         cleanup_stale_photos=False,
     )
     events: list[tuple[str, int]] = []
@@ -355,11 +355,11 @@ def test_startup_recovery_restores_before_app_start_automation(
         def selected_candidate(self):
             return self._candidate
 
-    monkeypatch.setattr(main_window_module, "RnDRecoveryDialog", RestoreDialog)
-    window._initialize_rnd_recovery()
+    monkeypatch.setattr(rnd_bridge_module, "RnDRecoveryDialog", RestoreDialog)
+    window.rnd.initialize_recovery()
 
     assert window._rnd_widget.session.measurements[0].name == "Recovered"
-    assert window._rnd_dirty is True
+    assert window.rnd.dirty is True
     assert events == [("app_start", 1)]
 
 
@@ -381,7 +381,7 @@ def test_rnd_group_toggles_and_curator_send(make_main_window) -> None:
     window._rnd_widget.replace_session(window._rnd_widget.session)
     window._rnd_widget._select_id("g1")
 
-    window._send_rnd_to_curator()
+    window.rnd.send_rnd_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     assert layer.name == "Prototype A VAR"
@@ -508,7 +508,7 @@ def test_rnd_offsets_are_additive_for_display_and_curator_send(make_main_window)
     assert np.allclose(freqs, [100.0, 1000.0])
     assert np.allclose(mag, [6.0, 5.0])
 
-    window._send_rnd_to_curator()
+    window.rnd.send_rnd_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     assert layer.name == "Offset Target"
@@ -611,9 +611,9 @@ def test_rnd_export_uses_selected_smoothing(tmp_path, monkeypatch, make_main_win
         captured.update(kwargs)
 
     monkeypatch.setattr(rnd_widget_module, "smooth_fractional_octave", fake_smooth)
-    monkeypatch.setattr(main_window_module, "export_curve", fake_export_curve)
+    monkeypatch.setattr(rnd_bridge_module, "export_curve", fake_export_curve)
 
-    window._export_rnd_measurement(measurement, str(tmp_path / "smooth.txt"))
+    window.rnd._export_rnd_measurement(measurement, str(tmp_path / "smooth.txt"))
 
     assert np.allclose(captured["mag_db"], [7.0, 6.0])
 
@@ -625,7 +625,7 @@ def test_rnd_export_header_records_smoothing_and_offset(tmp_path, make_main_wind
     window._rnd_widget.session.smoothing_fraction = 12
     output = tmp_path / "offset.txt"
 
-    window._export_rnd_measurement(measurement, str(output))
+    window.rnd._export_rnd_measurement(measurement, str(output))
 
     text = output.read_text(encoding="utf-8")
     assert "* Smoothing: 1/12 octave" in text
@@ -816,10 +816,10 @@ def test_rnd_export_blocks_missing_hrtf(tmp_path, monkeypatch, make_main_window)
     measurement.hrtf_path = str(tmp_path / "missing" / "Fixture Gone.txt")
     warnings: list[tuple] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda *args: warnings.append(args)
+        rnd_bridge_module.QMessageBox, "warning", lambda *args: warnings.append(args)
     )
 
-    window._export_rnd_measurement(measurement, str(tmp_path / "out.txt"))
+    window.rnd._export_rnd_measurement(measurement, str(tmp_path / "out.txt"))
 
     assert warnings
     assert not (tmp_path / "out.txt").exists()
@@ -922,7 +922,7 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     window.measure_tab.ch_combo.clear()
     window.measure_tab.ch_combo.addItem("Channel 2", 1)
     recovery_calls: list[bool] = []
-    monkeypatch.setattr(window._rnd_recovery, "schedule", lambda: recovery_calls.append(True))
+    monkeypatch.setattr(window.rnd._recovery, "schedule", lambda: recovery_calls.append(True))
     log_calls: list[tuple[str, dict]] = []
     monkeypatch.setattr(
         window,
@@ -930,7 +930,7 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
         lambda _severity, _source, message, **details: log_calls.append((message, details)),
     )
 
-    window._send_measure_to_rnd()
+    window.rnd.send_measure_to_rnd()
 
     session = window._rnd_widget.session
     assert len(session.measurements) == 1
@@ -953,7 +953,7 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     assert measurement.top_visible is True
     assert measurement.pinned is False
     assert window._tabs.currentWidget() is window._rnd_widget
-    assert window._rnd_dirty is True
+    assert window.rnd.dirty is True
     assert recovery_calls == [True]
     assert log_calls == [
         (
@@ -980,7 +980,7 @@ def test_measure_average_copies_active_hrtf_as_editable_state(tmp_path, make_mai
     source_mag = np.array([4.0, 0.0])
     window._average = (np.array([100.0, 1000.0]), source_mag)
 
-    window._send_measure_to_rnd()
+    window.rnd.send_measure_to_rnd()
 
     measurement = window._rnd_widget.session.measurements[0]
     assert measurement.hrtf_path == str(hrtf_path)
@@ -1015,9 +1015,9 @@ def test_measure_var_sends_all_kept_curves_as_one_group(
     window._rnd_widget.session.groups = [existing]
     window._rnd_widget._sync_tree()
     recovery_calls: list[bool] = []
-    monkeypatch.setattr(window._rnd_recovery, "schedule", lambda: recovery_calls.append(True))
+    monkeypatch.setattr(window.rnd._recovery, "schedule", lambda: recovery_calls.append(True))
 
-    window._send_measure_to_rnd()
+    window.rnd.send_measure_to_rnd()
 
     session = window._rnd_widget.session
     assert len(session.groups) == 2
@@ -1103,15 +1103,15 @@ def test_rnd_group_collapse_survives_tree_rebuilds_without_dirtying(
     group = RnDGroup(id="g1", name="Prototype", expanded=True)
     window._rnd_widget.session.groups = [group]
     window._rnd_widget._sync_tree()
-    window._rnd_dirty = False
+    window.rnd.dirty = False
     recovery_calls: list[bool] = []
-    monkeypatch.setattr(window._rnd_recovery, "schedule", lambda: recovery_calls.append(True))
+    monkeypatch.setattr(window.rnd._recovery, "schedule", lambda: recovery_calls.append(True))
 
     group_item = window._rnd_widget._tree.topLevelItem(0)
     group_item.setExpanded(False)
     qapp.processEvents()
     assert group.expanded is False
-    assert window._rnd_dirty is False
+    assert window.rnd.dirty is False
     assert recovery_calls == [True]
 
     window._rnd_widget._select_id(group.id)
@@ -1448,7 +1448,7 @@ def test_rnd_save_as_over_another_session_asks_first(
     existing = tmp_path / "prototype.fastgraph-rnd.json"
     existing.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        rnd_bridge_module.QFileDialog,
         "getSaveFileName",
         lambda *args, **kwargs: (str(tmp_path / "prototype"), ""),
     )
@@ -1458,18 +1458,18 @@ def test_rnd_save_as_over_another_session_asks_first(
         prompts.append(text)
         return QMessageBox.StandardButton.No
 
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", decline)
+    monkeypatch.setattr(rnd_bridge_module.QMessageBox, "question", decline)
 
-    assert window._save_rnd_session() is False
+    assert window.rnd.save_session() is False
     assert prompts and "Replace prototype.fastgraph-rnd.json?" in prompts[0]
     assert existing.read_text(encoding="utf-8") == "{}"
 
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
+        rnd_bridge_module.QMessageBox,
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
-    assert window._save_rnd_session() is True
+    assert window.rnd.save_session() is True
     assert "measurements" in existing.read_text(encoding="utf-8")
 
 
@@ -1477,10 +1477,10 @@ def test_rnd_status_line_reports_a_degraded_recovery_rotation(make_main_window) 
     """C5: the newest snapshot still saves; the status line says it is degraded."""
     window = make_main_window()
 
-    window._rnd_recovery.rotation_degraded = True
-    window._on_rnd_recovery_saved()
+    window.rnd._recovery.rotation_degraded = True
+    window.rnd._on_rnd_recovery_saved()
     assert window._rnd_widget._status_label.text() == "R&D recovery degraded"
 
-    window._rnd_recovery.rotation_degraded = False
-    window._on_rnd_recovery_saved()
+    window.rnd._recovery.rotation_degraded = False
+    window.rnd._on_rnd_recovery_saved()
     assert window._rnd_widget._status_label.text() != "R&D recovery degraded"

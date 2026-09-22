@@ -485,9 +485,9 @@ def test_sync_device_poller_pauses_while_busy(make_main_window) -> None:
     window._queue_target = 1
     window.devices.sync_device_poller()
     window._queue_target = 0
-    window._rnd_sweep_active = True
+    window.rnd.sweep_active = True
     window.devices.sync_device_poller()
-    window._rnd_sweep_active = False
+    window.rnd.sweep_active = False
     window.devices.sync_device_poller()
 
     assert poller.paused == [False, True, True, False]

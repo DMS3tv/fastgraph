@@ -411,7 +411,7 @@ class DeviceController(QObject):
         poller = getattr(self, "device_poller", None)
         if poller is None:
             return
-        busy = not self._window._queue.allows_device_reselect() or self._window._rnd_sweep_active
+        busy = not self._window._queue.allows_device_reselect() or self._window.rnd.sweep_active
         poller.pause(busy)
 
     def check_devices(
@@ -460,7 +460,7 @@ class DeviceController(QObject):
                 "Audio device change detected. Active measurement aborted safely."
             )
 
-        if window._queue.allows_device_reselect() and not window._rnd_sweep_active:
+        if window._queue.allows_device_reselect() and not window.rnd.sweep_active:
             self.refresh_devices()
         else:
             # Never re-select devices under a running queue or an open review;

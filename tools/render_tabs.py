@@ -63,7 +63,7 @@ def curve(shift: float, wiggle: float) -> np.ndarray:
 manager = SettingsManager()
 controller = ThemeController(app, manager)
 window = MainWindow(SessionData(rig="Rig", brand="DMS", model="Demo"), manager, controller)
-window._confirm_rnd_close = lambda: True
+window.rnd.confirm_close = lambda: True
 window.resize(1400, 900)
 window.show()
 pump(0.5)

@@ -403,7 +403,8 @@ class MeasureTab(QWidget):
         row.addWidget(export_dir_btn)
 
         self.send_to_rnd_btn = QPushButton("Send to R&D")
-        self.send_to_rnd_btn.clicked.connect(self._window._send_measure_to_rnd)
+        # The R&D bridge is built after this tab, so it is looked up on click.
+        self.send_to_rnd_btn.clicked.connect(lambda: self._window.rnd.send_measure_to_rnd())
         row.addWidget(self.send_to_rnd_btn)
 
         self.export_btn = QPushButton("Export Average…")
@@ -412,7 +413,7 @@ class MeasureTab(QWidget):
         row.addWidget(self.export_btn)
 
         self.send_to_curator_btn = QPushButton("Send to Curator")
-        self.send_to_curator_btn.clicked.connect(self._window._send_to_curator)
+        self.send_to_curator_btn.clicked.connect(lambda: self._window.rnd.send_to_curator())
         self.send_to_curator_btn.setToolTip("Add the current average or variation view to Curator.")
         row.addWidget(self.send_to_curator_btn)
 

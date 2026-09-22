@@ -297,18 +297,18 @@ class CommandController(QObject):
         elif action == "measure_cancel":
             self._run_measure_command(["cancel"])
         elif action == "rnd_start":
-            self._window._start_rnd_measurement()
+            self._window.rnd.start_measurement()
         elif action == "rnd_save_session":
-            if not self._window._save_rnd_session():
+            if not self._window.rnd.save_session():
                 raise RuntimeError("R&D session save canceled.")
         elif action == "rnd_load_session":
-            self._window._load_rnd_session()
+            self._window.rnd.load_session()
         elif action == "rnd_export_selected":
-            self._window._export_rnd_selected()
+            self._window.rnd.export_selected()
         elif action == "rnd_send_to_curator":
-            self._window._send_rnd_to_curator()
+            self._window.rnd.send_rnd_to_curator()
         elif action == "curator_send_measure":
-            self._window._send_to_curator()
+            self._window.rnd.send_to_curator()
         elif action == "curator_command":
             self._run_curator_command(shlex.split(target or value))
         elif action == "curator_export_png":
@@ -730,7 +730,7 @@ class CommandController(QObject):
             self._command_reply(curator.layer_summary())
             return
         if args == ["send"]:
-            self._window._send_to_curator()
+            self._window.rnd.send_to_curator()
             return
         if args and args[0] == "import" and len(args) >= 2:
             paths = [Path(raw).expanduser() for raw in args[1:]]

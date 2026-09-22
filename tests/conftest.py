@@ -163,7 +163,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         if confirm_rnd_close:
             # Both close-time prompts are modal dialogs; in a headless test
             # they would block forever.
-            window._confirm_rnd_close = lambda: True
+            window.rnd.confirm_close = lambda: True
             window.measure_io.confirm_close = lambda: True
         created.append(window)
         return window

@@ -863,7 +863,7 @@ class MeasureIO(QObject):
             export_enabled = idle and frequency_mode and active_average is not None
         window.measure_tab.export_btn.setEnabled(export_enabled)
         window.measure_tab.send_to_curator_btn.setEnabled(export_enabled)
-        unavailable = window._measure_to_rnd_unavailable_reason()
+        unavailable = window.rnd.measure_to_rnd_unavailable_reason()
         window.measure_tab.send_to_rnd_btn.setEnabled(not unavailable)
         window.measure_tab.send_to_rnd_btn.setToolTip(
             unavailable or "Send the current average or all kept Var measurements to R&D."

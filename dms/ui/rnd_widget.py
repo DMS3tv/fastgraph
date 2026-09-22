@@ -229,97 +229,36 @@ class RnDPlotWidget(QWidget):
         self._items.clear()
         self._curve_sources.clear()
 
-        top_curves = []
-        bottom_curves = []
         trace_tokens = tokens_for(self._theme, brand_mode=self._brand_mode)
         trace_palette = theme_trace_palette(self._theme, brand_mode=self._brand_mode)
-
-        def trace_index_for(measurement: RnDMeasurement, fallback: int) -> int:
-            try:
-                return trace_palette.index(measurement.color)
-            except ValueError:
-                return fallback
-
-        for fallback_index, (measurement, mag_db) in enumerate(top_measurements):
-            trace_index = trace_index_for(measurement, fallback_index)
-            item = self._plot_curve(
-                self.top_plot,
-                measurement.freqs,
-                mag_db,
-                pen=stipple_trace_pen(
-                    pg.mkPen(
-                        self._display_color(measurement.color),
-                        width=2.4 if measurement.milestone else 1.2,
-                    ),
-                    trace_index,
-                    trace_tokens,
-                ),
-            )
-            self._items.append(item)
-            top_curves.append((measurement.freqs, mag_db))
+        top_curves = self._plot_measurement_traces(
+            self.top_plot,
+            [(measurement, measurement.freqs, mag_db) for measurement, mag_db in top_measurements],
+            1.2,
+            trace_tokens,
+            trace_palette,
+        )
         if review_curve is not None:
-            freqs, mag_db = review_curve
-            color = self._display_color(self._accent_color())
-            glow_color = QColor(color)
-            glow_color.setAlpha(72)
-            glow = self._plot_curve(
-                self.top_plot,
-                freqs,
-                mag_db,
-                pen=pg.mkPen(glow_color, width=8.0),
-            )
-            item = self._plot_curve(
-                self.top_plot,
-                freqs,
-                mag_db,
-                pen=stipple_trace_pen(
-                    pg.mkPen(color, width=2.5),
-                    0,
-                    trace_tokens,
-                ),
-            )
-            self._items.extend([glow, item])
-            top_curves.append((freqs, mag_db))
+            top_curves.append(self._plot_review_curve(review_curve, trace_tokens))
         delta_measurements = delta_measurements or []
         delta_group_variations = delta_group_variations or []
         if delta_mode_active:
-            for fallback_index, (measurement, freqs, mag_db) in enumerate(delta_measurements):
-                trace_index = trace_index_for(measurement, fallback_index)
-                item = self._plot_curve(
-                    self.bottom_plot,
-                    freqs,
-                    mag_db,
-                    pen=stipple_trace_pen(
-                        pg.mkPen(
-                            self._display_color(measurement.color),
-                            width=2.4 if measurement.milestone else 1.5,
-                        ),
-                        trace_index,
-                        trace_tokens,
-                    ),
-                )
-                self._items.append(item)
-                bottom_curves.append((freqs, mag_db))
+            bottom_curves = self._plot_measurement_traces(
+                self.bottom_plot, delta_measurements, 1.5, trace_tokens, trace_palette
+            )
             for group, variation in delta_group_variations:
                 bottom_curves.extend(self._draw_variation(self.bottom_plot, group, variation))
         else:
-            for fallback_index, (measurement, mag_db) in enumerate(pinned_measurements):
-                trace_index = trace_index_for(measurement, fallback_index)
-                item = self._plot_curve(
-                    self.bottom_plot,
-                    measurement.freqs,
-                    mag_db,
-                    pen=stipple_trace_pen(
-                        pg.mkPen(
-                            self._display_color(measurement.color),
-                            width=2.4 if measurement.milestone else 1.5,
-                        ),
-                        trace_index,
-                        trace_tokens,
-                    ),
-                )
-                self._items.append(item)
-                bottom_curves.append((measurement.freqs, mag_db))
+            bottom_curves = self._plot_measurement_traces(
+                self.bottom_plot,
+                [
+                    (measurement, measurement.freqs, mag_db)
+                    for measurement, mag_db in pinned_measurements
+                ],
+                1.5,
+                trace_tokens,
+                trace_palette,
+            )
 
         for group, variation in top_group_variations:
             top_curves.extend(self._draw_variation(self.top_plot, group, variation))
@@ -343,6 +282,63 @@ class RnDPlotWidget(QWidget):
 
         self._auto_center(self.top_plot, top_curves)
         self._auto_center(self.bottom_plot, bottom_curves)
+
+    def _plot_measurement_traces(
+        self,
+        plot: pg.PlotWidget,
+        traces: list[tuple[RnDMeasurement, np.ndarray, np.ndarray]],
+        width: float,
+        trace_tokens,
+        trace_palette: list[str],
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        curves = []
+        for fallback_index, (measurement, freqs, mag_db) in enumerate(traces):
+            try:
+                trace_index = trace_palette.index(measurement.color)
+            except ValueError:
+                trace_index = fallback_index
+            item = self._plot_curve(
+                plot,
+                freqs,
+                mag_db,
+                pen=stipple_trace_pen(
+                    pg.mkPen(
+                        self._display_color(measurement.color),
+                        width=2.4 if measurement.milestone else width,
+                    ),
+                    trace_index,
+                    trace_tokens,
+                ),
+            )
+            self._items.append(item)
+            curves.append((freqs, mag_db))
+        return curves
+
+    def _plot_review_curve(
+        self, review_curve: tuple[np.ndarray, np.ndarray], trace_tokens
+    ) -> tuple[np.ndarray, np.ndarray]:
+        freqs, mag_db = review_curve
+        color = self._display_color(self._accent_color())
+        glow_color = QColor(color)
+        glow_color.setAlpha(72)
+        glow = self._plot_curve(
+            self.top_plot,
+            freqs,
+            mag_db,
+            pen=pg.mkPen(glow_color, width=8.0),
+        )
+        item = self._plot_curve(
+            self.top_plot,
+            freqs,
+            mag_db,
+            pen=stipple_trace_pen(
+                pg.mkPen(color, width=2.5),
+                0,
+                trace_tokens,
+            ),
+        )
+        self._items.extend([glow, item])
+        return freqs, mag_db
 
     def _draw_variation(
         self,
@@ -678,6 +674,49 @@ class RnDWidget(QWidget):
         self._top_toolbar_layout.setContentsMargins(4, 2, 4, 2)
         self._top_toolbar_layout.setSpacing(10)
 
+        measure_controls = self._build_measure_controls()
+        target_controls = self._build_target_controls()
+        self._top_toolbar_layout.addWidget(measure_controls, 1)
+        self._top_toolbar_layout.addWidget(target_controls, 1)
+        viewport_layout.addWidget(toolbar)
+        self._top_toolbar = toolbar
+        self._plots = RnDPlotWidget()
+        self._plots.set_between_plots_widget(self._build_interplot_controls())
+        viewport_layout.addWidget(self._plots, 1)
+        viewport_layout.addWidget(self._build_footer_controls())
+        splitter.addWidget(viewport_panel)
+
+        panel = DitherSurface()
+        panel.setObjectName("controlPanel")
+        panel.setProperty("surfaceLevel", "panel")
+        panel.setMinimumWidth(360)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_layout.setSpacing(8)
+        splitter.addWidget(panel)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        QTimer.singleShot(0, self._apply_splitter_ratio)
+
+        data_box = self._build_measurements_box()
+        panel_layout.addWidget(data_box, 1)
+
+        notes_panel = self._build_notes_panel()
+        panel_layout.addWidget(notes_panel)
+        self._sync_notes_expanded()
+        self._editing_buttons = [
+            self._new_group_btn,
+            self._remove_btn,
+            self._up_btn,
+            self._down_btn,
+            self._export_btn,
+            self._curator_btn,
+            self._save_btn,
+            self._load_btn,
+        ]
+        self._apply_accent_stylesheets()
+
+    def _build_measure_controls(self) -> QWidget:
         measure_controls = QWidget()
         measure_controls.setObjectName("rnd_measure_controls")
         measure_controls.setProperty("layoutRole", "transparent")
@@ -721,7 +760,9 @@ class RnDWidget(QWidget):
         self._default_hrtf_combo.setCurrentIndex(hrtf_index if hrtf_index >= 0 else 0)
         self._default_hrtf_combo.currentIndexChanged.connect(self._on_default_hrtf_changed)
         measure_row.addWidget(self._default_hrtf_combo, 1)
+        return measure_controls
 
+    def _build_target_controls(self) -> QWidget:
         target_controls = QWidget()
         target_controls.setObjectName("rnd_target_controls")
         target_controls.setProperty("layoutRole", "transparent")
@@ -759,28 +800,9 @@ class RnDWidget(QWidget):
         self._target_label = QLabel("No target")
         self._target_label.setProperty("tone", "muted")
         view_controls.addWidget(self._target_label, 1)
-        self._top_toolbar_layout.addWidget(measure_controls, 1)
-        self._top_toolbar_layout.addWidget(target_controls, 1)
-        viewport_layout.addWidget(toolbar)
-        self._top_toolbar = toolbar
-        self._plots = RnDPlotWidget()
-        self._plots.set_between_plots_widget(self._build_interplot_controls())
-        viewport_layout.addWidget(self._plots, 1)
-        viewport_layout.addWidget(self._build_footer_controls())
-        splitter.addWidget(viewport_panel)
+        return target_controls
 
-        panel = DitherSurface()
-        panel.setObjectName("controlPanel")
-        panel.setProperty("surfaceLevel", "panel")
-        panel.setMinimumWidth(360)
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(8, 8, 8, 8)
-        panel_layout.setSpacing(8)
-        splitter.addWidget(panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        QTimer.singleShot(0, self._apply_splitter_ratio)
-
+    def _build_measurements_box(self) -> QGroupBox:
         data_box = QGroupBox("Measurements")
         data_layout = QVBoxLayout(data_box)
         self._tree = _RnDTree()
@@ -825,8 +847,9 @@ class RnDWidget(QWidget):
         self._down_btn.clicked.connect(lambda: self._move_selected(1))
         edit_row.addWidget(self._down_btn)
         data_layout.addLayout(edit_row)
-        panel_layout.addWidget(data_box, 1)
+        return data_box
 
+    def _build_notes_panel(self) -> QWidget:
         notes_panel = QWidget()
         notes_panel.setProperty("layoutRole", "transparent")
         notes_layout = QVBoxLayout(notes_panel)
@@ -882,19 +905,7 @@ class RnDWidget(QWidget):
         photo_scroll.setWidget(self._photo_strip)
         detail_layout.addWidget(photo_scroll)
         notes_layout.addWidget(self._notes_content)
-        panel_layout.addWidget(notes_panel)
-        self._sync_notes_expanded()
-        self._editing_buttons = [
-            self._new_group_btn,
-            self._remove_btn,
-            self._up_btn,
-            self._down_btn,
-            self._export_btn,
-            self._curator_btn,
-            self._save_btn,
-            self._load_btn,
-        ]
-        self._apply_accent_stylesheets()
+        return notes_panel
 
     def _accent_color(self) -> str:
         return brand_brand.GRADIENT_ORANGE if self._brand_mode else "#FCBE11"

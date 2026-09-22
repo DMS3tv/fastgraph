@@ -167,6 +167,22 @@ class MeasureTab(QWidget):
         self.measure_submode_control.setVisible(self._window.measure.two_channel_enabled)
         primary.addWidget(self.measure_submode_control)
 
+        self._add_queue_count_and_level(primary)
+        primary.addStretch(1)
+
+        self._add_queue_progress(progress)
+
+        self.queue_primary_widget = primary_widget
+        self.queue_primary_layout = primary
+        self.queue_progress_widget = progress_widget
+        self.queue_progress_layout = progress
+        bar.compact_changed.connect(self._set_queue_bar_compact)
+        self.queue_bar_compact = True
+        self._set_queue_bar_compact(True)
+        self.sync_queue_bar_submode_width()
+        return bar
+
+    def _add_queue_count_and_level(self, primary: QHBoxLayout) -> None:
         n_label = QLabel("Count")
         n_label.setProperty("tone", "accent")
         primary.addWidget(n_label)
@@ -209,8 +225,8 @@ class MeasureTab(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         primary.addWidget(self.queue_level_persist_label)
-        primary.addStretch(1)
 
+    def _add_queue_progress(self, progress: QHBoxLayout) -> None:
         self.queue_progress_label = QLabel("Kept: 0")
         progress.addWidget(self.queue_progress_label)
 
@@ -228,16 +244,6 @@ class MeasureTab(QWidget):
         self.sweep_progress.setValue(0)
         self.sweep_progress.setMinimumWidth(120)
         progress.addWidget(self.sweep_progress, 1)
-
-        self.queue_primary_widget = primary_widget
-        self.queue_primary_layout = primary
-        self.queue_progress_widget = progress_widget
-        self.queue_progress_layout = progress
-        bar.compact_changed.connect(self._set_queue_bar_compact)
-        self.queue_bar_compact = True
-        self._set_queue_bar_compact(True)
-        self.sync_queue_bar_submode_width()
-        return bar
 
     def sync_queue_bar_submode_width(self, _width: int | None = None) -> None:
         bar = getattr(self, "queue_bar", None)

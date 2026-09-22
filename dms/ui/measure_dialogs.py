@@ -275,6 +275,57 @@ class PassFailDialog(QDialog):
         detail.setProperty("tone", "muted")
         layout.addWidget(detail)
 
+        self._add_timing_box(layout, timing_quality, diagnostics, distortion)
+
+        self._add_deviation_box(layout, deviation_summary)
+
+        if diagnostics is not None:
+            details_toggle = QToolButton()
+            details_toggle.setText("Measurement Diagnostics")
+            details_toggle.setCheckable(True)
+            details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            layout.addWidget(details_toggle)
+
+            details = QLabel(format_diagnostics_summary(diagnostics))
+            details.setObjectName("diagnostic_details")
+            details.setWordWrap(True)
+            details.setVisible(False)
+            layout.addWidget(details)
+            details_toggle.toggled.connect(details.setVisible)
+            details_toggle.toggled.connect(lambda _checked: self.adjustSize())
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+
+        keep_btn = QPushButton("Keep")
+        keep_btn.setDefault(True)
+        keep_btn.setObjectName("btn_keep")
+        keep_btn.clicked.connect(self._accept_keep)
+        button_row.addWidget(keep_btn)
+
+        fail_btn = QPushButton("Fail / Redo")
+        fail_btn.setObjectName("btn_fail")
+        fail_btn.clicked.connect(self._accept_fail)
+        button_row.addWidget(fail_btn)
+
+        cancel_btn = QPushButton("Cancel Queue")
+        cancel_btn.setRole("warning")
+        cancel_btn.clicked.connect(self._accept_cancel)
+        button_row.addWidget(cancel_btn)
+
+        layout.addLayout(button_row)
+        fail_shortcut = QShortcut(QKeySequence("F"), self)
+        fail_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        fail_shortcut.activated.connect(self._accept_fail)
+        self.adjustSize()
+
+    def _add_timing_box(
+        self,
+        layout: QVBoxLayout,
+        timing_quality: tuple[float, float, float, float] | None,
+        diagnostics: object | None,
+        distortion: HarmonicAnalysis | None,
+    ) -> None:
         if timing_quality is not None:
             start_conf, end_conf, drift_ms, snr_db = timing_quality
             bluetooth_mode = bool(getattr(diagnostics, "bluetooth_headphone_mode", False))
@@ -352,6 +403,7 @@ class PassFailDialog(QDialog):
                 )
             layout.addWidget(timing_box)
 
+    def _add_deviation_box(self, layout: QVBoxLayout, deviation_summary: str | None) -> None:
         if deviation_summary:
             # How far this one sweep sits from the loaded target. Muted and
             # monospaced: it is context for the decision, not the decision.
@@ -369,46 +421,6 @@ class PassFailDialog(QDialog):
             deviation_label.setTextFormat(Qt.TextFormat.PlainText)
             deviation_layout.addWidget(deviation_label)
             layout.addWidget(deviation_box)
-
-        if diagnostics is not None:
-            details_toggle = QToolButton()
-            details_toggle.setText("Measurement Diagnostics")
-            details_toggle.setCheckable(True)
-            details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-            layout.addWidget(details_toggle)
-
-            details = QLabel(format_diagnostics_summary(diagnostics))
-            details.setObjectName("diagnostic_details")
-            details.setWordWrap(True)
-            details.setVisible(False)
-            layout.addWidget(details)
-            details_toggle.toggled.connect(details.setVisible)
-            details_toggle.toggled.connect(lambda _checked: self.adjustSize())
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
-
-        keep_btn = QPushButton("Keep")
-        keep_btn.setDefault(True)
-        keep_btn.setObjectName("btn_keep")
-        keep_btn.clicked.connect(self._accept_keep)
-        button_row.addWidget(keep_btn)
-
-        fail_btn = QPushButton("Fail / Redo")
-        fail_btn.setObjectName("btn_fail")
-        fail_btn.clicked.connect(self._accept_fail)
-        button_row.addWidget(fail_btn)
-
-        cancel_btn = QPushButton("Cancel Queue")
-        cancel_btn.setRole("warning")
-        cancel_btn.clicked.connect(self._accept_cancel)
-        button_row.addWidget(cancel_btn)
-
-        layout.addLayout(button_row)
-        fail_shortcut = QShortcut(QKeySequence("F"), self)
-        fail_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        fail_shortcut.activated.connect(self._accept_fail)
-        self.adjustSize()
 
     def choice(self) -> str:
         return self._choice

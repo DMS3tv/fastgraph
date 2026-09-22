@@ -370,31 +370,7 @@ class ModernButton(QPushButton):
         painter.setBrush(base)
         painter.drawRoundedRect(rect, radius, radius)
 
-        profile = self._glow_profile()
-        uniform = QColor(accent)
-        uniform.setAlpha(int(profile["uniform_alpha"]))
-        painter.setBrush(uniform)
-        painter.drawRoundedRect(rect, radius, radius)
-
-        glow = QRadialGradient(
-            QPointF(0.5, float(profile["center_y"])),
-            float(profile["radius"]),
-        )
-        glow.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
-        center = QColor(accent)
-        center.setAlpha(int(profile["center_alpha"]))
-        middle = QColor(accent)
-        middle.setAlpha(int(profile["middle_alpha"]))
-        edge = QColor(accent)
-        edge.setAlpha(int(profile["edge_alpha"]))
-        transparent = QColor(accent)
-        transparent.setAlpha(0)
-        glow.setColorAt(0.0, center)
-        glow.setColorAt(0.48, middle)
-        glow.setColorAt(0.88, edge)
-        glow.setColorAt(1.0, transparent)
-        painter.setBrush(glow)
-        painter.drawRoundedRect(rect, radius, radius)
+        self._paint_accent_glow(painter, accent, rect, radius)
 
         inner_border = mix_colors(QColor("#050607"), accent, 0.13 + 0.22 * progress)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -431,6 +407,35 @@ class ModernButton(QPushButton):
             self,
         )
         painter.end()
+
+    def _paint_accent_glow(
+        self, painter: QPainter, accent: QColor, rect: QRectF, radius: float
+    ) -> None:
+        profile = self._glow_profile()
+        uniform = QColor(accent)
+        uniform.setAlpha(int(profile["uniform_alpha"]))
+        painter.setBrush(uniform)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        glow = QRadialGradient(
+            QPointF(0.5, float(profile["center_y"])),
+            float(profile["radius"]),
+        )
+        glow.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
+        center = QColor(accent)
+        center.setAlpha(int(profile["center_alpha"]))
+        middle = QColor(accent)
+        middle.setAlpha(int(profile["middle_alpha"]))
+        edge = QColor(accent)
+        edge.setAlpha(int(profile["edge_alpha"]))
+        transparent = QColor(accent)
+        transparent.setAlpha(0)
+        glow.setColorAt(0.0, center)
+        glow.setColorAt(0.48, middle)
+        glow.setColorAt(0.88, edge)
+        glow.setColorAt(1.0, transparent)
+        painter.setBrush(glow)
+        painter.drawRoundedRect(rect, radius, radius)
 
     def _paint_flat(self, tokens: ThemeTokens) -> None:
         """Paint a square control with ordered pixel texture and hard states."""

@@ -4,7 +4,7 @@ target-version = "py311"
 extend-exclude = ["build", "dist", "releases", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "C90", "PLR0915"]
 ignore = [
     "E501",   # line length is handled by the formatter
     "SIM108", # ternaries are not clearer than short if/else blocks
@@ -13,6 +13,12 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["dms"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-statements = 80
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

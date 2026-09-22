@@ -182,6 +182,20 @@ class TwoChannelMeasureWidget(QWidget):
         self._pages = QStackedWidget()
         self._root.addWidget(self._pages, 1)
 
+        self._build_frequency_page()
+
+        self._build_balance_page()
+
+        for pane in (self._bottom_1, self._bottom_2):
+            pane.selected.connect(self.set_selection)
+        self._balance_start.clicked.connect(self.balance_start_requested)
+        self._balance_stop.clicked.connect(self.balance_stop_requested)
+        self._waveform.currentTextChanged.connect(self._emit_balance_parameters)
+        self._frequency.valueChanged.connect(self._emit_balance_parameters)
+        self._level.valueChanged.connect(self._emit_balance_parameters)
+        self._refresh_selection()
+
+    def _build_frequency_page(self) -> None:
         self._frequency_page = QWidget()
         freq_layout = QVBoxLayout(self._frequency_page)
         freq_layout.setContentsMargins(0, 0, 0, 0)
@@ -216,6 +230,7 @@ class TwoChannelMeasureWidget(QWidget):
         freq_layout.addLayout(self._footer_host)
         self._pages.addWidget(self._frequency_page)
 
+    def _build_balance_page(self) -> None:
         self._balance_page = QWidget()
         balance_layout = QVBoxLayout(self._balance_page)
         balance_layout.setContentsMargins(0, 0, 0, 0)
@@ -263,15 +278,6 @@ class TwoChannelMeasureWidget(QWidget):
         row.addWidget(self._readout, 1)
         balance_layout.addWidget(controls)
         self._pages.addWidget(self._balance_page)
-
-        for pane in (self._bottom_1, self._bottom_2):
-            pane.selected.connect(self.set_selection)
-        self._balance_start.clicked.connect(self.balance_start_requested)
-        self._balance_stop.clicked.connect(self.balance_stop_requested)
-        self._waveform.currentTextChanged.connect(self._emit_balance_parameters)
-        self._frequency.valueChanged.connect(self._emit_balance_parameters)
-        self._level.valueChanged.connect(self._emit_balance_parameters)
-        self._refresh_selection()
 
     @property
     def selection(self) -> str:

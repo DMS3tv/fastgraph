@@ -58,6 +58,18 @@ class SettingsWidget(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        self._build_themes_group(layout)
+        self._build_brand_group(layout)
+        self._build_sweep_group(layout)
+        self._build_audio_and_safety_groups(layout)
+        self._build_folder_groups(layout)
+        layout.addStretch(1)
+        root_layout.addWidget(self._settings_column)
+        self._build_shortcuts_column()
+        root_layout.addWidget(self._shortcuts_column)
+        root_layout.addStretch(1)
+
+    def _build_themes_group(self, layout: QVBoxLayout) -> None:
         self._themes_group = QGroupBox("Themes")
         themes_layout = QVBoxLayout(self._themes_group)
         self._theme_button_group = QButtonGroup(self)
@@ -85,6 +97,7 @@ class SettingsWidget(QWidget):
         themes_layout.addWidget(theme_hint)
         layout.addWidget(self._themes_group)
 
+    def _build_brand_group(self, layout: QVBoxLayout) -> None:
         self._appearance_group = QGroupBox("brand")
         appearance_layout = QVBoxLayout(self._appearance_group)
         self._brand_mode = QCheckBox("brand mode")
@@ -103,6 +116,7 @@ class SettingsWidget(QWidget):
         appearance_layout.addWidget(brand_mode_hint)
         layout.addWidget(self._appearance_group)
 
+    def _build_sweep_group(self, layout: QVBoxLayout) -> None:
         self._sweep_group = QGroupBox("Sweep and Timing")
         sweep_form = QFormLayout(self._sweep_group)
 
@@ -201,6 +215,7 @@ class SettingsWidget(QWidget):
         sweep_form.addRow("Max Timing Drift", self._timing_drift_max_ms)
         layout.addWidget(self._sweep_group)
 
+    def _build_audio_and_safety_groups(self, layout: QVBoxLayout) -> None:
         tuning_hint = QLabel(
             "Changes save immediately. Buffer size and latency affect reliability on some "
             "systems; end-marker confidence and timing drift apply to Bluetooth measurements."
@@ -233,6 +248,7 @@ class SettingsWidget(QWidget):
         safety_layout.addWidget(self._save_failed_recordings)
         layout.addWidget(self._safety_group)
 
+    def _build_folder_groups(self, layout: QVBoxLayout) -> None:
         self._rnd_group = QGroupBox("R&D Sessions")
         rnd_layout = QVBoxLayout(self._rnd_group)
         rnd_row = QHBoxLayout()
@@ -268,8 +284,8 @@ class SettingsWidget(QWidget):
         automation_layout.addWidget(QLabel("Default automation folder"))
         automation_layout.addLayout(automation_row)
         layout.addWidget(self._automation_group)
-        layout.addStretch(1)
-        root_layout.addWidget(self._settings_column)
+
+    def _build_shortcuts_column(self) -> None:
         self._shortcuts_column = QWidget()
         self._shortcuts_column.setObjectName("settings_shortcuts_column")
         self._shortcuts_column.setFixedWidth(420)
@@ -299,8 +315,6 @@ class SettingsWidget(QWidget):
         reset_btn.clicked.connect(self._reset_shortcuts)
         shortcuts_layout.addWidget(reset_btn)
         shortcuts_layout.addStretch(1)
-        root_layout.addWidget(self._shortcuts_column)
-        root_layout.addStretch(1)
 
     def _connect_signals(self) -> None:
         self._duration.editingFinished.connect(

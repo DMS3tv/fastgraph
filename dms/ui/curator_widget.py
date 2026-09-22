@@ -737,6 +737,12 @@ class CuratorWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
+        self._build_data_box(layout)
+        self._build_view_section(layout)
+        self._build_brand_poster_section(layout)
+        return panel
+
+    def _build_data_box(self, layout: QVBoxLayout) -> None:
         self._data_box = QGroupBox("Data")
         import_box = self._data_box
         import_layout = QVBoxLayout(import_box)
@@ -773,6 +779,7 @@ class CuratorWidget(QWidget):
         import_layout.addLayout(row)
         layout.addWidget(import_box, 1)
 
+    def _build_view_section(self, layout: QVBoxLayout) -> None:
         self._view_box = QGroupBox("View")
         view_box = self._view_box
         view_form = QFormLayout(view_box)
@@ -818,6 +825,7 @@ class CuratorWidget(QWidget):
         )
         layout.addWidget(self._view_section, 0)
 
+    def _build_brand_poster_section(self, layout: QVBoxLayout) -> None:
         self._brand_poster_box = QGroupBox("BRAND Poster Text")
         self._brand_poster_box.setObjectName("brandPosterBox")
         brand_form = QFormLayout(self._brand_poster_box)
@@ -891,7 +899,6 @@ class CuratorWidget(QWidget):
         )
         self._brand_poster_section.setVisible(False)
         layout.addWidget(self._brand_poster_section, 0)
-        return panel
 
     def _make_collapsible_section(
         self,

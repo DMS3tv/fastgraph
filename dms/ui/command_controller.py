@@ -256,7 +256,7 @@ class CommandController(QObject):
             "export_variation",
         }
 
-    def _execute_automation_step(self, step: AutomationStep, variables: dict[str, object]) -> None:
+    def _execute_automation_step(self, step: AutomationStep, variables: dict[str, object]) -> None:  # noqa: C901 - flat dispatch, one branch per command
         action = step.action
         target = self._expand_automation_text(step.target, variables)
         value = self._expand_automation_text(step.value, variables)
@@ -375,7 +375,7 @@ class CommandController(QObject):
                 return
         raise ValueError(f"Automation tab target not found: {target}")
 
-    def run_console_command(self, command: str) -> None:
+    def run_console_command(self, command: str) -> None:  # noqa: C901 - flat dispatch, one branch per command
         echo = command
         if any(word in command.lower() for word in ("password", "credential", "secret", "token")):
             echo = "<redacted command>"
@@ -588,7 +588,7 @@ class CommandController(QObject):
             self._window.devices.start_level_monitor()
         self._window._settings_widget.refresh_from_settings()
 
-    def _run_measure_command(self, args: list[str]) -> None:
+    def _run_measure_command(self, args: list[str]) -> None:  # noqa: C901 - flat dispatch, one branch per command
         if args and args[0] == "start" and len(args) <= 3:
             if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("A measurement can only be started while idle.")
@@ -736,7 +736,7 @@ class CommandController(QObject):
             raise ValueError("Expected on or off.")
         return lowered == "on"
 
-    def _run_curator_command(self, args: list[str]) -> None:
+    def _run_curator_command(self, args: list[str]) -> None:  # noqa: C901 - flat dispatch, one branch per command
         curator = self._window._curator_widget
         if args == ["help"]:
             self._command_reply(self._curator_help())

@@ -277,7 +277,7 @@ def _raise_alignment_error(
     )
 
 
-def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:
+def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:  # noqa: C901 - flat list of optional report lines
     def fmt_int(value: int | None) -> str:
         return "n/a" if value is None else str(value)
 
@@ -1516,9 +1516,8 @@ def align_recording_to_layout(
     snr_db = _ratio_db(_rms(sweep_rec), noise_rms)
     integrity = compute_sweep_integrity(sweep_rec, noise_rms)
 
-    end_conf_min = float(settings.end_marker_confidence_min)
-    if bool(settings.bluetooth_headphone_mode):
-        end_conf_min = min(end_conf_min, 2.5)
+    # Only Bluetooth mode reaches this point; standard mode returned above.
+    end_conf_min = min(float(settings.end_marker_confidence_min), 2.5)
     marker_conf = end_result.marker_confidence
     max_spacing_error_samples = int(round(960.0 * float(layout.fs) / 48000.0))
     max_drift_samples = int(round((float(settings.timing_drift_max_ms) / 1000.0) * layout.fs))
@@ -1529,8 +1528,7 @@ def align_recording_to_layout(
         or start_result.start_marker_confidence >= 3.5
     )
     can_accept_bluetooth_marginal = (
-        bluetooth_mode
-        and end_result.timing_error_samples <= marginal_ceiling_samples
+        end_result.timing_error_samples <= marginal_ceiling_samples
         and bluetooth_start_evidence_ok
         and end_result.spacing_error_samples <= max_spacing_error_samples
         and marker_conf >= bluetooth_marginal_floor
@@ -1560,7 +1558,7 @@ def align_recording_to_layout(
             integrity=integrity,
         )
 
-    if bluetooth_mode and end_result.spacing_error_samples > max_spacing_error_samples:
+    if end_result.spacing_error_samples > max_spacing_error_samples:
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
         fallback = _bluetooth_sweep_fallback_result(
             rec=rec,
@@ -1597,58 +1595,44 @@ def align_recording_to_layout(
         )
     elif end_result.timing_error_samples > max_drift_samples:
         ms = 1000.0 * end_result.timing_error_samples / float(layout.fs)
-        if bluetooth_mode:
-            fallback = _bluetooth_sweep_fallback_result(
-                rec=rec,
-                sweep=sweep,
-                layout=layout,
-                settings=settings,
-                start_result=start_result,
-                marker_failure_reason=MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
-                end_result=end_result,
-            )
-            if fallback is not None:
-                return fallback
-            hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
-            _raise_alignment_error(
-                f"Timing drift too large ({ms:.1f} ms). {hint}",
-                MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
-                layout,
-                settings,
-                start=start_result,
-                end=end_result,
-                snr_db=snr_db,
-                integrity=integrity,
-            )
-        else:
-            hint = "Please retry and consider high latency mode."
-            _raise_alignment_error(
-                f"Timing drift too large ({ms:.1f} ms). {hint}",
-                MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
-                layout,
-                settings,
-                start=start_result,
-                end=end_result,
-                snr_db=snr_db,
-                integrity=integrity,
-            )
-
-    if bluetooth_mode:
-        if warning_reason is None:
-            marker_conf = max(marker_conf, end_conf_min)
-        end_result = EndMarkerResult(
-            selected_sweep_start=end_result.selected_sweep_start,
-            marker_1_start=end_result.marker_1_start,
-            marker_2_start=end_result.marker_2_start,
-            marker_confidence=float(marker_conf),
-            timing_error_samples=end_result.timing_error_samples,
-            timing_error_ms=end_result.timing_error_ms,
-            spacing_error_samples=end_result.spacing_error_samples,
-            raw_marker_confidence=end_result.raw_marker_confidence,
-            marker_agreement=end_result.marker_agreement,
-            marker_identity_ratio=end_result.marker_identity_ratio,
-            marker_template_stretch=end_result.marker_template_stretch,
+        fallback = _bluetooth_sweep_fallback_result(
+            rec=rec,
+            sweep=sweep,
+            layout=layout,
+            settings=settings,
+            start_result=start_result,
+            marker_failure_reason=MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+            end_result=end_result,
         )
+        if fallback is not None:
+            return fallback
+        hint = "Please retry; Bluetooth timing jitter exceeded the current tolerance."
+        _raise_alignment_error(
+            f"Timing drift too large ({ms:.1f} ms). {hint}",
+            MeasurementFailureReason.TIMING_DRIFT_TOO_LARGE,
+            layout,
+            settings,
+            start=start_result,
+            end=end_result,
+            snr_db=snr_db,
+            integrity=integrity,
+        )
+
+    if warning_reason is None:
+        marker_conf = max(marker_conf, end_conf_min)
+    end_result = EndMarkerResult(
+        selected_sweep_start=end_result.selected_sweep_start,
+        marker_1_start=end_result.marker_1_start,
+        marker_2_start=end_result.marker_2_start,
+        marker_confidence=float(marker_conf),
+        timing_error_samples=end_result.timing_error_samples,
+        timing_error_ms=end_result.timing_error_ms,
+        spacing_error_samples=end_result.spacing_error_samples,
+        raw_marker_confidence=end_result.raw_marker_confidence,
+        marker_agreement=end_result.marker_agreement,
+        marker_identity_ratio=end_result.marker_identity_ratio,
+        marker_template_stretch=end_result.marker_template_stretch,
+    )
 
     _enforce_sweep_integrity(
         layout, settings, start_result, integrity, snr_db, end_result=end_result

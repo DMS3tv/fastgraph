@@ -170,6 +170,13 @@ class LevelMeterWidget(QWidget):
         painter.setBrush(track_base)
         painter.drawRoundedRect(track, radius, radius)
 
+        self._paint_glow(painter, tokens, track, radius)
+        self._paint_track_details(painter, tokens, track, radius)
+        painter.end()
+
+    def _paint_glow(
+        self, painter: QPainter, tokens: ThemeTokens, track: QRectF, radius: float
+    ) -> None:
         track_path = QPainterPath()
         track_path.addRoundedRect(track, radius, radius)
         painter.save()
@@ -225,6 +232,9 @@ class LevelMeterWidget(QWidget):
 
         painter.restore()
 
+    def _paint_track_details(
+        self, painter: QPainter, tokens: ThemeTokens, track: QRectF, radius: float
+    ) -> None:
         glass = QLinearGradient(track.topLeft(), track.bottomLeft())
         glass_top = QColor("#FFFFFF")
         glass_top.setAlpha(24)
@@ -262,7 +272,6 @@ class LevelMeterWidget(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(border, 1.0))
         painter.drawRoundedRect(track, radius, radius)
-        painter.end()
 
     def _paint_flat_dither(self, painter: QPainter, tokens: ThemeTokens) -> None:
         """Paint level as ordered pixel density inside a hard square track."""

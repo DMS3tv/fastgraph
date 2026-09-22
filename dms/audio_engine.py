@@ -188,6 +188,63 @@ def device_setting(device: dict, kind: str) -> dict[str, Any]:
     }
 
 
+def _unique_match(matches: list[dict]) -> tuple[dict | None, bool]:
+    """Return the single match, or (None, ambiguous)."""
+    if len(matches) == 1:
+        return matches[0], False
+    return None, len(matches) > 1
+
+
+def _match_by_index(
+    devices: list[dict], want_index: Any, want_name: str, want_hostapi: Any
+) -> dict | None:
+    try:
+        index = int(want_index)
+    except (TypeError, ValueError):
+        return None
+    for device in devices:
+        if int(device["index"]) != index:
+            continue
+        if want_name and str(device["name"]) != want_name:
+            continue
+        if want_hostapi is not None and int(device.get("hostapi", -1)) != int(want_hostapi):
+            continue
+        return device
+    return None
+
+
+def _resolve_dict_selection(
+    selection: dict, kind: str, devices: list[dict]
+) -> tuple[dict | None, bool]:
+    want_index = selection.get("index")
+    want_name = str(selection.get("name") or "")
+    want_kind = selection.get("kind")
+    want_hostapi = selection.get("hostapi")
+
+    if want_kind and want_kind != kind:
+        return None, False
+
+    if want_index is not None:
+        device = _match_by_index(devices, want_index, want_name, want_hostapi)
+        if device is not None:
+            return device, False
+
+    if want_name and want_hostapi is not None:
+        found, ambiguous = _unique_match(
+            [
+                d
+                for d in devices
+                if str(d["name"]) == want_name and int(d.get("hostapi", -1)) == int(want_hostapi)
+            ]
+        )
+        if found is not None or ambiguous:
+            return found, ambiguous
+
+    if want_name:
+        return _unique_match([d for d in devices if str(d["name"]) == want_name])
+    return None, False
+
+
 def resolve_device_selection(
     selection: Any,
     kind: str,
@@ -198,49 +255,7 @@ def resolve_device_selection(
         return None, False
 
     if isinstance(selection, dict):
-        want_index = selection.get("index")
-        want_name = str(selection.get("name") or "")
-        want_kind = selection.get("kind")
-        want_hostapi = selection.get("hostapi")
-
-        if want_kind and want_kind != kind:
-            return None, False
-
-        if want_index is not None:
-            try:
-                index = int(want_index)
-            except (TypeError, ValueError):
-                index = None
-            if index is not None:
-                for device in devices:
-                    if int(device["index"]) != index:
-                        continue
-                    if want_name and str(device["name"]) != want_name:
-                        continue
-                    if want_hostapi is not None and int(device.get("hostapi", -1)) != int(
-                        want_hostapi
-                    ):
-                        continue
-                    return device, False
-
-        if want_name and want_hostapi is not None:
-            matches = [
-                d
-                for d in devices
-                if str(d["name"]) == want_name and int(d.get("hostapi", -1)) == int(want_hostapi)
-            ]
-            if len(matches) == 1:
-                return matches[0], False
-            if len(matches) > 1:
-                return None, True
-
-        if want_name:
-            matches = [d for d in devices if str(d["name"]) == want_name]
-            if len(matches) == 1:
-                return matches[0], False
-            if len(matches) > 1:
-                return None, True
-        return None, False
+        return _resolve_dict_selection(selection, kind, devices)
 
     if isinstance(selection, int):
         for device in devices:
@@ -249,12 +264,7 @@ def resolve_device_selection(
         return None, False
 
     name = str(selection)
-    matches = [d for d in devices if str(d["name"]) == name]
-    if len(matches) == 1:
-        return matches[0], False
-    if len(matches) > 1:
-        return None, True
-    return None, False
+    return _unique_match([d for d in devices if str(d["name"]) == name])
 
 
 def device_by_index(index: int, kind: str | None = None) -> dict | None:

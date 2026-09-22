@@ -100,20 +100,22 @@ class MeasureIO(QObject):
     def current_session(self) -> MeasureSession:
         """The Measure workspace's live state as a serializable session."""
         window = self._window
-        hrtf_path = window._hrtf.path if window._hrtf is not None else None
+        hrtf_path = window.measure.hrtf.path if window.measure.hrtf is not None else None
         return MeasureSession.from_window_state(
             session_data=window._session,
-            kept_curves=window._kept_curves,
-            pairs=window._two_channel_pairs,
-            two_channel=window._two_channel_enabled,
-            bottom_mode=window._two_channel_bottom_mode,
-            level_mode=window._level_mode(),
+            kept_curves=window.measure.kept_curves,
+            pairs=window.measure.two_channel_pairs,
+            two_channel=window.measure.two_channel_enabled,
+            bottom_mode=window.measure.two_channel_bottom_mode,
+            level_mode=window.measure.level_mode(),
             hrtf_path=hrtf_path,
             hrtf_name=Path(hrtf_path).stem if hrtf_path else None,
-            hrtf_enabled=window._is_hrtf_active(),
-            sweep_diagnostics=[meta.get("diagnostics") for meta in window._kept_sweep_meta],
-            sweep_timing_quality=[meta.get("timing_quality") for meta in window._kept_sweep_meta],
-            sweep_distortion=[meta.get("distortion") for meta in window._kept_sweep_meta],
+            hrtf_enabled=window.measure.is_hrtf_active(),
+            sweep_diagnostics=[meta.get("diagnostics") for meta in window.measure.kept_sweep_meta],
+            sweep_timing_quality=[
+                meta.get("timing_quality") for meta in window.measure.kept_sweep_meta
+            ],
+            sweep_distortion=[meta.get("distortion") for meta in window.measure.kept_sweep_meta],
             source_path=(str(self.session_path) if self.session_path is not None else None),
         )
 
@@ -140,7 +142,7 @@ class MeasureIO(QObject):
 
     def new_session(self) -> None:
         window = self._window
-        if window._state != QueueState.IDLE:
+        if window.measure.queue.state != QueueState.IDLE:
             QMessageBox.information(
                 window,
                 "Busy",
@@ -150,12 +152,12 @@ class MeasureIO(QObject):
         if not self._confirm_discard_measure_session():
             return
         # The save-or-discard prompt above already covered the question
-        # ``_clear_all`` would ask, so the discard runs unprompted here; with
+        # ``clear_all`` would ask, so the discard runs unprompted here; with
         # nothing kept there is nothing to discard at all.
-        if window._has_kept_measurements():
-            window._discard_all_measurements()
-        window._kept_sweep_meta.clear()
-        window._kept_pair_meta.clear()
+        if window.measure.has_kept_measurements():
+            window.measure.discard_all_measurements()
+        window.measure.kept_sweep_meta.clear()
+        window.measure.kept_pair_meta.clear()
         self.session_path = None
         self.clear_dirty()
         window._statusbar.showMessage("New Measure session.")
@@ -210,7 +212,7 @@ class MeasureIO(QObject):
 
     def load_session(self, requested_path: str | None = None) -> bool:
         window = self._window
-        if window._state != QueueState.IDLE:
+        if window.measure.queue.state != QueueState.IDLE:
             QMessageBox.information(
                 window,
                 "Busy",
@@ -261,17 +263,17 @@ class MeasureIO(QObject):
     def _apply_measure_session(self, session: MeasureSession) -> None:
         """Replace the Measure workspace with a loaded session's state."""
         window = self._window
-        window._queue.reset()
-        window._kept_distortion = None
-        window._pending_curve = None
-        window._pending_pair = None
-        window._pending_pair_first_raw = None
-        window._pending_pair_first_diagnostics = None
-        window._two_channel_stage = 0
-        window._queue_index = 0
+        window.measure.queue.reset()
+        window.measure.kept_distortion = None
+        window.measure.queue.pending_curve = None
+        window.measure.queue.pending_pair = None
+        window.measure.queue.pending_pair_first_raw = None
+        window.measure.queue.pending_pair_first_diagnostics = None
+        window.measure.queue.stage = 0
+        window.measure.queue.index = 0
 
-        window._kept_curves = [sweep.curve for sweep in session.sweeps]
-        window._kept_sweep_meta = [
+        window.measure.kept_curves = [sweep.curve for sweep in session.sweeps]
+        window.measure.kept_sweep_meta = [
             {
                 "diagnostics": sweep.diagnostics,
                 "timing_quality": sweep.timing_quality,
@@ -279,18 +281,18 @@ class MeasureIO(QObject):
             }
             for sweep in session.sweeps
         ]
-        window._two_channel_pairs = session.pair_objects()
-        window._kept_pair_meta = [{} for _ in window._two_channel_pairs]
-        window._average = None
-        window._variation = None
-        window._two_channel_averages = {}
-        window._two_channel_variations = {}
+        window.measure.two_channel_pairs = session.pair_objects()
+        window.measure.kept_pair_meta = [{} for _ in window.measure.two_channel_pairs]
+        window.measure.average = None
+        window.measure.variation = None
+        window.measure.two_channel_averages = {}
+        window.measure.two_channel_variations = {}
 
         window._session = session.metadata
         window._refresh_session_labels()
         window._metadata_editor.set_session(window._session)
 
-        if bool(session.two_channel) != bool(window._two_channel_enabled):
+        if bool(session.two_channel) != bool(window.measure.two_channel_enabled):
             window.measure_tab.two_channel_toggle.setChecked(bool(session.two_channel))
 
         index = window.measure_tab.bottom_layout_combo.findData(session.bottom_mode)
@@ -300,18 +302,18 @@ class MeasureIO(QObject):
         self._apply_session_level_mode(session.level_mode)
         self._apply_session_hrtf(session)
 
-        window._recompute_average()
-        window._recompute_variation()
-        window._recompute_two_channel_results()
-        window._update_queue_progress()
-        window._update_plots()
+        window.measure.recompute_average()
+        window.measure.recompute_variation()
+        window.measure.recompute_two_channel_results()
+        window.measure.update_queue_progress()
+        window.measure.update_plots()
         window._apply_state_ui()
         window._refresh_window_title()
 
     def _apply_session_level_mode(self, level_mode: str) -> None:
         window = self._window
         wanted = "dbspl" if str(level_mode) == "dbspl" else "ref_1khz"
-        if wanted == window._level_mode():
+        if wanted == window.measure.level_mode():
             return
         if wanted == "dbspl" and window.devices.calibrated_sensitivity() is None:
             QMessageBox.warning(
@@ -323,8 +325,8 @@ class MeasureIO(QObject):
             )
             return
         window._settings.set("measure_level_mode", wanted)
-        window._spl_uncalibrated_warned = False
-        window._sync_level_mode_combo()
+        window.measure.spl_uncalibrated_warned = False
+        window.measure.sync_level_mode_combo()
 
     def _apply_session_hrtf(self, session: MeasureSession) -> None:
         window = self._window
@@ -346,7 +348,7 @@ class MeasureIO(QObject):
         window.measure_tab.hrtf_combo.blockSignals(True)
         window.measure_tab.hrtf_combo.setCurrentIndex(index)
         window.measure_tab.hrtf_combo.blockSignals(False)
-        window._on_hrtf_selected()
+        window.measure.on_hrtf_selected()
         window.measure_tab.hrtf_toggle.setChecked(bool(session.hrtf_enabled))
 
     def _confirm_discard_measure_session(self) -> bool:
@@ -385,9 +387,9 @@ class MeasureIO(QObject):
         if not bool(window._settings.get("confirm_discard_measurements")):
             return True
         kept = (
-            len(window._two_channel_pairs)
-            if window._two_channel_enabled
-            else len(window._kept_curves)
+            len(window.measure.two_channel_pairs)
+            if window.measure.two_channel_enabled
+            else len(window.measure.kept_curves)
         )
         dialog = QMessageBox(window)
         dialog.setIcon(QMessageBox.Icon.Question)
@@ -512,27 +514,31 @@ class MeasureIO(QObject):
         return Path(path_str) if path_str else None
 
     def export(self) -> None:
-        if self._window._bottom_view_mode() == "variation":
+        if self._window.measure.bottom_view_mode() == "variation":
             self.export_variation()
             return
         self.export_average()
 
     def export_average(self, requested_path: str | None = None) -> None:
-        from dms.ui.main_window import _DISPLAY_AVG_SMOOTHING
+        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
 
         window = self._window
         # Export what is displayed: the same smoothed curve the bottom
         # viewport draws, with the smoothing recorded in the header.
-        curve = window._bottom_curve_for_display()
+        curve = window.measure.bottom_curve_for_display()
         if curve is None:
             QMessageBox.information(window, "Nothing to Export", "No averaged curve available yet.")
             return
 
-        compensated = window._is_hrtf_active()
-        two_channel = window._two_channel_enabled
-        channel_label = window._active_measure_label() if two_channel else ""
-        export_session = window._active_measure_session() if two_channel else window._session
-        active_count = window._active_measure_count() if two_channel else len(window._kept_curves)
+        compensated = window.measure.is_hrtf_active()
+        two_channel = window.measure.two_channel_enabled
+        channel_label = window.measure.active_measure_label() if two_channel else ""
+        export_session = window.measure.active_measure_session() if two_channel else window._session
+        active_count = (
+            window.measure.active_measure_count()
+            if two_channel
+            else len(window.measure.kept_curves)
+        )
         filename = build_filename(
             window._session,
             compensated=compensated,
@@ -553,11 +559,11 @@ class MeasureIO(QObject):
                 session=export_session,
                 output_path=path,
                 compensated=compensated,
-                hrtf=window._hrtf if compensated else None,
+                hrtf=window.measure.hrtf if compensated else None,
                 n_sweeps=active_count,
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=window._level_mode()
-                if window._spl_offset_db() is not None
+                level_mode=window.measure.level_mode()
+                if window.measure.spl_offset_db() is not None
                 else "ref_1khz",
             )
             window._statusbar.showMessage(f"Exported average: {path}")
@@ -570,19 +576,25 @@ class MeasureIO(QObject):
             QMessageBox.warning(window, "Export Error", str(exc))
 
     def export_variation(self, requested_path: str | None = None) -> None:
-        from dms.ui.main_window import _DISPLAY_AVG_SMOOTHING
+        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
 
         window = self._window
-        two_channel = window._two_channel_enabled
-        active_variation = window._active_measure_variation() if two_channel else window._variation
+        two_channel = window.measure.two_channel_enabled
+        active_variation = (
+            window.measure.active_measure_variation() if two_channel else window.measure.variation
+        )
         if active_variation is None:
             QMessageBox.information(window, "Nothing to Export", "No variation band available yet.")
             return
 
-        compensated = window._is_hrtf_active()
-        channel_label = window._active_measure_label() if two_channel else ""
-        export_session = window._active_measure_session() if two_channel else window._session
-        active_count = window._active_measure_count() if two_channel else len(window._kept_curves)
+        compensated = window.measure.is_hrtf_active()
+        channel_label = window.measure.active_measure_label() if two_channel else ""
+        export_session = window.measure.active_measure_session() if two_channel else window._session
+        active_count = (
+            window.measure.active_measure_count()
+            if two_channel
+            else len(window.measure.kept_curves)
+        )
         filename = build_variation_filename(
             window._session,
             compensated=compensated,
@@ -606,11 +618,11 @@ class MeasureIO(QObject):
                 session=export_session,
                 output_path=path,
                 compensated=compensated,
-                hrtf=window._hrtf if compensated else None,
+                hrtf=window.measure.hrtf if compensated else None,
                 n_sweeps=active_count,
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=window._level_mode()
-                if window._spl_offset_db() is not None
+                level_mode=window.measure.level_mode()
+                if window.measure.spl_offset_db() is not None
                 else "ref_1khz",
             )
             window._statusbar.showMessage(f"Exported variation: {path}")
@@ -633,21 +645,23 @@ class MeasureIO(QObject):
 
     def _export_all_unavailable_reason(self) -> str:
         window = self._window
-        if window._state != QueueState.IDLE:
+        if window.measure.queue.state != QueueState.IDLE:
             return "Export All is available while Measure is idle."
         active_average = (
-            window._active_two_channel_average() if window._two_channel_enabled else window._average
+            window.measure.active_two_channel_average()
+            if window.measure.two_channel_enabled
+            else window.measure.average
         )
         if active_average is None:
             return "Keep at least one measurement to create the average."
         active_count = (
-            window._active_measure_count()
-            if window._two_channel_enabled
-            else len(window._kept_curves)
+            window.measure.active_measure_count()
+            if window.measure.two_channel_enabled
+            else len(window.measure.kept_curves)
         )
         if active_count < 2:
             return "Keep at least two measurements to create variation files."
-        if window._hrtf is None:
+        if window.measure.hrtf is None:
             return "Select an HRTF to create the COMP files."
         return ""
 
@@ -693,7 +707,7 @@ class MeasureIO(QObject):
         return dialog.clickedButton() is overwrite
 
     def export_all(self) -> None:
-        from dms.ui.main_window import _DISPLAY_AVG_SMOOTHING
+        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
 
         window = self._window
         reason = self._export_all_unavailable_reason()
@@ -704,27 +718,29 @@ class MeasureIO(QObject):
         if directory is None:
             return
 
-        hrtf = window._hrtf
-        raw_average = window._average_curve_with_hrtf(None)
-        comp_average = window._average_curve_with_hrtf(hrtf)
+        hrtf = window.measure.hrtf
+        raw_average = window.measure.average_curve_with_hrtf(None)
+        comp_average = window.measure.average_curve_with_hrtf(hrtf)
         active_average_raw = (
-            window._active_two_channel_average() if window._two_channel_enabled else window._average
+            window.measure.active_two_channel_average()
+            if window.measure.two_channel_enabled
+            else window.measure.average
         )
         active_curves = (
-            window._active_measure_curves()
-            if window._two_channel_enabled
-            else list(window._kept_curves)
+            window.measure.active_measure_curves()
+            if window.measure.two_channel_enabled
+            else list(window.measure.kept_curves)
         )
-        if window._two_channel_enabled:
-            raw_variation = window._variation_from_curves(
+        if window.measure.two_channel_enabled:
+            raw_variation = window.measure.variation_from_curves(
                 active_curves, active_average_raw, hrtf=None
             )
-            comp_variation = window._variation_from_curves(
+            comp_variation = window.measure.variation_from_curves(
                 active_curves, active_average_raw, hrtf=hrtf
             )
         else:
-            raw_variation = window._variation_from_kept_curves(hrtf=None)
-            comp_variation = window._variation_from_kept_curves(hrtf=hrtf)
+            raw_variation = window.measure.variation_from_kept_curves(hrtf=None)
+            comp_variation = window.measure.variation_from_kept_curves(hrtf=hrtf)
         if (
             hrtf is None
             or raw_average is None
@@ -739,14 +755,18 @@ class MeasureIO(QObject):
             )
             return
 
-        channel_label = window._active_measure_label() if window._two_channel_enabled else ""
+        channel_label = (
+            window.measure.active_measure_label() if window.measure.two_channel_enabled else ""
+        )
         active_count = (
-            window._active_measure_count()
-            if window._two_channel_enabled
-            else len(window._kept_curves)
+            window.measure.active_measure_count()
+            if window.measure.two_channel_enabled
+            else len(window.measure.kept_curves)
         )
         export_session = (
-            window._active_measure_session() if window._two_channel_enabled else window._session
+            window.measure.active_measure_session()
+            if window.measure.two_channel_enabled
+            else window._session
         )
         filenames = [
             build_filename(window._session, compensated=False, channel_label=channel_label),
@@ -777,7 +797,9 @@ class MeasureIO(QObject):
                     *comp_average, fraction=_DISPLAY_AVG_SMOOTHING
                 )
                 level_mode = (
-                    window._level_mode() if window._spl_offset_db() is not None else "ref_1khz"
+                    window.measure.level_mode()
+                    if window.measure.spl_offset_db() is not None
+                    else "ref_1khz"
                 )
                 export_curve(
                     freqs=raw_freqs,
@@ -846,12 +868,16 @@ class MeasureIO(QObject):
 
     def sync_export_button(self) -> None:
         window = self._window
-        idle = window._state == QueueState.IDLE
-        two_channel = window._two_channel_enabled
-        frequency_mode = not window._channel_balance_mode_active()
-        active_average = window._active_two_channel_average() if two_channel else window._average
-        active_variation = window._active_measure_variation() if two_channel else window._variation
-        if window._bottom_view_mode() == "variation":
+        idle = window.measure.queue.state == QueueState.IDLE
+        two_channel = window.measure.two_channel_enabled
+        frequency_mode = not window.measure.channel_balance_mode_active()
+        active_average = (
+            window.measure.active_two_channel_average() if two_channel else window.measure.average
+        )
+        active_variation = (
+            window.measure.active_measure_variation() if two_channel else window.measure.variation
+        )
+        if window.measure.bottom_view_mode() == "variation":
             window.measure_tab.export_btn.setText("Export Variation…")
             window.measure_tab.export_btn.setToolTip(
                 "Export the displayed variation band as percentile columns in a tab-delimited TXT file."
@@ -885,12 +911,14 @@ class MeasureIO(QObject):
                 idle and frequency_mode and active_average is not None
             )
             window.measure_tab.upload_btn.setToolTip("Upload the current average to Squiglink.")
-        window.measure_tab.undo_btn.setEnabled(idle and window._active_measure_count() > 0)
+        window.measure_tab.undo_btn.setEnabled(idle and window.measure.active_measure_count() > 0)
         window.measure_tab.clear_btn.setEnabled(
             idle
             and (
-                bool(window._two_channel_pairs) or window._pending_pair is not None
-                if window._two_channel_enabled
-                else bool(window._kept_curves) or window._pending_curve is not None
+                bool(window.measure.two_channel_pairs)
+                or window.measure.queue.pending_pair is not None
+                if window.measure.two_channel_enabled
+                else bool(window.measure.kept_curves)
+                or window.measure.queue.pending_curve is not None
             )
         )

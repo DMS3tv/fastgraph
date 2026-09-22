@@ -33,10 +33,10 @@ def _write_target(path: Path, tilt_db: float = 6.0) -> Path:
 
 def _window_with_target(make_main_window, tmp_path, **kwargs):
     window = make_main_window(**kwargs)
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
-    window._recompute_average()
-    window._update_plots()
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
+    window.measure.recompute_average()
+    window.measure.update_plots()
     target = _write_target(tmp_path / "target.txt")
     assert window.measure_compare.load_target(str(target)) is True
     return window, target
@@ -97,7 +97,9 @@ def test_delta_view_swaps_the_bottom_curve(tmp_path, make_main_window) -> None:
         delta_curve[1], plain_average[1]
     )
     # A delta against a tilted target is nothing like the response itself.
-    expected = window.measure_compare.delta_result(window._bottom_curve_for_display_and_export())
+    expected = window.measure_compare.delta_result(
+        window.measure.bottom_curve_for_display_and_export()
+    )
     np.testing.assert_allclose(delta_curve[1], expected.delta_db)
 
     window.measure_compare._delta_view_action.setChecked(False)
@@ -140,15 +142,15 @@ def test_review_dialog_shows_the_deviation_summary(tmp_path, make_main_window) -
     assert summary is not None
     assert "Overall" in summary
 
-    window._show_pass_fail_dialog()
-    dialog = window._pass_fail_dialog
+    window.measure.show_pass_fail_dialog()
+    dialog = window.measure.pass_fail_dialog
     assert dialog is not None
     try:
         texts = [label.text() for label in dialog.findChildren(QLabel)]
         assert "Deviation from target" in texts
         assert summary in texts
     finally:
-        window._close_pass_fail_dialog()
+        window.measure.close_pass_fail_dialog()
         window._state = QueueState.IDLE
 
 
@@ -158,9 +160,9 @@ def test_keeping_appends_a_match_percentage(tmp_path, make_main_window) -> None:
     window._queue_target = 2
     window._queue_index = 0
     window._pending_curve = _curve()
-    window._start_next_sweep = lambda **_kwargs: None
+    window.measure.start_next_sweep = lambda **_kwargs: None
 
-    window._on_keep()
+    window.measure.on_keep()
 
     assert "Match:" in window._statusbar.currentMessage()
 
@@ -168,7 +170,7 @@ def test_keeping_appends_a_match_percentage(tmp_path, make_main_window) -> None:
 def test_eq_dialog_reports_an_apo_preset(tmp_path, make_main_window) -> None:
     window, _target = _window_with_target(make_main_window, tmp_path)
     dialog = EqSuggestionDialog(
-        window._bottom_curve_for_display_and_export(),
+        window.measure.bottom_curve_for_display_and_export(),
         window.measure_compare._measure_target,
         offset_mode=window.measure_compare.delta_offset_mode(),
         parent=window,
@@ -202,10 +204,10 @@ def test_eq_suggestion_needs_a_target_and_an_average(tmp_path, make_main_window)
 
 def test_reference_layers_draw_and_clear(tmp_path, make_main_window) -> None:
     window = make_main_window()
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
-    window._recompute_average()
-    window._update_plots()
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
+    window.measure.recompute_average()
+    window.measure.update_plots()
 
     for index in range(3):
         path = _write_target(tmp_path / f"ref{index}.txt", tilt_db=float(index + 1))

@@ -1,7 +1,7 @@
 """Pure, serializable state for a Measure workspace session.
 
-The Measure tab keeps its work in plain Python state on the main window:
-``_kept_curves`` (single-channel sweeps), ``_two_channel_pairs`` (paired L/R
+The Measure tab keeps its work in plain Python state on ``window.measure``:
+``kept_curves`` (single-channel sweeps), ``two_channel_pairs`` (paired L/R
 captures), the :class:`~dms.session.SessionData` describing the device under
 test, the level mode and the selected HRTF. This module is that state's
 on-disk shape, so a Measure session can be saved, reopened and recovered after

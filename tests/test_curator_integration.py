@@ -275,23 +275,23 @@ def test_metadata_clear_confirmation_and_preference(make_main_window) -> None:
 def test_clear_confirmation_preference_and_tab_isolation(make_main_window) -> None:
     window = _window(make_main_window)
     curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
-    window._kept_curves = [curve]
-    window._recompute_average()
-    window._update_plots()
+    window.measure.kept_curves = [curve]
+    window.measure.recompute_average()
+    window.measure.update_plots()
     curator_marker = object()
     window._curator_widget.graph_state.layers.append(curator_marker)
     window._console_events.publish("INFO", "test", "keep me")
     event_count = len(window._console_events.events())
 
-    window._confirm_clear_all = lambda: (False, True)
-    window._clear_all()
-    assert len(window._kept_curves) == 1
-    assert window._kept_curves[0] is curve
+    window.measure.confirm_clear_all = lambda: (False, True)
+    window.measure.clear_all()
+    assert len(window.measure.kept_curves) == 1
+    assert window.measure.kept_curves[0] is curve
     assert window._settings.get("confirm_clear_measurements") is True
 
-    window._confirm_clear_all = lambda: (True, True)
-    window._clear_all()
-    assert window._kept_curves == []
+    window.measure.confirm_clear_all = lambda: (True, True)
+    window.measure.clear_all()
+    assert window.measure.kept_curves == []
     assert window._settings.get("confirm_clear_measurements") is False
     assert window._curator_widget.graph_state.layers == [curator_marker]
     assert len(window._console_events.events()) >= event_count
@@ -307,20 +307,20 @@ def test_send_average_offsets_display_and_preserves_editable_hrtf(
     window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n10000 3\n", encoding="utf-8")
-    window._hrtf = HRTFCurve(str(hrtf_path))
+    window.measure.hrtf = HRTFCurve(str(hrtf_path))
     window.measure_tab.hrtf_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
     source_mag = np.array([4.0, 0.0, -4.0])
-    window._average = (freqs, source_mag)
-    window._update_plots()
-    expected_freqs, expected_mag = window._bottom_curve_for_display()
+    window.measure.average = (freqs, source_mag)
+    window.measure.update_plots()
+    expected_freqs, expected_mag = window.measure.bottom_curve_for_display()
 
     window.rnd.send_to_curator()
 
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
     assert layer.name == "DMS Demo COMP AVG"
-    assert layer.hrtf is window._hrtf
+    assert layer.hrtf is window.measure.hrtf
     assert np.allclose(displayed.freqs, expected_freqs)
     offset = -float(np.interp(1000.0, expected_freqs, expected_mag))
     assert np.allclose(displayed.mag_db, expected_mag + offset)
@@ -341,12 +341,12 @@ def test_send_variation_offsets_display_with_editable_hrtf(
     window = _window(make_main_window)
     hrtf_path = tmp_path / "fixture.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window._hrtf = HRTFCurve(str(hrtf_path))
+    window.measure.hrtf = HRTFCurve(str(hrtf_path))
     window.measure_tab.hrtf_toggle.setChecked(True)
     window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
     rows = [np.array([value, value + 1.0]) for value in (-2.0, -1.0, 0.0, 1.0, 2.0)]
-    window._variation = VariationBand(freqs, *rows)
+    window.measure.variation = VariationBand(freqs, *rows)
     expected = tuple(np.array(values, copy=True) for values in rows)
 
     window.rnd.send_to_curator()
@@ -384,13 +384,13 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
         "100 1 2 3 4 5\n1000 10 20 30 40 50\n",
         encoding="utf-8",
     )
-    window._hrtf = HRTFCurve(str(hrtf_path))
+    window.measure.hrtf = HRTFCurve(str(hrtf_path))
     window.measure_tab.hrtf_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
-    window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
-    window._recompute_average()
-    window._update_plots()
-    band = window._variation
+    window.measure.kept_curves = [(freqs, np.array([10.0, 100.0]))]
+    window.measure.recompute_average()
+    window.measure.update_plots()
+    band = window.measure.variation
     expected = tuple(
         np.array(values, copy=True)
         for values in (band.p10, band.p25, band.median, band.p75, band.p90)
@@ -401,7 +401,7 @@ def test_send_population_compensation_to_curator_keeps_editable_var_hrtf(
     layer = window._curator_widget.graph_state.layers[0]
     displayed = apply_layer_transform(layer)
     assert layer.name == "DMS Demo COMP VAR"
-    assert layer.hrtf is window._hrtf
+    assert layer.hrtf is window.measure.hrtf
     assert displayed.kind == "variation"
     median_offset = -float(np.interp(1000.0, displayed.freqs, expected[2]))
     for actual, wanted in zip(
@@ -421,7 +421,7 @@ def test_send_variation_offsets_to_zero_without_changing_source_shape(make_main_
     window = _window(make_main_window)
     window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0, 10000.0])
-    window._variation = VariationBand(
+    window.measure.variation = VariationBand(
         freqs,
         p10=np.array([72.0, 73.0, 74.0]),
         p25=np.array([74.0, 75.0, 76.0]),

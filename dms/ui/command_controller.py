@@ -208,9 +208,9 @@ class CommandController(QObject):
         if condition.kind == "variable_false":
             return not bool(variables.get(condition.left))
         if condition.kind == "app_state":
-            return self._window._state == value
+            return self._window.measure.queue.state == value
         if condition.kind == "kept_count_at_least":
-            return len(self._window._kept_curves) >= int(value or 0)
+            return len(self._window.measure.kept_curves) >= int(value or 0)
         if condition.kind == "rnd_count_at_least":
             return len(self._window._rnd_widget.session.measurements) >= int(value or 0)
         if condition.kind == "curator_layers_at_least":
@@ -397,11 +397,11 @@ class CommandController(QObject):
                     **runtime_diagnostics(),
                 )
             elif args == ["diagnostics", "last"]:
-                if self._window._last_measurement_diagnostics is None:
+                if self._window.measure.queue.last_diagnostics is None:
                     self._command_reply("No measurement diagnostics are available yet.")
                 else:
                     self._command_reply(
-                        format_diagnostics_summary(self._window._last_measurement_diagnostics)
+                        format_diagnostics_summary(self._window.measure.queue.last_diagnostics)
                     )
             elif args[0] == "measure":
                 self._run_measure_command(args[1:])
@@ -444,9 +444,9 @@ class CommandController(QObject):
     def _console_status(self) -> str:
         return "\n".join(
             (
-                f"State: {self._window._state}",
-                f"Queue: {self._window._queue_index}/{self._window._queue_target or 0}",
-                f"Kept curves: {len(self._window._kept_curves)}",
+                f"State: {self._window.measure.queue.state.value}",
+                f"Queue: {self._window.measure.queue.index}/{self._window.measure.queue.target or 0}",
+                f"Kept curves: {len(self._window.measure.kept_curves)}",
                 f"Curator layers: {len(self._window._curator_widget.graph_state.layers)} "
                 f"({sum(layer.visible for layer in self._window._curator_widget.graph_state.layers)} visible)",
                 f"Output: {self._window.devices.current_output_device_label() or 'none'}",
@@ -485,7 +485,7 @@ class CommandController(QObject):
             self._command_reply(f"{name} = {value}{session}")
             return
         if len(args) == 3 and args[0] == "set":
-            if self._window._state != QueueState.IDLE:
+            if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("Settings can only be changed while idle.")
             name = args[1].lower()
             value = self._parse_console_setting(name, args[2])
@@ -572,9 +572,12 @@ class CommandController(QObject):
 
     def _run_measure_command(self, args: list[str]) -> None:
         if args and args[0] == "start" and len(args) <= 3:
-            if self._window._state != QueueState.IDLE:
+            if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("A measurement can only be started while idle.")
-            if self._window._channel_balance_mode_active() or self._window._channel_balance_active:
+            if (
+                self._window.measure.channel_balance_mode_active()
+                or self._window.measure.channel_balance_active
+            ):
                 raise ValueError(
                     "Switch to Frequency Response and stop Channel Balance before "
                     "starting a measurement."
@@ -591,24 +594,33 @@ class CommandController(QObject):
                 self._window.measure_tab.queue_level_spin.blockSignals(True)
                 self._window.measure_tab.queue_level_spin.setValue(float(level))
                 self._window.measure_tab.queue_level_spin.blockSignals(False)
-            self._window._start_queue()
+            self._window.measure.start_queue()
             return
         if args == ["pass"]:
-            if self._window._state != QueueState.PASS_FAIL or self._window._pending_curve is None:
+            if (
+                self._window.measure.queue.state != QueueState.PASS_FAIL
+                or self._window.measure.queue.pending_curve is None
+            ):
                 raise ValueError("There is no measurement awaiting review.")
             self._window._log_event("INFO", "review", "Measurement passed from console")
-            self._window._on_keep()
+            self._window.measure.on_keep()
             return
         if args == ["fail"]:
-            if self._window._state != QueueState.PASS_FAIL or self._window._pending_curve is None:
+            if (
+                self._window.measure.queue.state != QueueState.PASS_FAIL
+                or self._window.measure.queue.pending_curve is None
+            ):
                 raise ValueError("There is no measurement awaiting review.")
             self._window._log_event("WARNING", "review", "Measurement failed from console")
-            self._window._on_fail()
+            self._window.measure.on_fail()
             return
         if args == ["cancel"]:
-            if self._window._state == QueueState.IDLE and not self._window._queue_active():
+            if (
+                self._window.measure.queue.state == QueueState.IDLE
+                and not self._window.measure.queue_active()
+            ):
                 raise ValueError("There is no active measurement queue to cancel.")
-            self._window._cancel_queue()
+            self._window.measure.cancel_queue()
             return
         if args[:1] == ["session"] and len(args) == 3:
             action = args[1].lower()
@@ -634,7 +646,7 @@ class CommandController(QObject):
             self._command_reply(f"Target loaded: {args[1]}")
             return
         if args[:1] == ["eq"] and len(args) <= 2:
-            average = self._window._bottom_curve_for_display_and_export()
+            average = self._window.measure.bottom_curve_for_display_and_export()
             if self._window.measure_compare._measure_target is None:
                 raise ValueError("Load a target curve first: measure target <path>")
             if average is None:
@@ -661,19 +673,19 @@ class CommandController(QObject):
         if len(args) > 2:
             raise ValueError("Export paths containing spaces must be quoted.")
         if kind == "average":
-            if self._window._state != QueueState.IDLE:
+            if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("Average export is only available while idle.")
-            if self._window._bottom_curve_for_display_and_export() is None:
+            if self._window.measure.bottom_curve_for_display_and_export() is None:
                 raise ValueError("No averaged curve is available yet.")
             self._window.measure_io.export_average(path)
         elif kind == "variation":
-            if self._window._state != QueueState.IDLE:
+            if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("Variation export is only available while idle.")
-            if self._window._variation is None:
+            if self._window.measure.variation is None:
                 raise ValueError("No variation band is available yet.")
             self._window.measure_io.export_variation(path)
         elif kind == "squiglink" and path is None:
-            if self._window._state != QueueState.IDLE:
+            if self._window.measure.queue.state != QueueState.IDLE:
                 raise ValueError("Squiglink upload is only available while idle.")
             self._window.squiglink.upload()
         elif kind == "log":

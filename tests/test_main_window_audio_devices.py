@@ -18,7 +18,7 @@ def _window(make_main_window, settings: dict, *, stub_devices: bool = False):
         window.start_next_sweep_count += 1
 
     window.devices.start_level_monitor = _count_monitor
-    window._start_next_sweep = _count_sweep
+    window.measure.start_next_sweep = _count_sweep
     return window
 
 
@@ -223,7 +223,7 @@ def test_windows_mismatched_backends_block_queue_start(make_main_window, monkeyp
     window.measure_tab.in_dev_combo.setCurrentIndex(window.measure_tab.in_dev_combo.findData(43))
     window.measure_tab.out_dev_combo.setCurrentIndex(window.measure_tab.out_dev_combo.findData(6))
 
-    window._start_queue()
+    window.measure.start_queue()
 
     assert warnings
     assert "mismatch" in warnings[0][0].lower()

@@ -6,18 +6,13 @@ pass/fail UI, HRTF selector, settings/calibration, and export.
 
 import contextlib
 import os
-import sys
-from dataclasses import replace
-from pathlib import Path
 
-import numpy as np
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
     QPropertyAnimation,
     QRect,
     Qt,
-    QThread,
     QTimer,
     QUrl,
 )
@@ -44,56 +39,24 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms.audio_engine import SweepWorker
 from dms.calibration import CalibrationStore
-from dms.channel_balance import ChannelBalanceEngine, frequency_limit
+from dms.channel_balance import frequency_limit
 from dms.console import ConsoleEventStore, runtime_diagnostics
-from dms.curator.parser import load_two_column_txt_curve
-from dms.hrtf import HRTFCurve
 from dms.measure_persistence import (
     MEASURE_SESSION_EXTENSION,
 )
-from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
-from dms.measurement_alignment import (
-    MeasurementWarningReason,
-    format_diagnostics_summary,
-    is_device_failure,
-    is_retryable_timing_failure,
-)
-from dms.processing import (
-    HarmonicAnalysis,
-    VariationBand,
-    absolute_spl_offset_db,
-    compute_frequency_response,
-    compute_rms_average,
-    deconvolve_sweep,
-    downsample_to_log_points,
-    generate_log_sweep,
-    harmonic_responses,
-    normalize_at_1khz,
-    percentile_band,
-    smooth_fractional_octave,
-)
+from dms.measure_queue import QueueState
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager, config_dir
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
 from dms.theme import ThemeController
-from dms.two_channel import (
-    TwoChannelCurvePair,
-    channel_curves,
-    combined_pair_curves,
-    curve_label_for_selection,
-    shared_normalize_pair_at_1khz,
-)
 from dms.ui.automation_widget import AutomationWidget
 from dms.ui.command_controller import CommandController
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.device_controller import DeviceController
 from dms.ui.measure_compare import MeasureCompare
-from dms.ui.measure_dialogs import (
-    PassFailDialog,
-)
+from dms.ui.measure_controller import MeasureController
 from dms.ui.measure_io import MeasureIO
 from dms.ui.measure_tab import MeasureTab
 from dms.ui.measure_workspace import MeasureWorkspace
@@ -109,24 +72,10 @@ from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionEditor
 from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.squiglink_controller import SquiglinkController
-from dms.ui.sweep_runner import SweepRunner
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.ui.update_check import UpdateCheck
 from dms.version import __version__
-
-_MEASUREMENT_F_MIN = 20.0
-_MEASUREMENT_F_MAX = 20000.0
-_DISPLAY_AVG_POINTS = 1200
-_DISPLAY_AVG_SMOOTHING = 48
-#: Harmonic analysis needs a clean recording; below this SNR the distortion
-#: packets are indistinguishable from the noise floor, so nothing is computed.
-_DISTORTION_MIN_SNR_DB = 20.0
-
-
-_QUEUE_AMBIENT_WARN_DBFS = -45.0
-ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
-HRTF_DIR = ROOT_DIR / "HRTFs"
 
 
 class _EventStatusBar(QStatusBar):
@@ -147,21 +96,11 @@ class _EventStatusBar(QStatusBar):
         self._events.publish(severity, "status", message)
 
 
-class _BalanceThread(QThread):
-    def __init__(self, engine: ChannelBalanceEngine, **kwargs) -> None:
-        super().__init__()
-        self._engine = engine
-        self._kwargs = kwargs
-
-    def run(self) -> None:
-        self._engine.run(**self._kwargs)
-
-
 class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Queue state shims
     #
-    # The measurement queue state lives in ``self._queue`` (a pure
+    # The measurement queue state lives in ``self.measure.queue`` (a pure
     # ``MeasurementQueue``). These properties keep the historical field names
     # so existing code and tests that read or assign them keep working; each
     # forwards to the queue object.
@@ -169,100 +108,100 @@ class MainWindow(QMainWindow):
 
     @property
     def _state(self) -> str:
-        return self._queue.state.value
+        return self.measure.queue.state.value
 
     @_state.setter
     def _state(self, value: object) -> None:
         raw = value.value if isinstance(value, QueueState) else str(value)
-        self._queue.state = QueueState(raw)
+        self.measure.queue.state = QueueState(raw)
 
     @property
     def _queue_target(self) -> int:
-        return self._queue.target
+        return self.measure.queue.target
 
     @_queue_target.setter
     def _queue_target(self, value: int) -> None:
-        self._queue.target = int(value)
+        self.measure.queue.target = int(value)
 
     @property
     def _queue_index(self) -> int:
-        return self._queue.index
+        return self.measure.queue.index
 
     @_queue_index.setter
     def _queue_index(self, value: int) -> None:
-        self._queue.index = int(value)
+        self.measure.queue.index = int(value)
 
     @property
     def _current_sweep_attempts(self) -> int:
-        return self._queue.attempts
+        return self.measure.queue.attempts
 
     @_current_sweep_attempts.setter
     def _current_sweep_attempts(self, value: int) -> None:
-        self._queue.attempts = int(value)
+        self.measure.queue.attempts = int(value)
 
     @property
     def _two_channel_stage(self) -> int:
-        return self._queue.stage
+        return self.measure.queue.stage
 
     @_two_channel_stage.setter
     def _two_channel_stage(self, value: int) -> None:
-        self._queue.stage = int(value)
+        self.measure.queue.stage = int(value)
 
     @property
     def _start_second_pair_stage(self) -> bool:
-        return self._queue.start_second_stage
+        return self.measure.queue.start_second_stage
 
     @_start_second_pair_stage.setter
     def _start_second_pair_stage(self, value: bool) -> None:
-        self._queue.start_second_stage = bool(value)
+        self.measure.queue.start_second_stage = bool(value)
 
     @property
     def _pending_curve(self):
-        return self._queue.pending_curve
+        return self.measure.queue.pending_curve
 
     @_pending_curve.setter
     def _pending_curve(self, value) -> None:
-        self._queue.pending_curve = value
+        self.measure.queue.pending_curve = value
 
     @property
     def _pending_pair(self):
-        return self._queue.pending_pair
+        return self.measure.queue.pending_pair
 
     @_pending_pair.setter
     def _pending_pair(self, value) -> None:
-        self._queue.pending_pair = value
+        self.measure.queue.pending_pair = value
 
     @property
     def _pending_pair_first_raw(self):
-        return self._queue.pending_pair_first_raw
+        return self.measure.queue.pending_pair_first_raw
 
     @_pending_pair_first_raw.setter
     def _pending_pair_first_raw(self, value) -> None:
-        self._queue.pending_pair_first_raw = value
+        self.measure.queue.pending_pair_first_raw = value
 
     @property
     def _pending_pair_first_diagnostics(self):
-        return self._queue.pending_pair_first_diagnostics
+        return self.measure.queue.pending_pair_first_diagnostics
 
     @_pending_pair_first_diagnostics.setter
     def _pending_pair_first_diagnostics(self, value) -> None:
-        self._queue.pending_pair_first_diagnostics = value
+        self.measure.queue.pending_pair_first_diagnostics = value
 
     @property
     def _last_timing_quality(self):
-        return self._queue.last_timing_quality
+        return self.measure.queue.last_timing_quality
 
     @_last_timing_quality.setter
     def _last_timing_quality(self, value) -> None:
-        self._queue.last_timing_quality = value
+        self.measure.queue.last_timing_quality = value
 
     @property
     def _last_measurement_diagnostics(self):
-        return self._queue.last_diagnostics
+        return self.measure.queue.last_diagnostics
 
     @_last_measurement_diagnostics.setter
     def _last_measurement_diagnostics(self, value) -> None:
-        self._queue.last_diagnostics = value
+        self.measure.queue.last_diagnostics = value
 
     def __init__(
         self,
@@ -271,7 +210,6 @@ class MainWindow(QMainWindow):
         theme_controller: ThemeController | None = None,
     ) -> None:
         super().__init__()
-        self._queue = MeasurementQueue(max_attempts=MAX_SWEEP_ATTEMPTS)
         self._session = session
         self._settings = settings
         if theme_controller is None:
@@ -283,57 +221,7 @@ class MainWindow(QMainWindow):
         self._theme_controller.theme_changed.connect(self._on_theme_changed)
         self._theme_controller.brand_mode_changed.connect(self._on_brand_mode_changed)
         self._cal_store = CalibrationStore()
-        # dB SPL without a calibration falls back to reference mode; the note
-        # is shown once rather than after every sweep.
-        self._spl_uncalibrated_warned = False
-
-        self._state = QueueState.IDLE
-        self._kept_curves: list[tuple[np.ndarray, np.ndarray]] = []
-        self._average: tuple[np.ndarray, np.ndarray] | None = None
-        self._variation: VariationBand | None = None
-        self._pending_curve: tuple[np.ndarray, np.ndarray] | None = None
-        # Per-capture metadata kept positionally beside the curves, so a saved
-        # session carries the diagnostics, timing and distortion the review
-        # dialog showed. ``_kept_pair_meta`` is bookkeeping only: a kept pair
-        # already carries its own per-channel diagnostics.
-        self._kept_sweep_meta: list[dict] = []
-        self._kept_pair_meta: list[dict] = []
-        self._two_channel_pairs: list[TwoChannelCurvePair] = []
-        self._pending_pair: TwoChannelCurvePair | None = None
-        self._pending_pair_first_raw: tuple[np.ndarray, np.ndarray] | None = None
-        self._pending_pair_first_diagnostics: object | None = None
-        self._two_channel_stage = 0
-        self._start_second_pair_stage = False
-        self._two_channel_averages: dict[str, object] = {}
-        self._two_channel_variations: dict[str, object] = {}
-        self._two_channel_enabled = bool(self._settings.get("measure_two_channel_enabled"))
-        bottom_mode = str(self._settings.get("measure_two_channel_bottom_mode") or "combined")
-        self._two_channel_bottom_mode = "separate" if bottom_mode == "separate" else "combined"
-        self._two_channel_selection = "channel_1"
-        self._channel_balance_active = False
-        self._balance_engine: ChannelBalanceEngine | None = None
-        self._balance_thread: QThread | None = None
-        self._balance_waveform = "sine"
-        self._balance_frequency = 500.0
-        self._balance_level_db = -6.0
-
-        self._queue_target = 0
-        self._queue_index = 0
-        self._current_sweep_attempts = 0
-
-        self._hrtf: HRTFCurve | None = None
-
-        self._sweep_runner = SweepRunner(self)
-        self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
-        # Harmonic analysis of the most recently kept sweep. The queue's own
-        # last_distortion is cleared by the reset that follows Keep, so the
-        # overlay would otherwise vanish the moment a sweep is accepted.
-        self._kept_distortion: HarmonicAnalysis | None = None
-        self._pass_fail_dialog: PassFailDialog | None = None
-
-        self._last_timing_quality: tuple[float, float, float, float] | None = None
-        self._last_measurement_diagnostics: object | None = None
-        self._hrtf_options: list[tuple[str, str]] = []
+        self.measure = MeasureController(self)
         self._console_events = ConsoleEventStore(
             parent=self,
             log_path=config_dir() / "logs" / "fastgraph-console.log",
@@ -358,7 +246,7 @@ class MainWindow(QMainWindow):
                 notify=False,
                 preserve_standard=False,
             )
-        self._restore_hrtf_state()
+        self.measure.restore_hrtf_state()
         self.measure_compare.restore()
         self.devices.refresh_devices()
         self.devices.start_level_monitor()
@@ -376,10 +264,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.rnd.initialize_recovery)
         QTimer.singleShot(0, self.measure_io.initialize_recovery)
 
-        self._balance_ui_timer = QTimer(self)
-        self._balance_ui_timer.setInterval(33)
-        self._balance_ui_timer.timeout.connect(self._refresh_balance_scope)
-
         self.devices.start()
 
     def _build_ui(self) -> None:
@@ -390,15 +274,15 @@ class MainWindow(QMainWindow):
             Qt.Corner.TopLeftCorner,
         )
         self._plots = MeasureWorkspace()
-        self._plots.measurement_files_dropped.connect(self._import_dropped_measurement_files)
-        self._plots.selection_changed.connect(self._on_two_channel_selection_changed)
-        self._plots.balance_start_requested.connect(self._start_channel_balance)
-        self._plots.balance_stop_requested.connect(self._stop_channel_balance)
-        self._plots.balance_parameters_changed.connect(self._on_balance_parameters_changed)
+        self._plots.measurement_files_dropped.connect(self.measure.import_dropped_measurement_files)
+        self._plots.selection_changed.connect(self.measure.on_two_channel_selection_changed)
+        self._plots.balance_start_requested.connect(self.measure.start_channel_balance)
+        self._plots.balance_stop_requested.connect(self.measure.stop_channel_balance)
+        self._plots.balance_parameters_changed.connect(self.measure.on_balance_parameters_changed)
         self.measure_tab = MeasureTab(self)
         self._inputs_overlay_open = False
         QApplication.instance().installEventFilter(self)
-        self._refresh_hrtf_options()
+        self.measure.refresh_hrtf_options()
         self._build_metadata_overlay()
         self._tabs.addTab(self.measure_tab, "Measure")
 
@@ -465,187 +349,9 @@ class MainWindow(QMainWindow):
         self._close_inputs_overlay()
         self._close_metadata_overlay()
         if self._tabs.currentWidget() is not self.measure_tab:
-            self._stop_channel_balance()
+            self.measure.stop_channel_balance()
         if self._tabs.currentWidget() is self._settings_scroll:
             self._settings_widget.refresh_from_settings()
-
-    def _on_two_channel_toggled(self, _state: int) -> None:
-        if self._state != QueueState.IDLE:
-            self.measure_tab.two_channel_toggle.blockSignals(True)
-            self.measure_tab.two_channel_toggle.setChecked(self._two_channel_enabled)
-            self.measure_tab.two_channel_toggle.blockSignals(False)
-            return
-        enabled = bool(self.measure_tab.two_channel_toggle.isChecked())
-        if not enabled:
-            self._stop_channel_balance()
-            self.measure_tab.measure_frequency_button.setChecked(True)
-        self._two_channel_enabled = enabled
-        self._queue.two_channel = enabled
-        self._settings.set("measure_two_channel_enabled", enabled)
-        self._plots.set_two_channel_enabled(enabled)
-        self.measure_tab.measure_submode_control.setVisible(enabled)
-        self.measure_tab.sync_queue_bar_submode_width()
-        self.measure_tab.level_meter_2.setVisible(enabled)
-        self.measure_tab.level_status_label_2.setVisible(enabled)
-        self.measure_tab.bottom_layout_label.setVisible(enabled)
-        self.measure_tab.bottom_layout_combo.setVisible(enabled)
-        self.measure_tab.ch_combo.setEnabled(not enabled)
-        self._update_queue_progress()
-        self._update_plots()
-        self.devices.start_level_monitor()
-        self._apply_state_ui()
-        mode = "Two Channel" if enabled else "Single Channel"
-        self._statusbar.showMessage(f"Measure mode: {mode}.")
-
-    def _channel_balance_mode_active(self) -> bool:
-        balance_button = getattr(getattr(self, "measure_tab", None), "measure_balance_button", None)
-        return bool(
-            self._two_channel_enabled and balance_button is not None and balance_button.isChecked()
-        )
-
-    def _on_measure_submode_toggled(self, _checked: bool) -> None:
-        balance = self._channel_balance_mode_active()
-        if not balance:
-            self._stop_channel_balance()
-        self._plots.two.set_balance_mode(balance)
-        self.measure_tab.bottom_layout_label.setVisible(self._two_channel_enabled and not balance)
-        self.measure_tab.bottom_layout_combo.setVisible(self._two_channel_enabled and not balance)
-        self.measure_tab.variation_toggle.setVisible(not balance)
-        self.measure_tab.distortion_toggle.setVisible(not balance)
-        self.measure_tab.hrtf_toggle.setVisible(not balance)
-        self.measure_tab.hrtf_combo.setVisible(not balance)
-        self.measure_tab.hrtf_label.setVisible(not balance)
-        self.measure_tab.level_mode_label.setVisible(not balance)
-        self.measure_tab.level_mode_combo.setVisible(not balance)
-        self.measure_tab.level_meter.setVisible(not balance)
-        self.measure_tab.level_meter_2.setVisible(self._two_channel_enabled and not balance)
-        self.measure_tab.level_status_label.setVisible(not balance)
-        self.measure_tab.level_status_label_2.setVisible(self._two_channel_enabled and not balance)
-        self._plots.two.set_generator_level(float(self.measure_tab.queue_level_spin.value()))
-        self._plots.two.set_frequency_limit(frequency_limit(int(self._settings.get("sample_rate"))))
-        if balance:
-            self.devices.stop_level_monitor()
-        else:
-            self.devices.start_level_monitor()
-            self._update_plots()
-        self._apply_state_ui()
-
-    def _on_two_channel_bottom_mode_changed(self, _index: int) -> None:
-        mode = str(self.measure_tab.bottom_layout_combo.currentData() or "combined")
-        self._two_channel_bottom_mode = "separate" if mode == "separate" else "combined"
-        self._settings.set("measure_two_channel_bottom_mode", self._two_channel_bottom_mode)
-        self._plots.two.set_bottom_mode(self._two_channel_bottom_mode)
-        self._update_plots()
-
-    def _on_two_channel_selection_changed(self, selection: str) -> None:
-        if selection in {"channel_1", "channel_2"}:
-            self._two_channel_selection = selection
-        self.measure_io.sync_export_button()
-
-    def _start_channel_balance(self) -> None:
-        if self._channel_balance_active:
-            return
-        if self._state != QueueState.IDLE or not self._channel_balance_mode_active():
-            return
-        if not self.devices.two_channel_devices_ready():
-            QMessageBox.warning(
-                self,
-                "Two Channels Required",
-                "Channel Balance needs an input device and an output device with at least two channels.",
-            )
-            return
-        input_device = self.devices.current_input_device()
-        output_device = self.devices.current_output_device()
-        if input_device is None or output_device is None:
-            return
-
-        self.devices.stop_level_monitor()
-        self._balance_level_db = float(self.measure_tab.queue_level_spin.value())
-        engine = ChannelBalanceEngine()
-        engine.set_parameters(
-            self._balance_waveform,
-            self._balance_frequency,
-            self._balance_level_db,
-        )
-        engine.error.connect(self._on_balance_error)
-        thread = _BalanceThread(
-            engine,
-            input_device=input_device,
-            output_device=output_device,
-            sample_rate=int(self._settings.get("sample_rate")),
-            block_size=int(self._settings.get("buffer_size")),
-            latency=self.devices.sweep_latency_mode(),
-        )
-        thread.finished.connect(self._on_balance_thread_finished)
-        self._balance_engine = engine
-        self._balance_thread = thread
-        self._channel_balance_active = True
-        self._plots.two.set_balance_running(True)
-        self._balance_ui_timer.start()
-        thread.start()
-        self._statusbar.showMessage("Channel Balance generator started.")
-
-    def _stop_channel_balance(self, *_args) -> None:
-        engine = self._balance_engine
-        thread = self._balance_thread
-        if hasattr(self, "_balance_ui_timer"):
-            self._balance_ui_timer.stop()
-        if engine is not None:
-            engine.stop()
-        if thread is not None and thread.isRunning():
-            thread.wait(1200)
-        self._channel_balance_active = False
-        if hasattr(self, "_plots"):
-            self._plots.two.set_balance_running(False)
-        if thread is None or not thread.isRunning():
-            self._balance_engine = None
-            self._balance_thread = None
-
-    def _on_balance_thread_finished(self) -> None:
-        thread = self._balance_thread
-        if thread is not None:
-            thread.deleteLater()
-        self._balance_engine = None
-        self._balance_thread = None
-        self._channel_balance_active = False
-        self._balance_ui_timer.stop()
-        self._plots.two.set_balance_running(False)
-
-    def _on_balance_error(self, message: str) -> None:
-        self._log_event("ERROR", "channel_balance", message)
-        self._statusbar.showMessage(message)
-        QMessageBox.warning(self, "Channel Balance Error", message)
-
-    def _on_balance_parameters_changed(
-        self, waveform: str, frequency: float, level_db: float
-    ) -> None:
-        self._balance_waveform = "square" if waveform == "square" else "sine"
-        self._balance_frequency = max(
-            20.0,
-            min(
-                frequency_limit(int(self._settings.get("sample_rate"))),
-                float(frequency),
-            ),
-        )
-        self._balance_level_db = max(-120.0, min(0.0, float(level_db)))
-        if abs(float(self.measure_tab.queue_level_spin.value()) - self._balance_level_db) > 1e-9:
-            self.measure_tab.queue_level_spin.setValue(self._balance_level_db)
-        if self._balance_engine is not None:
-            self._balance_engine.set_parameters(
-                self._balance_waveform,
-                self._balance_frequency,
-                self._balance_level_db,
-            )
-
-    def _refresh_balance_scope(self) -> None:
-        engine = self._balance_engine
-        if engine is None:
-            return
-        sample_rate = int(self._settings.get("sample_rate"))
-        sample_count = int(round(5.0 * sample_rate / max(20.0, self._balance_frequency)))
-        sample_count = max(128, min(sample_count, int(0.25 * sample_rate)))
-        left, right, left_db, right_db, delta_db = engine.snapshot(sample_count)
-        self._plots.two.update_scope(left, right, sample_rate, left_db, right_db, delta_db)
 
     def _toggle_inputs_overlay(self) -> None:
         if self._inputs_overlay_open:
@@ -804,7 +510,7 @@ class MainWindow(QMainWindow):
 
     def _on_settings_tab_changed(self, key: str, _value: object) -> None:
         if key in {"sample_rate", "buffer_size", "latency"}:
-            self._stop_channel_balance()
+            self.measure.stop_channel_balance()
             self._plots.two.set_frequency_limit(
                 frequency_limit(int(self._settings.get("sample_rate")))
             )
@@ -869,19 +575,19 @@ class MainWindow(QMainWindow):
             self.rnd.start_measurement()
             return
         if self._tabs.currentIndex() == 0:
-            self._start_queue()
+            self.measure.start_queue()
             return
         self._statusbar.showMessage(
             "Shortcut ignored: switch to Measure or R&D to start a measurement."
         )
 
     def _shortcut_fail_review(self) -> None:
-        if self._state != QueueState.PASS_FAIL:
+        if self.measure.queue.state != QueueState.PASS_FAIL:
             return
         if self.rnd.review_dialog is not None:
             self.rnd.review_dialog._accept_fail()
             return
-        self._on_fail()
+        self.measure.on_fail()
 
     def _shortcut_switch_tab(self, action: str) -> None:
         tab_map = {
@@ -1066,99 +772,19 @@ class MainWindow(QMainWindow):
             self._on_metadata_overlay_animation_finished
         )
 
-    def _queue_active(self) -> bool:
-        return self._queue_target > 0
-
-    def _is_hrtf_active(self) -> bool:
-        return self._hrtf is not None and self.measure_tab.hrtf_toggle.isChecked()
-
-    def _restore_hrtf_state(self) -> None:
-        self._refresh_hrtf_options()
-        path = self._settings.get("hrtf_path")
-
-        if path:
-            built_in_paths = self._built_in_hrtf_paths()
-            try:
-                resolved_path = str(Path(path).resolve())
-            except Exception:
-                resolved_path = ""
-            if resolved_path not in built_in_paths:
-                self._hrtf = None
-                self._settings.set("hrtf_path", None)
-            else:
-                try:
-                    self._hrtf = HRTFCurve(path)
-                except Exception:
-                    self._hrtf = None
-                    self._settings.set("hrtf_path", None)
-
-        self._sync_hrtf_ui()
-
-    def _refresh_hrtf_options(self) -> None:
-        self._hrtf_options = [("None", "")]
-        for path in sorted(HRTF_DIR.glob("*.txt")):
-            self._hrtf_options.append((path.stem, str(path)))
-
-        current_path = self._hrtf.path if self._hrtf is not None else ""
-        self.measure_tab.hrtf_combo.blockSignals(True)
-        self.measure_tab.hrtf_combo.clear()
-        for label, value in self._hrtf_options:
-            self.measure_tab.hrtf_combo.addItem(label, value)
-        index = self.measure_tab.hrtf_combo.findData(current_path)
-        self.measure_tab.hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
-        self.measure_tab.hrtf_combo.blockSignals(False)
-
-    def _built_in_hrtf_paths(self) -> set[str]:
-        paths: set[str] = set()
-        for _label, value in self._hrtf_options:
-            if not value:
-                continue
-            try:
-                paths.add(str(Path(value).resolve()))
-            except Exception:
-                continue
-        return paths
-
-    def _sync_hrtf_ui(self) -> None:
-        has_hrtf = self._hrtf is not None
-        self.measure_tab.hrtf_toggle.setEnabled(has_hrtf)
-
-        if has_hrtf:
-            self.measure_tab.hrtf_label.setText(Path(self._hrtf.path).stem)
-            self.measure_tab.hrtf_label.setToolTip(self._hrtf.path)
-            index = self.measure_tab.hrtf_combo.findData(self._hrtf.path)
-        else:
-            self.measure_tab.hrtf_label.setText("None")
-            self.measure_tab.hrtf_label.setToolTip("")
-            self.measure_tab.hrtf_toggle.setChecked(False)
-            index = 0
-
-        self.measure_tab.hrtf_combo.blockSignals(True)
-        self.measure_tab.hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
-        self.measure_tab.hrtf_combo.blockSignals(False)
-
-    def _abort_active_sweep(self) -> None:
-        """Stop the running sweep and wait for its thread to end.
-
-        Waiting matters: sounddevice's play/record state is process-global, so
-        a stale thread that stops later would truncate the next sweep.
-        """
-        with contextlib.suppress(Exception):
-            self._sweep_runner.abort()
-
     def _apply_state_ui(self) -> None:
         if (
             self.devices.dirty
-            and self._queue.allows_device_reselect()
+            and self.measure.queue.allows_device_reselect()
             and not self.rnd.sweep_active
         ):
             self.devices.dirty = False
             self.devices.refresh_devices()
         self.devices.sync_device_poller()
-        idle = self._state == QueueState.IDLE
-        pass_fail = self._state == QueueState.PASS_FAIL
-        busy = self._state in {QueueState.SWEEPING, QueueState.QUEUE_RUNNING}
-        balance_mode = self._channel_balance_mode_active()
+        idle = self.measure.queue.state == QueueState.IDLE
+        pass_fail = self.measure.queue.state == QueueState.PASS_FAIL
+        busy = self.measure.queue.state in {QueueState.SWEEPING, QueueState.QUEUE_RUNNING}
+        balance_mode = self.measure.channel_balance_mode_active()
 
         single_device_ok = (
             self.devices.current_output_device() is not None
@@ -1168,7 +794,7 @@ class MainWindow(QMainWindow):
         )
         device_ok = (
             self.devices.two_channel_devices_ready()
-            if self._two_channel_enabled
+            if self.measure.two_channel_enabled
             else single_device_ok
         )
 
@@ -1202,9 +828,9 @@ class MainWindow(QMainWindow):
         self.measure_tab.two_channel_toggle.setEnabled(idle)
         self.measure_tab.measure_submode_control.setEnabled(idle)
         self.measure_tab.bottom_layout_combo.setEnabled(idle)
-        self.measure_tab.ch_combo.setEnabled(idle and not self._two_channel_enabled)
+        self.measure_tab.ch_combo.setEnabled(idle and not self.measure.two_channel_enabled)
 
-        self.measure_tab.hrtf_toggle.setEnabled(idle and self._hrtf is not None)
+        self.measure_tab.hrtf_toggle.setEnabled(idle and self.measure.hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)
         if not idle:
             self._close_metadata_overlay()
@@ -1212,1258 +838,18 @@ class MainWindow(QMainWindow):
         self.measure_tab.start_queue_btn.setEnabled(idle and device_ok and not balance_mode)
         self.measure_tab.cancel_queue_btn.setEnabled(busy or pass_fail)
         active_count = (
-            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
+            len(self.measure.two_channel_pairs)
+            if self.measure.two_channel_enabled
+            else len(self.measure.kept_curves)
         )
         self.measure_tab.undo_btn.setEnabled(idle and active_count > 0)
         has_measurements = (
-            bool(self._two_channel_pairs) or self._pending_pair is not None
-            if self._two_channel_enabled
-            else bool(self._kept_curves) or self._pending_curve is not None
+            bool(self.measure.two_channel_pairs) or self.measure.queue.pending_pair is not None
+            if self.measure.two_channel_enabled
+            else bool(self.measure.kept_curves) or self.measure.queue.pending_curve is not None
         )
         self.measure_tab.clear_btn.setEnabled(idle and has_measurements)
         self.measure_io.sync_export_button()
-
-    def _start_queue(self) -> None:
-        if self._state != QueueState.IDLE:
-            return
-
-        # The Measure button is disabled in Channel Balance mode, but the
-        # keyboard shortcut, the console and automations reach this method
-        # directly; the guard must live here.
-        if self._channel_balance_mode_active() or self._channel_balance_active:
-            self._statusbar.showMessage(
-                "Start blocked: switch to Frequency Response and stop Channel Balance first."
-            )
-            return
-
-        if self.devices.current_output_device() is None:
-            QMessageBox.warning(self, "No Output Device", "Select an output device.")
-            return
-
-        if self.devices.current_input_device() is None:
-            QMessageBox.warning(self, "No Input Device", "Select an input device.")
-            return
-
-        if not self.devices.selected_audio_pair_is_compatible():
-            QMessageBox.warning(
-                self,
-                "Windows Audio Driver Mismatch",
-                self.devices.windows_audio_pair_message(),
-            )
-            self._statusbar.showMessage(
-                "Queue start blocked: Windows input/output driver backends do not match."
-            )
-            return
-
-        if self.measure_tab.ch_combo.count() == 0:
-            QMessageBox.warning(
-                self,
-                "No Input Channel",
-                "Selected input device has no available input channels.",
-            )
-            return
-
-        if self._two_channel_enabled and not self.devices.two_channel_devices_ready():
-            QMessageBox.warning(
-                self,
-                "Two Channels Required",
-                "Two Channel measurement needs an input device and an output device with at least two channels.",
-            )
-            return
-
-        ambient_dbfs = float(self.devices.last_level_dbfs)
-        if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
-            choice = QMessageBox.question(
-                self,
-                "Ambient Level Warning",
-                "Current ambient/input RMS looks high before queue start:\n"
-                f"{ambient_dbfs:.1f} dBFS (warning threshold: {_QUEUE_AMBIENT_WARN_DBFS:.1f} dBFS).\n\n"
-                "This can reduce measurement SNR.\n"
-                "Start queue anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if choice != QMessageBox.StandardButton.Yes:
-                self._statusbar.showMessage("Queue start canceled due to high ambient level.")
-                return
-
-        self._queue_target = int(self.measure_tab.queue_n_spin.value())
-        self._queue_index = 0
-        self._current_sweep_attempts = 0
-        overrides = (
-            self._settings.session_overrides()
-            if hasattr(self._settings, "session_overrides")
-            else {}
-        )
-        if "queue_count" not in overrides:
-            self._settings.set("queue_count", self._queue_target)
-
-        self.measure_tab.queue_progress_bar.setRange(0, max(1, self._queue_target))
-        self.measure_tab.queue_progress_bar.setValue(0)
-        kept_count = (
-            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
-        )
-        self.measure_tab.queue_progress_label.setText(f"Kept: {kept_count}")
-
-        self._state = QueueState.QUEUE_RUNNING
-        self._apply_state_ui()
-        self._statusbar.showMessage("Queue started.")
-        self._start_next_sweep()
-
-    def _start_next_sweep(self, *, second_stage: bool = False) -> None:
-        if not self._queue_active():
-            self._state = QueueState.IDLE
-            self._apply_state_ui()
-            return
-
-        if self._queue_index >= self._queue_target:
-            self._finish_queue()
-            return
-
-        if second_stage:
-            self._two_channel_stage = 2
-        else:
-            self._current_sweep_attempts += 1
-            if self._two_channel_enabled:
-                self._two_channel_stage = 1
-                self._pending_pair = None
-                self._pending_pair_first_raw = None
-                self._pending_pair_first_diagnostics = None
-        self._stop_channel_balance()
-        self._state = QueueState.SWEEPING
-        self._apply_state_ui()
-        self.measure_tab.sweep_progress.setValue(0)
-
-        output_device = self.devices.current_output_device()
-        input_device = self.devices.current_input_device()
-        input_channel = (
-            self._two_channel_stage - 1
-            if self._two_channel_enabled
-            else self.devices.current_input_channel()
-        )
-        output_channel = input_channel if self._two_channel_enabled else None
-
-        if output_device is None or input_device is None:
-            self._on_sweep_error("Selected device is unavailable.")
-            return
-
-        if not self.devices.selected_audio_pair_is_compatible():
-            self._on_sweep_error(self.devices.windows_audio_pair_message())
-            return
-
-        self.devices.stop_level_monitor()
-        self._last_timing_quality = None
-        self._last_measurement_diagnostics = None
-
-        sweep = generate_log_sweep(
-            duration=float(self._settings.get("sweep_duration")),
-            fs=int(self._settings.get("sample_rate")),
-            f_low=_MEASUREMENT_F_MIN,
-            f_high=_MEASUREMENT_F_MAX,
-        )
-        output_level_db = float(self.measure_tab.queue_level_spin.value())
-        output_gain = 10.0 ** (output_level_db / 20.0)
-        sweep = (sweep * output_gain).astype(np.float32, copy=False)
-
-        worker = SweepWorker()
-        worker.finished.connect(self._on_sweep_finished)
-        worker.error.connect(self._on_sweep_error)
-        worker.progress.connect(self._on_sweep_progress)
-        worker.timing_quality.connect(self._on_timing_quality)
-        worker.measurement_diagnostics.connect(self._on_measurement_diagnostics)
-
-        started = self._sweep_runner.start(
-            lambda: worker,
-            sweep=sweep,
-            output_device=output_device,
-            input_device=input_device,
-            output_device_label=self.devices.current_output_device_label(),
-            input_device_label=self.devices.current_input_device_label(),
-            input_channel=input_channel,
-            output_channel=output_channel,
-            fs=int(self._settings.get("sample_rate")),
-            buffer_size=int(self._settings.get("buffer_size")),
-            pre_silence=float(self._settings.get("pre_sweep_silence")),
-            post_silence=float(self._settings.get("post_sweep_silence")),
-            latency=self.devices.sweep_latency_mode(),
-            bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
-            start_alignment_confidence_min=float(
-                self._settings.get("start_alignment_confidence_min")
-            ),
-            end_marker_confidence_min=float(self._settings.get("end_marker_confidence_min")),
-            timing_drift_max_ms=float(self._settings.get("timing_drift_max_ms")),
-            sweep_noise_margin_min_db=float(self._settings.get("sweep_noise_margin_min_db")),
-            snr_warn_db=float(self._settings.get("snr_warn_db")),
-            failed_recording_dir=self._failed_recording_dir(),
-            sweep_f_low=_MEASUREMENT_F_MIN,
-            sweep_f_high=_MEASUREMENT_F_MAX,
-        )
-        if not started:
-            self._on_sweep_error(
-                "The previous sweep is still stopping. Wait a moment and try again."
-            )
-            return
-
-        channel_text = f", channel {self._two_channel_stage}" if self._two_channel_enabled else ""
-        self._statusbar.showMessage(
-            f"Sweeping {self._queue_index + 1}/{self._queue_target}{channel_text} "
-            f"(attempt {self._current_sweep_attempts})..."
-        )
-        self._log_event(
-            "INFO",
-            "measurement",
-            "Sweep started",
-            index=self._queue_index + 1,
-            total=self._queue_target,
-            attempt=self._current_sweep_attempts,
-            sample_rate=int(self._settings.get("sample_rate")),
-            buffer_size=int(self._settings.get("buffer_size")),
-            output_level_db=float(self.measure_tab.queue_level_spin.value()),
-            input_channel=input_channel + 1,
-            output_channel=(output_channel + 1) if output_channel is not None else None,
-        )
-
-    def _start_second_two_channel_sweep(self) -> None:
-        if self._queue_active() and self._pending_pair_first_raw is not None:
-            self._start_next_sweep(second_stage=True)
-
-    def _on_sweep_progress(self, frac: float) -> None:
-        self.measure_tab.sweep_progress.setValue(int(max(0.0, min(1.0, frac)) * 100.0))
-
-    def _on_timing_quality(
-        self, start_conf: float, end_conf: float, drift_ms: float, snr_db: float
-    ) -> None:
-        self._last_timing_quality = (start_conf, end_conf, drift_ms, snr_db)
-
-    def _on_measurement_diagnostics(self, diagnostics: object) -> None:
-        self._last_measurement_diagnostics = diagnostics
-        details = {
-            name: getattr(diagnostics, name)
-            for name in (
-                "start_confidence",
-                "marker_confidence",
-                "timing_error_ms",
-                "snr_db",
-                "failure_reason",
-                "warning_reason",
-                "bluetooth_headphone_mode",
-                "buffer_size",
-            )
-            if hasattr(diagnostics, name)
-        }
-        self._log_event("INFO", "diagnostics", "Measurement diagnostics received", **details)
-
-    def _on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
-        try:
-            (freqs, mag_db), _distortion = self._analyze_sweep(recording, sweep)
-            spl_offset = self._spl_offset_db()
-            if spl_offset is not None:
-                mag_db = mag_db + spl_offset
-            if self._two_channel_enabled:
-                if self._two_channel_stage == 1:
-                    self._pending_pair_first_raw = (freqs, mag_db)
-                    self._pending_pair_first_diagnostics = self._last_measurement_diagnostics
-                    self._start_second_pair_stage = True
-                    self._state = QueueState.QUEUE_RUNNING
-                    self._apply_state_ui()
-                    self._statusbar.showMessage("Channel 1/L complete. Starting channel 2/R.")
-                    return
-                if self._two_channel_stage != 2 or self._pending_pair_first_raw is None:
-                    raise ValueError("The first channel result is unavailable.")
-                first_freqs, first_mag = self._pending_pair_first_raw
-                if spl_offset is None:
-                    first_norm, second_norm = shared_normalize_pair_at_1khz(
-                        first_freqs,
-                        first_mag,
-                        freqs,
-                        mag_db,
-                        f_ref=1000.0,
-                    )
-                else:
-                    # Absolute levels: the shared 1 kHz anchor would throw the
-                    # calibrated offset away, and the two channels must keep
-                    # their real level difference.
-                    first_norm, second_norm = first_mag, mag_db
-                first_ds = downsample_to_log_points(
-                    first_freqs,
-                    first_norm,
-                    n_points=600,
-                    f_ref=1000.0,
-                    normalize_ref=False,
-                )
-                second_ds = downsample_to_log_points(
-                    freqs,
-                    second_norm,
-                    n_points=600,
-                    f_ref=1000.0,
-                    normalize_ref=False,
-                )
-                self._pending_pair = TwoChannelCurvePair(
-                    channel_1=first_ds,
-                    channel_2=second_ds,
-                    channel_1_diagnostics=self._pending_pair_first_diagnostics,
-                    channel_2_diagnostics=self._last_measurement_diagnostics,
-                )
-                self._state = QueueState.PASS_FAIL
-                self._apply_state_ui()
-                self._update_plots(show_pending=True)
-                self._statusbar.showMessage("Two-channel pair complete. Waiting for review.")
-                QTimer.singleShot(0, self._show_pass_fail_dialog)
-                return
-            if spl_offset is None:
-                mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
-
-            freqs_ds, mag_ds = downsample_to_log_points(
-                freqs,
-                mag_db,
-                n_points=600,
-                f_ref=1000.0,
-                normalize_ref=spl_offset is None,
-            )
-
-            self._pending_curve = (freqs_ds, mag_ds)
-            self._log_event(
-                "INFO",
-                "processing",
-                "Frequency response processed",
-                input_points=len(freqs),
-                output_points=len(freqs_ds),
-            )
-            self._state = QueueState.PASS_FAIL
-            self._apply_state_ui()
-            self._update_plots(show_pending=True)
-            timing_msg = ""
-            if self._last_timing_quality is not None:
-                start_conf, end_conf, drift_ms, snr_db = self._last_timing_quality
-                bluetooth_mode = bool(
-                    getattr(
-                        self._last_measurement_diagnostics,
-                        "bluetooth_headphone_mode",
-                        False,
-                    )
-                )
-                warning_prefix = ""
-                warning_message = None
-                if self._last_measurement_diagnostics is not None:
-                    warning_message = getattr(
-                        self._last_measurement_diagnostics,
-                        "warning_message",
-                        None,
-                    )
-                if warning_message:
-                    warning_reason = getattr(
-                        self._last_measurement_diagnostics,
-                        "warning_reason",
-                        None,
-                    )
-                    warning_prefix = (
-                        " Low SNR."
-                        if warning_reason == MeasurementWarningReason.LOW_SNR
-                        else " Bluetooth timing marginal."
-                    )
-                if bluetooth_mode:
-                    timing_msg = (
-                        f" Timing Quality: start {start_conf:.1f}, "
-                        f"end {end_conf:.1f}, drift {drift_ms:.1f} ms, "
-                        f"SNR {snr_db:.1f} dB.{warning_prefix}"
-                    )
-                else:
-                    timing_msg = f" Sweep Quality: alignment {start_conf:.1f}, SNR {snr_db:.1f} dB."
-            self._statusbar.showMessage(f"Sweep complete. Waiting for review.{timing_msg}")
-            QTimer.singleShot(0, self._show_pass_fail_dialog)
-        except Exception as exc:
-            self._on_sweep_error(f"Processing error: {exc}")
-
-    def _on_sweep_error(self, message: str) -> None:
-        self._log_event("ERROR", "measurement", message)
-        self._close_pass_fail_dialog()
-        self._pending_curve = None
-        self._pending_pair = None
-        self._pending_pair_first_raw = None
-        self._pending_pair_first_diagnostics = None
-        self._start_second_pair_stage = False
-        self._two_channel_stage = 0
-        self._last_timing_quality = None
-        self.measure_tab.sweep_progress.setValue(0)
-
-        failure_reason = None
-        if self._last_measurement_diagnostics is not None:
-            failure_reason = getattr(self._last_measurement_diagnostics, "failure_reason", None)
-        is_timing_quality_error = is_retryable_timing_failure(
-            message=message,
-            failure_reason=failure_reason,
-        )
-        # A device or stream failure is terminal: retrying only repeats it, so
-        # two-channel mode must not offer a pair retry for it.
-        retry_complete_pair = bool(
-            self._two_channel_enabled
-            and self._queue_active()
-            and not is_device_failure(message, failure_reason)
-        )
-        if (
-            self._queue_active()
-            and (is_timing_quality_error or retry_complete_pair)
-            and self._current_sweep_attempts < MAX_SWEEP_ATTEMPTS
-        ):
-            diagnostics_text = ""
-            if (
-                self._last_measurement_diagnostics is not None
-                and getattr(self._last_measurement_diagnostics, "failure_reason", None) is not None
-            ):
-                diagnostics_text = "\n\n" + format_diagnostics_summary(
-                    self._last_measurement_diagnostics
-                )
-            self._state = QueueState.QUEUE_RUNNING
-            self._apply_state_ui()
-            self.devices.start_level_monitor()
-            retry_subject = (
-                "The two-channel pair failed. Both channels will be measured again."
-                if retry_complete_pair
-                else f"Measurement {self._queue_index + 1} did not meet timing quality."
-            )
-            retry_msg = (
-                f"{message}\n\n{retry_subject}\n"
-                f"Retry attempt {self._current_sweep_attempts + 1} of {MAX_SWEEP_ATTEMPTS}?"
-                f"{diagnostics_text}"
-            )
-            choice = QMessageBox.question(
-                self,
-                "Two-Channel Pair Retry" if retry_complete_pair else "Timing Quality Retry",
-                retry_msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if choice == QMessageBox.StandardButton.Yes:
-                self._statusbar.showMessage(
-                    f"{message} Retrying measurement {self._queue_index + 1} "
-                    f"({self._current_sweep_attempts}/{MAX_SWEEP_ATTEMPTS})..."
-                )
-                QTimer.singleShot(150, self._start_next_sweep)
-                return
-            self._cancel_queue()
-            cancel_reason = (
-                "two-channel pair retry" if retry_complete_pair else "timing-quality retry"
-            )
-            self._statusbar.showMessage(f"Queue canceled by user after {cancel_reason} prompt.")
-            return
-
-        dialog_message = message
-        if (
-            self._last_measurement_diagnostics is not None
-            and getattr(self._last_measurement_diagnostics, "failure_reason", None) is not None
-        ):
-            dialog_message = (
-                f"{message}\n\n{format_diagnostics_summary(self._last_measurement_diagnostics)}"
-            )
-        # Terminal: the queue is over. A full reset clears the counters too, so
-        # no phantom queue survives in the progress bar or the console.
-        self._queue.reset()
-        self._state = QueueState.IDLE
-        self._update_queue_progress()
-        self._apply_state_ui()
-        self.devices.start_level_monitor()
-        self._statusbar.showMessage(message)
-        QMessageBox.warning(self, "Sweep Error", dialog_message)
-
-    def _on_sweep_thread_finished(self) -> None:
-        if self._start_second_pair_stage:
-            self._start_second_pair_stage = False
-            QTimer.singleShot(0, self._start_second_two_channel_sweep)
-            return
-        if self._state != QueueState.PASS_FAIL:
-            self.devices.start_level_monitor()
-
-    def _on_keep(self) -> None:
-        if self._state != QueueState.PASS_FAIL:
-            return
-
-        if self._two_channel_enabled:
-            if self._pending_pair is None:
-                return
-            self._close_pass_fail_dialog()
-            self._two_channel_pairs.append(self._pending_pair)
-            self._kept_pair_meta.append({"timing_quality": self._last_timing_quality})
-            self._kept_distortion = self._queue.last_distortion
-            self._pending_pair = None
-            self._pending_pair_first_raw = None
-            self._pending_pair_first_diagnostics = None
-            self._two_channel_stage = 0
-            self._queue_index += 1
-            self._current_sweep_attempts = 0
-            self._recompute_two_channel_results()
-            self._update_queue_progress()
-            self._update_plots()
-            self.measure_io.mark_dirty()
-            self.commands.trigger("measurement_kept")
-            if self._queue_index >= self._queue_target:
-                self._finish_queue()
-                return
-            self._state = QueueState.QUEUE_RUNNING
-            self._apply_state_ui()
-            self._start_next_sweep()
-            return
-
-        if self._pending_curve is None:
-            return
-
-        self._close_pass_fail_dialog()
-        self._kept_curves.append(self._pending_curve)
-        self._kept_sweep_meta.append(
-            {
-                "diagnostics": self._last_measurement_diagnostics,
-                "timing_quality": self._last_timing_quality,
-                "distortion": self._queue.last_distortion,
-            }
-        )
-        self._kept_distortion = self._queue.last_distortion
-        self._log_event(
-            "INFO",
-            "review",
-            "Measurement kept",
-            index=self._queue_index + 1,
-            kept_count=len(self._kept_curves),
-        )
-        self.commands.trigger("measurement_kept")
-        self._pending_curve = None
-        self._pending_pair = None
-        self._pending_pair_first_raw = None
-        self._pending_pair_first_diagnostics = None
-        self._two_channel_stage = 0
-        self._queue_index += 1
-        self._current_sweep_attempts = 0
-
-        self._recompute_average()
-        self._recompute_variation()
-        self._update_queue_progress()
-        self._update_plots()
-        self.measure_io.mark_dirty()
-        match = self.measure_compare.target_match_message()
-        if match:
-            self._statusbar.showMessage(f"Kept {len(self._kept_curves)} measurement(s). {match}")
-
-        if self._queue_index >= self._queue_target:
-            self._finish_queue()
-            return
-
-        self._state = QueueState.QUEUE_RUNNING
-        self._apply_state_ui()
-        self._start_next_sweep()
-
-    def _on_fail(self) -> None:
-        if self._state != QueueState.PASS_FAIL:
-            return
-
-        self._close_pass_fail_dialog()
-        self._log_event("WARNING", "review", "Measurement rejected", index=self._queue_index + 1)
-        # A manual Fail repeats the same index with a fresh retry budget; the
-        # attempts that produced the rejected sweep were not timing failures.
-        self._queue.reset(keep_counters=True)
-        self._current_sweep_attempts = 0
-        self._state = QueueState.QUEUE_RUNNING
-        self._apply_state_ui()
-        self._update_plots()
-        self._statusbar.showMessage(
-            f"Measurement {self._queue_index + 1} failed. Redoing same index."
-        )
-        self._start_next_sweep()
-
-    def _cancel_queue(self) -> None:
-        self._abort_active_sweep()
-        self._close_pass_fail_dialog()
-        # One reset clears the counters and every pending curve or pair.
-        self._queue.reset()
-        self._state = QueueState.IDLE
-        self.measure_tab.sweep_progress.setValue(0)
-        self._update_queue_progress()
-        self._update_plots()
-        self._apply_state_ui()
-        self.devices.start_level_monitor()
-        self._statusbar.showMessage("Queue canceled.")
-
-    def _finish_queue(self) -> None:
-        self._queue.reset()
-        self._state = QueueState.IDLE
-        self.measure_tab.sweep_progress.setValue(100)
-        self._apply_state_ui()
-        self.devices.start_level_monitor()
-        match = self.measure_compare.target_match_message()
-        self._statusbar.showMessage(f"Queue complete. {match}" if match else "Queue complete.")
-        self.commands.trigger("queue_complete")
-
-    def _update_queue_progress(self) -> None:
-        target = max(0, self._queue_target)
-        self.measure_tab.queue_progress_bar.setRange(0, max(1, target))
-        self.measure_tab.queue_progress_bar.setValue(min(self._queue_index, max(1, target)))
-        kept_count = (
-            len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
-        )
-        self.measure_tab.queue_progress_label.setText(f"Kept: {kept_count}")
-
-    def _show_pass_fail_dialog(self) -> None:
-        pending_available = (
-            self._pending_pair is not None
-            if self._two_channel_enabled
-            else self._pending_curve is not None
-        )
-        if self._state != QueueState.PASS_FAIL or not pending_available:
-            return
-
-        if self._pass_fail_dialog is not None:
-            self._pass_fail_dialog.raise_()
-            self._pass_fail_dialog.activateWindow()
-            return
-
-        dlg = PassFailDialog(
-            index=self._queue_index + 1,
-            total=max(self._queue_target, self._queue_index + 1),
-            timing_quality=self._last_timing_quality,
-            diagnostics=self._last_measurement_diagnostics,
-            distortion=self._queue.last_distortion,
-            deviation_summary=self.measure_compare.pending_deviation_summary(),
-            parent=self,
-        )
-        dlg.adjustSize()
-        target_rect = self._plots.bottom_plot_global_rect()
-        x = target_rect.center().x() - dlg.width() // 2
-        y = target_rect.center().y() - dlg.height() // 2
-        x = max(target_rect.left() + 12, min(x, target_rect.right() - dlg.width() - 12))
-        y = max(target_rect.top() + 12, min(y, target_rect.bottom() - dlg.height() - 12))
-        dlg.move(x, y)
-        dlg.finished.connect(lambda _result: self._handle_pass_fail_choice(dlg))
-        self._pass_fail_dialog = dlg
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
-
-    def _handle_pass_fail_choice(self, dlg: PassFailDialog) -> None:
-        if self._pass_fail_dialog is dlg:
-            self._pass_fail_dialog = None
-
-        choice = dlg.choice()
-        if choice == PassFailDialog.KEEP:
-            self._on_keep()
-        elif choice == PassFailDialog.FAIL:
-            self._on_fail()
-        else:
-            self._cancel_queue()
-
-    def _close_pass_fail_dialog(self) -> None:
-        if self._pass_fail_dialog is None:
-            return
-        dlg = self._pass_fail_dialog
-        self._pass_fail_dialog = None
-        dlg.blockSignals(True)
-        dlg.close()
-
-    def _recompute_average(self) -> None:
-        if not self._kept_curves:
-            self._average = None
-            return
-
-        freqs, mag_db = compute_rms_average(
-            self._kept_curves,
-            n_points=_DISPLAY_AVG_POINTS,
-            f_ref=1000.0,
-            f_min=_MEASUREMENT_F_MIN,
-            f_max=_MEASUREMENT_F_MAX,
-            # In dB SPL the average must keep the absolute level.
-            normalize_ref=self._spl_offset_db() is None,
-        )
-        self._average = (freqs, mag_db)
-
-    def _recompute_two_channel_results(self) -> None:
-        curves_by_key = {
-            "channel_1": channel_curves(self._two_channel_pairs, 1),
-            "channel_2": channel_curves(self._two_channel_pairs, 2),
-            "combined": combined_pair_curves(
-                self._two_channel_pairs,
-                n_points=_DISPLAY_AVG_POINTS,
-            ),
-        }
-        averages: dict[str, object] = {}
-        for key, curves in curves_by_key.items():
-            if not curves:
-                averages[key] = None
-                continue
-            averages[key] = compute_rms_average(
-                curves,
-                n_points=_DISPLAY_AVG_POINTS,
-                f_ref=1000.0,
-                f_min=_MEASUREMENT_F_MIN,
-                f_max=_MEASUREMENT_F_MAX,
-                normalize_ref=False,
-            )
-        self._two_channel_averages = averages
-
-    def _active_two_channel_key(self) -> str:
-        if self._two_channel_bottom_mode == "combined":
-            return "combined"
-        return self._two_channel_selection
-
-    def _active_two_channel_average(
-        self,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        value = self._two_channel_averages.get(self._active_two_channel_key())
-        return value if isinstance(value, tuple) else None
-
-    def _active_measure_curves(self) -> list[tuple[np.ndarray, np.ndarray]]:
-        if not self._two_channel_enabled:
-            return list(self._kept_curves)
-        key = self._active_two_channel_key()
-        if key == "channel_1":
-            return channel_curves(self._two_channel_pairs, 1)
-        if key == "channel_2":
-            return channel_curves(self._two_channel_pairs, 2)
-        return combined_pair_curves(
-            self._two_channel_pairs,
-            n_points=_DISPLAY_AVG_POINTS,
-        )
-
-    def _active_measure_count(self) -> int:
-        return len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
-
-    def _active_measure_label(self) -> str:
-        if not self._two_channel_enabled:
-            return ""
-        return curve_label_for_selection(self._active_two_channel_key())
-
-    def _active_measure_session(self) -> SessionData:
-        label = self._active_measure_label()
-        if label in {"L", "R"}:
-            return replace(self._session, channel_side=label)
-        if label == "BOTH":
-            return replace(self._session, channel_side="")
-        return self._session
-
-    def _active_measure_variation(self):
-        if self._two_channel_enabled:
-            return self._two_channel_variations.get(self._active_two_channel_key())
-        return self._variation
-
-    def _recompute_variation(self) -> None:
-        active_hrtf = self._hrtf if self._is_hrtf_active() else None
-        self._variation = self._variation_from_kept_curves(hrtf=active_hrtf)
-
-    def _variation_from_kept_curves(
-        self,
-        *,
-        hrtf: HRTFCurve | None,
-    ) -> VariationBand | None:
-        return self._variation_from_curves(
-            self._kept_curves,
-            self._average,
-            hrtf=hrtf,
-        )
-
-    def _variation_from_curves(
-        self,
-        curves: list[tuple[np.ndarray, np.ndarray]],
-        average: tuple[np.ndarray, np.ndarray] | None,
-        *,
-        hrtf: HRTFCurve | None,
-    ) -> VariationBand | None:
-        if not curves or average is None:
-            return None
-        variation_hrtf = hrtf is not None and getattr(hrtf, "is_variation", False)
-        band = percentile_band(
-            curves,
-            grid=average[0],
-            smoothing=_DISPLAY_AVG_SMOOTHING,
-            hrtf=None if variation_hrtf else hrtf,
-        )
-        return hrtf.apply_to_variation(band) if variation_hrtf else band
-
-    def _average_curve_with_hrtf(
-        self,
-        hrtf: HRTFCurve | None,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        source = self._active_two_channel_average() if self._two_channel_enabled else self._average
-        if source is None:
-            return None
-        freqs, mag_db = source
-        if hrtf is None:
-            return freqs, mag_db
-        return freqs, hrtf.apply(freqs, mag_db)
-
-    def _bottom_curve_for_display_and_export(
-        self,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
-        active_hrtf = self._hrtf if self._is_hrtf_active() else None
-        return self._average_curve_with_hrtf(active_hrtf)
-
-    def _bottom_curve_for_display(self) -> tuple[np.ndarray, np.ndarray] | None:
-        curve = self._bottom_curve_for_display_and_export()
-        if curve is None:
-            return None
-
-        freqs, mag_db = curve
-        return smooth_fractional_octave(
-            freqs,
-            mag_db,
-            fraction=_DISPLAY_AVG_SMOOTHING,
-        )
-
-    def _update_plots(self, *_args, show_pending: bool = False) -> None:
-        overlay_freqs, overlay_series = self._distortion_overlay_series()
-        self._plots.set_distortion_overlay(overlay_freqs, overlay_series)
-        self.measure_compare.sync_layers()
-        delta_on = self.measure_compare.delta_view_enabled()
-        if self._two_channel_enabled:
-            active_hrtf = self._hrtf if self._is_hrtf_active() else None
-            pairs = list(self._two_channel_pairs)
-            if show_pending and self._pending_pair is not None:
-                pairs.append(self._pending_pair)
-            curves_by_key = {
-                "channel_1": channel_curves(self._two_channel_pairs, 1),
-                "channel_2": channel_curves(self._two_channel_pairs, 2),
-                "combined": combined_pair_curves(
-                    self._two_channel_pairs,
-                    n_points=_DISPLAY_AVG_POINTS,
-                ),
-            }
-            averages: dict[str, object] = {}
-            variations: dict[str, object] = {}
-            for key in ("channel_1", "channel_2", "combined"):
-                raw_average = self._two_channel_averages.get(key)
-                if isinstance(raw_average, tuple):
-                    freqs, values = raw_average
-                    if active_hrtf is not None:
-                        values = active_hrtf.apply(freqs, values)
-                    averages[key] = smooth_fractional_octave(
-                        freqs,
-                        values,
-                        fraction=_DISPLAY_AVG_SMOOTHING,
-                    )
-                else:
-                    averages[key] = None
-                variations[key] = self._variation_from_curves(
-                    curves_by_key[key],
-                    raw_average if isinstance(raw_average, tuple) else None,
-                    hrtf=active_hrtf,
-                )
-            self._two_channel_variations = variations
-            show_variation = self._bottom_view_mode() == "variation"
-            if delta_on:
-                # Limitation: two-channel delta view replaces only the *active*
-                # bottom viewport's curve. The other viewports keep showing
-                # their own averages, the pane titles still read "Average", and
-                # the target line and reference layers are single-channel only.
-                active_key = self._active_two_channel_key()
-                delta = self.measure_compare.delta_result(
-                    averages.get(active_key)
-                    if isinstance(averages.get(active_key), tuple)
-                    else None
-                )
-                if delta is not None:
-                    averages[active_key] = (delta.freqs, delta.delta_db)
-                    show_variation = False
-            self._plots.two.update_frequency_response(
-                top_channel_1=channel_curves(pairs, 1),
-                top_channel_2=channel_curves(pairs, 2),
-                averages=averages,
-                variations=variations,
-                show_variation=show_variation,
-            )
-            self.measure_io.sync_export_button()
-            return
-
-        avg = self._bottom_curve_for_display()
-        self._recompute_variation()
-
-        kept = list(self._kept_curves)
-        if show_pending and self._pending_curve is not None:
-            kept = kept + [self._pending_curve]
-
-        bottom_mode = self._bottom_view_mode()
-        if delta_on:
-            # The bottom viewport shows measurement - target instead of the
-            # average, so the variation band has nothing to describe.
-            delta = self.measure_compare.delta_result(self._bottom_curve_for_display_and_export())
-            if delta is not None:
-                avg = (delta.freqs, delta.delta_db)
-                bottom_mode = "average"
-
-        self._plots.update_curves(
-            kept=kept,
-            average=avg,
-            variation=self._variation,
-            bottom_mode=bottom_mode,
-            animate_last=show_pending and self._pending_curve is not None,
-        )
-        self.measure_io.sync_export_button()
-
-    def _bottom_view_mode(self) -> str:
-        if self._is_hrtf_active() and self._hrtf.is_variation:
-            return "variation"
-        return "variation" if self.measure_tab.variation_toggle.isChecked() else "average"
-
-    def _on_bottom_view_changed(self, *_args) -> None:
-        self._update_plots()
-
-    # ------------------------------------------------------------------
-    # Distortion overlay
-    # ------------------------------------------------------------------
-
-    def _distortion_overlay_enabled(self) -> bool:
-        toggle = getattr(getattr(self, "measure_tab", None), "distortion_toggle", None)
-        return toggle is not None and bool(toggle.isChecked())
-
-    def _distortion_analysis_allowed(self) -> bool:
-        """Whether the last sweep is clean enough to measure harmonics on.
-
-        Below ``_DISTORTION_MIN_SNR_DB`` the Farina packets sit inside the
-        noise floor and the numbers would be meaningless.
-        """
-        if not self._distortion_overlay_enabled():
-            return False
-        timing = self._last_timing_quality
-        if timing is None:
-            return False
-        try:
-            return float(timing[3]) >= _DISTORTION_MIN_SNR_DB
-        except (TypeError, ValueError, IndexError):
-            return False
-
-    def _distortion_overlay_series(self):
-        # During review show the pending sweep's analysis; afterwards keep
-        # showing the most recently kept sweep's.
-        analysis = self._queue.last_distortion or self._kept_distortion
-        if analysis is None or not self._distortion_overlay_enabled():
-            return None, None
-        series: dict[str, np.ndarray] = {"THD": np.asarray(analysis.thd_db)}
-        for order, name in ((2, "H2"), (3, "H3")):
-            values = analysis.orders.get(order)
-            if values is not None:
-                series[name] = np.asarray(values)
-        return np.asarray(analysis.freqs), series
-
-    def _on_distortion_overlay_changed(self, *_args) -> None:
-        self._settings.set("measure_distortion_overlay", self._distortion_overlay_enabled())
-        self._update_plots()
-
-    def _analyze_sweep(
-        self,
-        recording: np.ndarray,
-        sweep: np.ndarray,
-    ) -> tuple[tuple[np.ndarray, np.ndarray], HarmonicAnalysis | None]:
-        """Frequency response plus, when asked for, harmonic distortion.
-
-        The distortion pass is strictly optional: any failure inside it is
-        logged and dropped, because a distortion overlay must never cost the
-        operator a measurement.
-        """
-        fs = int(self._settings.get("sample_rate"))
-        freqs, mag_db = compute_frequency_response(
-            recording=recording,
-            sweep=sweep,
-            fs=fs,
-            f_low=_MEASUREMENT_F_MIN,
-            f_high=_MEASUREMENT_F_MAX,
-        )
-        distortion: HarmonicAnalysis | None = None
-        if self._distortion_analysis_allowed():
-            try:
-                distortion = harmonic_responses(
-                    deconvolve_sweep(recording, sweep, fs),
-                    f_low=_MEASUREMENT_F_MIN,
-                    f_high=_MEASUREMENT_F_MAX,
-                )
-            except Exception as exc:  # never fail a sweep over the overlay
-                self._log_event(
-                    "WARNING",
-                    "processing",
-                    f"Distortion analysis skipped: {exc}",
-                )
-                distortion = None
-        self._queue.last_distortion = distortion
-        return (freqs, mag_db), distortion
-
-    # ------------------------------------------------------------------
-    # Level mode (1 kHz reference vs absolute dB SPL)
-    # ------------------------------------------------------------------
-
-    def _level_mode(self) -> str:
-        mode = str(self._settings.get("measure_level_mode") or "ref_1khz")
-        return "dbspl" if mode == "dbspl" else "ref_1khz"
-
-    def _spl_offset_db(self) -> float | None:
-        """dB offset to absolute SPL, or None to stay in 1 kHz reference mode.
-
-        Falls back to reference mode — with a single status-bar note — when
-        dB SPL is selected but the input device has no calibration.
-        """
-        if self._level_mode() != "dbspl":
-            return None
-        sensitivity = self.devices.calibrated_sensitivity()
-        if sensitivity is None:
-            if not self._spl_uncalibrated_warned:
-                self._spl_uncalibrated_warned = True
-                self._statusbar.showMessage(
-                    "dB SPL needs a calibrated input device; showing 1 kHz "
-                    "reference levels instead."
-                )
-            return None
-        try:
-            return absolute_spl_offset_db(
-                sensitivity_pa_per_fs=float(sensitivity),
-                output_level_db=float(self.measure_tab.queue_level_spin.value()),
-            )
-        except (TypeError, ValueError):
-            return None
-
-    def _has_kept_measurements(self) -> bool:
-        if self._two_channel_enabled:
-            return bool(self._two_channel_pairs) or self._pending_pair is not None
-        return bool(self._kept_curves) or self._pending_curve is not None
-
-    def _sync_level_mode_combo(self) -> None:
-        combo = getattr(getattr(self, "measure_tab", None), "level_mode_combo", None)
-        if combo is None:
-            return
-        combo.blockSignals(True)
-        combo.setCurrentIndex(1 if self._level_mode() == "dbspl" else 0)
-        combo.blockSignals(False)
-
-    def _on_level_mode_changed(self, *_args) -> None:
-        """Switch level modes, refusing to mix modes inside one kept set."""
-        combo = self.measure_tab.level_mode_combo
-        chosen = str(combo.currentData() or "ref_1khz")
-        chosen = "dbspl" if chosen == "dbspl" else "ref_1khz"
-        if chosen == self._level_mode():
-            return
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "Cannot change the level mode while a measurement is running.",
-            )
-            self._sync_level_mode_combo()
-            return
-        if self._has_kept_measurements():
-            label = "dB SPL" if chosen == "dbspl" else "1 kHz reference"
-            choice = QMessageBox.question(
-                self,
-                "Clear Measurements?",
-                "Kept measurements use the current level mode and cannot be "
-                f"mixed with {label}.\n\nClear all measurements and switch?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if choice != QMessageBox.StandardButton.Yes:
-                self._sync_level_mode_combo()
-                self._statusbar.showMessage("Level mode unchanged.")
-                return
-            self._discard_all_measurements()
-        self._settings.set("measure_level_mode", chosen)
-        self._spl_uncalibrated_warned = False
-        self._sync_level_mode_combo()
-        if chosen == "dbspl" and self.devices.calibrated_sensitivity() is None:
-            self._statusbar.showMessage(
-                "dB SPL selected, but the input device is not calibrated; "
-                "curves stay at 1 kHz reference until it is."
-            )
-        else:
-            self._statusbar.showMessage(
-                "Level mode: dB SPL." if chosen == "dbspl" else "Level mode: 1 kHz reference."
-            )
-        self._update_plots()
-
-    def _on_hrtf_selected(self) -> None:
-        path = self.measure_tab.hrtf_combo.currentData()
-        if not path:
-            self._hrtf = None
-            self._settings.set("hrtf_path", None)
-            self._sync_hrtf_ui()
-            self._update_plots()
-            self.measure_io.mark_dirty()
-            self._statusbar.showMessage("HRTF cleared.")
-            return
-
-        try:
-            self._hrtf = HRTFCurve(path)
-            self._settings.set("hrtf_path", path)
-            self._sync_hrtf_ui()
-            self.measure_tab.hrtf_toggle.setChecked(True)
-            if self._hrtf.is_variation:
-                self.measure_tab.variation_toggle.setChecked(True)
-            self._update_plots()
-            self.measure_io.mark_dirty()
-            kind = "population variation compensation" if self._hrtf.is_variation else "HRTF"
-            self._statusbar.showMessage(f"Loaded {kind}: {Path(path).name}")
-        except Exception as exc:
-            QMessageBox.warning(self, "HRTF Load Error", str(exc))
-            self._hrtf = None
-            self._settings.set("hrtf_path", None)
-            self._sync_hrtf_ui()
-            self._update_plots()
-
-    def _import_dropped_measurement_files(self, paths: list[str]) -> None:
-        if self._two_channel_enabled:
-            QMessageBox.information(
-                self,
-                "Single Channel Only",
-                "TXT drag-and-drop import is available only in Single Channel mode.",
-            )
-            self._statusbar.showMessage("Measurement import blocked: Two Channel mode is active.")
-            return
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "Measurement import is only available while idle.",
-            )
-            self._statusbar.showMessage("Measurement import blocked: queue is active.")
-            return
-
-        loaded = 0
-        failed: list[str] = []
-        for path in paths:
-            try:
-                curve = load_two_column_txt_curve(path, label="Measurement")
-            except Exception as exc:
-                failed.append(f"{Path(path).name}: {exc}")
-                continue
-            self._kept_curves.append(curve)
-            # An imported curve carries no sweep of its own, so its metadata
-            # slot stays empty; the lists must still line up one for one.
-            self._kept_sweep_meta.append({})
-            loaded += 1
-
-        if loaded > 0:
-            self._recompute_average()
-            self._recompute_variation()
-            self._update_queue_progress()
-            self._update_plots()
-            self.measure_io.mark_dirty()
-
-        if loaded == 0 and failed:
-            QMessageBox.warning(
-                self,
-                "Import Failed",
-                "No files were imported.\n\n" + "\n".join(failed[:8]),
-            )
-            self._statusbar.showMessage("Measurement import failed.")
-            return
-
-        if failed:
-            QMessageBox.warning(
-                self,
-                "Import Completed With Warnings",
-                f"Loaded {loaded} file(s), failed {len(failed)} file(s).\n\n"
-                + "\n".join(failed[:8]),
-            )
-
-        self._statusbar.showMessage(
-            f"Measurement import complete: loaded {loaded}, failed {len(failed)}."
-        )
-
-    def _clear_all(self) -> None:
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "Cannot clear measurements while queue is active.",
-            )
-            return
-
-        active_has_data = (
-            bool(self._two_channel_pairs) or self._pending_pair is not None
-            if self._two_channel_enabled
-            else bool(self._kept_curves) or self._pending_curve is not None
-        )
-        if not active_has_data:
-            return
-
-        if bool(self._settings.get("confirm_clear_measurements")):
-            confirmed, dont_show_again = self._confirm_clear_all()
-            if not confirmed:
-                return
-            if dont_show_again:
-                self._settings.set("confirm_clear_measurements", False)
-                self._settings_widget.refresh_from_settings()
-
-        self._discard_all_measurements()
-        self._statusbar.showMessage("All measurements cleared.")
-
-    def _discard_all_measurements(self) -> None:
-        """Drop every kept curve and reset the queue. No prompts, no guards.
-
-        Split out of :meth:`_clear_all` so the level-mode switch can clear
-        without asking the user a second time.
-        """
-        if self._two_channel_enabled:
-            self._two_channel_pairs.clear()
-            self._kept_pair_meta.clear()
-            self._two_channel_averages.clear()
-            self._two_channel_variations.clear()
-            self._pending_pair = None
-            self._pending_pair_first_raw = None
-            self._pending_pair_first_diagnostics = None
-            self._update_plots()
-        else:
-            self._kept_curves.clear()
-            self._kept_sweep_meta.clear()
-            self._average = None
-            self._variation = None
-            self._pending_curve = None
-            # ``clear_all`` resets the comparison layers too, so the loaded
-            # target and references are pushed straight back onto the plot.
-            self._plots.clear_all()
-            self.measure_compare.sync_layers()
-        self._queue.reset()
-        self._kept_distortion = None
-        self._update_queue_progress()
-        self.measure_tab.sweep_progress.setValue(0)
-        self.measure_io.sync_export_button()
-        self._apply_state_ui()
-        self.measure_io.mark_dirty()
-
-    def _confirm_clear_all(self) -> tuple[bool, bool]:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Clear All Measurements")
-        dialog.setText("Are you sure you want to clear all measurements from this tab?")
-        clear_button = dialog.addButton("Clear All", QMessageBox.ButtonRole.DestructiveRole)
-        clear_button.setObjectName("btn_danger")
-        dialog.addButton(QMessageBox.StandardButton.Cancel)
-        dont_show = QCheckBox("Don’t show this warning again")
-        dialog.setCheckBox(dont_show)
-        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        dialog.exec()
-        return dialog.clickedButton() is clear_button, dont_show.isChecked()
-
-    def _undo_last_measurement(self) -> None:
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "Undo is only available while idle.",
-            )
-            return
-
-        # The overlay described the sweep being undone.
-        self._kept_distortion = None
-
-        if self._two_channel_enabled:
-            if not self._two_channel_pairs:
-                return
-            self._two_channel_pairs.pop()
-            if self._kept_pair_meta:
-                self._kept_pair_meta.pop()
-            self._recompute_two_channel_results()
-        else:
-            if not self._kept_curves:
-                return
-            self._kept_curves.pop()
-            if self._kept_sweep_meta:
-                self._kept_sweep_meta.pop()
-            self._recompute_average()
-            self._recompute_variation()
-        self._update_queue_progress()
-        self._update_plots()
-        self._apply_state_ui()
-        self.measure_io.mark_dirty()
-        self._statusbar.showMessage("Last kept measurement removed.")
 
     def _save_metadata_overlay(self) -> None:
         if not self._metadata_editor.validate():
@@ -2508,44 +894,6 @@ class MainWindow(QMainWindow):
         dialog.exec()
         return dialog.clickedButton() is clear_button, dont_show.isChecked()
 
-    def _on_queue_level_changed(self, value: float) -> None:
-        if hasattr(self._settings, "clear_session"):
-            self._settings.clear_session("queue_output_level_db")
-        clamped = max(-120.0, min(0.0, float(value)))
-        if abs(clamped - float(value)) > 1e-9:
-            self.measure_tab.queue_level_spin.blockSignals(True)
-            self.measure_tab.queue_level_spin.setValue(clamped)
-            self.measure_tab.queue_level_spin.blockSignals(False)
-        if self.measure_tab.queue_level_persist_toggle.isChecked():
-            self._settings.set("queue_output_level_db", clamped)
-        if hasattr(self, "_plots"):
-            self._plots.two.set_generator_level(clamped)
-        self._balance_level_db = clamped
-        if self._balance_engine is not None:
-            self._balance_engine.set_parameters(
-                self._balance_waveform,
-                self._balance_frequency,
-                self._balance_level_db,
-            )
-
-    def _on_queue_count_changed(self, _value: int) -> None:
-        if hasattr(self._settings, "clear_session"):
-            self._settings.clear_session("queue_count")
-
-    def _on_queue_level_persist_changed(self, _state: int) -> None:
-        persist = self.measure_tab.queue_level_persist_toggle.isChecked()
-        self._settings.set("queue_output_level_persist", persist)
-        if persist:
-            self._settings.set(
-                "queue_output_level_db", float(self.measure_tab.queue_level_spin.value())
-            )
-
-    def _failed_recording_dir(self) -> str | None:
-        """Folder for failed-recording dumps, or None when the setting is off."""
-        if not bool(self._settings.get("save_failed_recordings")):
-            return None
-        return str(config_dir() / "failed_recordings")
-
     def closeEvent(self, event) -> None:
         if not self.rnd.confirm_close():
             event.ignore()
@@ -2554,7 +902,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
-        self._close_pass_fail_dialog()
+        self.measure.close_pass_fail_dialog()
         self.rnd.close_review_dialog()
         with contextlib.suppress(Exception):
             self.devices.device_poller.stop()
@@ -2562,7 +910,7 @@ class MainWindow(QMainWindow):
         # Join the sweep thread before Qt tears the window down; a live
         # PortAudio duplex stream at interpreter exit crashes on some hosts.
         with contextlib.suppress(Exception):
-            self._sweep_runner.shutdown()
+            self.measure.sweep_runner.shutdown()
 
         with contextlib.suppress(Exception):
             self.devices.level_monitor.stop()
@@ -2571,7 +919,7 @@ class MainWindow(QMainWindow):
             self.devices.dual_level_monitor.stop()
 
         with contextlib.suppress(Exception):
-            self._stop_channel_balance()
+            self.measure.stop_channel_balance()
 
         with contextlib.suppress(Exception):
             self.update_check.shutdown()

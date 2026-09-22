@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_controller as measure_controller_module
 
 
 def _write_hrtf(path: Path) -> None:
@@ -17,7 +17,7 @@ def _window(make_main_window):
     def _count_update() -> None:
         window.update_count += 1
 
-    window._update_plots = _count_update
+    window.measure.update_plots = _count_update
     return window
 
 
@@ -28,10 +28,10 @@ def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(
     hrtf_dir.mkdir()
     _write_hrtf(hrtf_dir / "Beta.txt")
     _write_hrtf(hrtf_dir / "Alpha.txt")
-    monkeypatch.setattr(main_window_module, "HRTF_DIR", hrtf_dir)
+    monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
     window = _window(make_main_window)
 
-    window._refresh_hrtf_options()
+    window.measure.refresh_hrtf_options()
 
     assert [
         window.measure_tab.hrtf_combo.itemText(i)
@@ -44,8 +44,8 @@ def test_hrtf_dropdown_reads_fastgraph_hrtf_folder(
 
 
 def test_population_average_hrtf_loads_as_a_variation_compensation() -> None:
-    path = Path(main_window_module.HRTF_DIR) / "5128 IEM Population Average.txt"
-    curve = main_window_module.HRTFCurve(str(path))
+    path = Path(measure_controller_module.HRTF_DIR) / "5128 IEM Population Average.txt"
+    curve = measure_controller_module.HRTFCurve(str(path))
 
     assert curve.is_variation
     assert curve.freqs.size == 1200
@@ -66,16 +66,16 @@ def test_selecting_built_in_hrtf_loads_and_enables_compensation(
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
     _write_hrtf(hrtf_path)
-    monkeypatch.setattr(main_window_module, "HRTF_DIR", hrtf_dir)
+    monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
     window = _window(make_main_window)
-    window._refresh_hrtf_options()
+    window.measure.refresh_hrtf_options()
 
     window.measure_tab.hrtf_combo.setCurrentIndex(
         window.measure_tab.hrtf_combo.findData(str(hrtf_path))
     )
 
-    assert window._hrtf is not None
-    assert window._hrtf.name == "Fixture A"
+    assert window.measure.hrtf is not None
+    assert window.measure.hrtf.name == "Fixture A"
     assert window._settings.get("hrtf_path") == str(hrtf_path)
     assert window.measure_tab.hrtf_toggle.isEnabled()
     assert window.measure_tab.hrtf_toggle.isChecked()
@@ -91,16 +91,16 @@ def test_selecting_none_clears_hrtf_and_disables_compensation(
     hrtf_dir.mkdir()
     hrtf_path = hrtf_dir / "Fixture A.txt"
     _write_hrtf(hrtf_path)
-    monkeypatch.setattr(main_window_module, "HRTF_DIR", hrtf_dir)
+    monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
     window = _window(make_main_window)
-    window._refresh_hrtf_options()
+    window.measure.refresh_hrtf_options()
     window.measure_tab.hrtf_combo.setCurrentIndex(
         window.measure_tab.hrtf_combo.findData(str(hrtf_path))
     )
 
     window.measure_tab.hrtf_combo.setCurrentIndex(0)
 
-    assert window._hrtf is None
+    assert window.measure.hrtf is None
     assert window._settings.get("hrtf_path") is None
     assert not window.measure_tab.hrtf_toggle.isEnabled()
     assert not window.measure_tab.hrtf_toggle.isChecked()
@@ -116,12 +116,12 @@ def test_restore_ignores_missing_or_legacy_custom_hrtf_path(
     _write_hrtf(hrtf_dir / "Built In.txt")
     custom_path = tmp_path / "Custom.txt"
     _write_hrtf(custom_path)
-    monkeypatch.setattr(main_window_module, "HRTF_DIR", hrtf_dir)
+    monkeypatch.setattr(measure_controller_module, "HRTF_DIR", hrtf_dir)
     window = _window(make_main_window)
     window._settings.set("hrtf_path", str(custom_path))
 
-    window._restore_hrtf_state()
+    window.measure.restore_hrtf_state()
 
-    assert window._hrtf is None
+    assert window.measure.hrtf is None
     assert window._settings.get("hrtf_path") is None
     assert window.measure_tab.hrtf_combo.currentText() == "None"

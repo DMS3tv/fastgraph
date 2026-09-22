@@ -30,12 +30,12 @@ def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     triggers: list[str] = []
     statuses: list[str] = []
     window = make_main_window(session=SessionData(rig="GRAS", brand="DMS", model="Example"))
-    window._kept_curves = [
+    window.measure.kept_curves = [
         (freqs, np.array([10.0, 20.0])),
         (freqs, np.array([14.0, 24.0])),
     ]
-    window._average = (freqs, np.array([12.0, 22.0]))
-    window._hrtf = hrtf
+    window.measure.average = (freqs, np.array([12.0, 22.0]))
+    window.measure.hrtf = hrtf
     window.measure_tab.export_dir_input.setText(str(tmp_path))
     window._statusbar.messageChanged.connect(statuses.append)
     window._log_event = lambda *args, **kwargs: events.append(("log", args, kwargs))
@@ -184,16 +184,16 @@ def test_measure_action_switches_between_squiglink_and_export_all(make_main_wind
 def test_brand_export_all_button_reports_missing_requirements(make_main_window) -> None:
     window = make_main_window()
     window._theme_controller.set_brand_mode(True, persist=False)
-    assert window._bottom_view_mode() == "average"
+    assert window.measure.bottom_view_mode() == "average"
 
     window.measure_io.sync_export_button()
     assert window.measure_tab.upload_btn.text() == "Export All…"
     assert window.measure_tab.upload_btn.isEnabled() is False
     assert "average" in window.measure_tab.upload_btn.toolTip().lower()
 
-    window._average = (np.array([100.0]), np.array([0.0]))
-    window._kept_curves = [window._average, window._average]
-    window._hrtf = object()
+    window.measure.average = (np.array([100.0]), np.array([0.0]))
+    window.measure.kept_curves = [window.measure.average, window.measure.average]
+    window.measure.hrtf = object()
     window.measure_io.sync_export_button()
     assert window.measure_tab.upload_btn.isEnabled() is True
     assert window.measure_tab.upload_btn.role() == "primary"
@@ -204,12 +204,12 @@ def test_export_average_equals_displayed_curve(make_main_window, tmp_path: Path)
     window = make_main_window()
     freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 400)
     rng = np.random.default_rng(7)
-    window._kept_curves = [
+    window.measure.kept_curves = [
         (freqs, rng.normal(0.0, 3.0, freqs.size)),
         (freqs, rng.normal(0.0, 3.0, freqs.size)),
     ]
-    window._recompute_average()
-    displayed = window._bottom_curve_for_display()
+    window.measure.recompute_average()
+    displayed = window.measure.bottom_curve_for_display()
     assert displayed is not None
 
     output = tmp_path / "average.txt"
@@ -238,13 +238,13 @@ def test_export_all_comp_average_matches_export_average(
     window = make_main_window()
     freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 400)
     rng = np.random.default_rng(11)
-    window._kept_curves = [
+    window.measure.kept_curves = [
         (freqs, rng.normal(0.0, 3.0, freqs.size)),
         (freqs, rng.normal(0.0, 3.0, freqs.size)),
     ]
-    window._recompute_average()
-    window._hrtf = _standard_hrtf(tmp_path)
-    window._is_hrtf_active = lambda: True
+    window.measure.recompute_average()
+    window.measure.hrtf = _standard_hrtf(tmp_path)
+    window.measure.is_hrtf_active = lambda: True
 
     single_dir = tmp_path / "single"
     all_dir = tmp_path / "all"

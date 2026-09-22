@@ -19,11 +19,11 @@ def test_population_compensation_forces_measure_view_to_variation(
     tmp_path: Path,
 ) -> None:
     window = make_main_window()
-    window._hrtf = _variation_hrtf(tmp_path)
+    window.measure.hrtf = _variation_hrtf(tmp_path)
     window.measure_tab.hrtf_toggle.setChecked(True)
     window.measure_tab.variation_toggle.setChecked(False)
 
-    assert window._bottom_view_mode() == "variation"
+    assert window.measure.bottom_view_mode() == "variation"
 
 
 def test_one_measurement_gets_population_compensation_band(
@@ -32,10 +32,10 @@ def test_one_measurement_gets_population_compensation_band(
 ) -> None:
     freqs = np.array([100.0, 1000.0])
     window = make_main_window()
-    window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
-    window._average = (freqs, np.array([10.0, 100.0]))
+    window.measure.kept_curves = [(freqs, np.array([10.0, 100.0]))]
+    window.measure.average = (freqs, np.array([10.0, 100.0]))
 
-    variation = window._variation_from_kept_curves(hrtf=_variation_hrtf(tmp_path))
+    variation = window.measure.variation_from_kept_curves(hrtf=_variation_hrtf(tmp_path))
 
     assert variation is not None
     p10, p25, median, p75, p90 = (

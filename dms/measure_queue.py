@@ -310,8 +310,8 @@ class MeasurementQueue:
         ``retry_attempt`` is ``attempts + 1``: :meth:`begin_sweep` already
         counted the attempt that just failed, so the operator is being offered
         the *next* one. That reproduces today's dialog text exactly —
-        ``f"Retry attempt {self._current_sweep_attempts + 1} of
-        {MAX_SWEEP_ATTEMPTS}?"`` in ``_on_sweep_error``.
+        ``f"Retry attempt {self.queue.attempts + 1} of
+        {MAX_SWEEP_ATTEMPTS}?"`` in ``MeasureController.on_sweep_error``.
         """
         retryable = bool(timing_failure) or (self.two_channel and not bool(device_failure))
         if self.is_active() and retryable and self.attempts < self.max_attempts:

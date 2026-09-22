@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import dms.ui.device_controller as device_controller_module
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_controller as measure_controller_module
 import dms.ui.measure_io as measure_io_module
 from dms.measure_queue import MeasurementQueue, QueueState
 from dms.two_channel import TwoChannelCurvePair
@@ -29,34 +29,40 @@ def _silence_dialogs(monkeypatch, *, expect_question: bool = True):
 
     def question(*_args, **_kwargs):
         calls["question"] += 1
-        return main_window_module.QMessageBox.StandardButton.Yes
+        return measure_controller_module.QMessageBox.StandardButton.Yes
 
     def warning(*_args, **_kwargs):
         calls["warning"] += 1
-        return main_window_module.QMessageBox.StandardButton.Ok
+        return measure_controller_module.QMessageBox.StandardButton.Ok
 
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", question)
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", warning)
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: None)
+    monkeypatch.setattr(measure_controller_module.QMessageBox, "question", question)
+    monkeypatch.setattr(measure_controller_module.QMessageBox, "warning", warning)
+    monkeypatch.setattr(
+        measure_controller_module.QTimer, "singleShot", lambda _delay, callback: None
+    )
     return calls
 
 
 def test_state_shims_round_trip_through_the_queue(make_main_window) -> None:
     window = make_main_window()
-    assert isinstance(window._queue, MeasurementQueue)
+    assert isinstance(window.measure.queue, MeasurementQueue)
 
     window._state = QueueState.QUEUE_RUNNING
-    assert window._queue.state is QueueState.QUEUE_RUNNING
+    assert window.measure.queue.state is QueueState.QUEUE_RUNNING
     assert window._state == QueueState.QUEUE_RUNNING
 
     window._queue_target = 4
     window._queue_index = 2
     window._current_sweep_attempts = 1
     window._pending_curve = _curve()
-    assert (window._queue.target, window._queue.index, window._queue.attempts) == (4, 2, 1)
-    assert window._queue.pending_curve is not None
+    assert (
+        window.measure.queue.target,
+        window.measure.queue.index,
+        window.measure.queue.attempts,
+    ) == (4, 2, 1)
+    assert window.measure.queue.pending_curve is not None
 
-    window._queue.reset()
+    window.measure.queue.reset()
     assert window._queue_target == 0
     assert window._pending_curve is None
     window._state = QueueState.IDLE
@@ -71,10 +77,10 @@ def test_terminal_error_resets_queue_counters(make_main_window, monkeypatch) -> 
     window._current_sweep_attempts = 1
     window._state = QueueState.SWEEPING
 
-    window._on_sweep_error("Selected device is unavailable.")
+    window.measure.on_sweep_error("Selected device is unavailable.")
 
     assert window._state == QueueState.IDLE
-    assert window._queue_active() is False
+    assert window.measure.queue_active() is False
     assert (window._queue_target, window._queue_index, window._current_sweep_attempts) == (0, 0, 0)
     assert calls["question"] == 0
     assert calls["warning"] == 1
@@ -84,21 +90,21 @@ def test_manual_fail_restores_the_retry_budget(make_main_window, monkeypatch) ->
     """B5: two manual fails must not consume the timing-retry budget."""
     window = make_main_window()
     started = []
-    window._start_next_sweep = lambda **_kwargs: started.append(True)
+    window.measure.start_next_sweep = lambda **_kwargs: started.append(True)
     window._queue_target = 2
     window._queue_index = 0
     window._current_sweep_attempts = 2
     window._pending_curve = _curve()
     window._state = QueueState.PASS_FAIL
 
-    window._on_fail()
+    window.measure.on_fail()
 
     assert window._current_sweep_attempts == 0
     assert window._queue_index == 0
     assert window._pending_curve is None
     assert window._state == QueueState.QUEUE_RUNNING
     assert started == [True]
-    window._queue.reset()
+    window.measure.queue.reset()
     window._state = QueueState.IDLE
 
 
@@ -112,7 +118,7 @@ def test_cancel_clears_two_channel_pending_state(make_main_window) -> None:
     window._pending_pair_first_raw = _curve()
     window._pending_pair_first_diagnostics = object()
 
-    window._cancel_queue()
+    window.measure.cancel_queue()
 
     assert window._state == QueueState.IDLE
     assert window._pending_pair is None
@@ -132,12 +138,12 @@ def test_device_error_is_terminal_in_two_channel_mode(make_main_window, monkeypa
     window._state = QueueState.SWEEPING
     window._two_channel_stage = 1
 
-    window._on_sweep_error("Input device unavailable: Scarlett 2i2")
+    window.measure.on_sweep_error("Input device unavailable: Scarlett 2i2")
 
     assert calls["question"] == 0
     assert calls["warning"] == 1
     assert window._state == QueueState.IDLE
-    assert window._queue_active() is False
+    assert window.measure.queue_active() is False
 
 
 def test_stream_error_still_offers_pair_retry(make_main_window, monkeypatch) -> None:
@@ -150,12 +156,12 @@ def test_stream_error_still_offers_pair_retry(make_main_window, monkeypatch) -> 
     window._two_channel_stage = 2
     window._pending_pair_first_raw = _curve()
 
-    window._on_sweep_error("Channel 2 stream failed.")
+    window.measure.on_sweep_error("Channel 2 stream failed.")
 
     assert calls["question"] == 1
     assert window._state == QueueState.QUEUE_RUNNING
     assert window._pending_pair_first_raw is None
-    window._queue.reset()
+    window.measure.queue.reset()
     window._state = QueueState.IDLE
 
 
@@ -165,7 +171,9 @@ def test_shortcut_and_console_start_are_blocked_in_channel_balance(
     """B7: only the button used to be guarded."""
     window = make_main_window(settings={"measure_two_channel_enabled": True})
     monkeypatch.setattr(
-        main_window_module.MainWindow, "_channel_balance_mode_active", lambda self: True
+        measure_controller_module.MeasureController,
+        "channel_balance_mode_active",
+        lambda self: True,
     )
     window._tabs.setCurrentIndex(0)
 
@@ -183,7 +191,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
 ) -> None:
     window = make_main_window()
     stopped = []
-    monkeypatch.setattr(window, "_stop_channel_balance", lambda: stopped.append(True))
+    monkeypatch.setattr(window.measure, "stop_channel_balance", lambda: stopped.append(True))
     window._queue_target = 0
     window._state = QueueState.QUEUE_RUNNING
 
@@ -193,7 +201,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
     window._queue_index = 0
     monkeypatch.setattr(window.devices, "current_output_device", lambda: None)
     calls = _silence_dialogs(monkeypatch)
-    window._start_next_sweep()
+    window.measure.start_next_sweep()
 
     assert stopped == [True]
     assert window._state == QueueState.IDLE
@@ -227,7 +235,7 @@ def test_device_poll_is_deferred_while_the_queue_runs(make_main_window, monkeypa
     assert refreshed == []
     assert window.devices.dirty is True
 
-    window._queue.reset()
+    window.measure.queue.reset()
     window._state = QueueState.IDLE
     window._apply_state_ui()
 
@@ -251,7 +259,7 @@ def test_vanished_device_aborts_even_during_review(make_main_window, monkeypatch
     window.devices.check_devices()
 
     assert window._state == QueueState.IDLE
-    assert window._queue_active() is False
+    assert window.measure.queue_active() is False
     assert window._pending_curve is None
 
 
@@ -259,7 +267,7 @@ def test_close_joins_the_sweep_runner(make_main_window, monkeypatch) -> None:
     """B1: the window must wait for the sweep thread before Qt tears it down."""
     window = make_main_window()
     joined = []
-    monkeypatch.setattr(window._sweep_runner, "shutdown", lambda: joined.append(True))
+    monkeypatch.setattr(window.measure.sweep_runner, "shutdown", lambda: joined.append(True))
     window.measure_io.confirm_close = lambda: True
 
     window.close()
@@ -275,7 +283,7 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
     confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window.measure_io)  # noqa: E731
     assert confirm() is True
 
-    window._kept_curves.append(_curve())
+    window.measure.kept_curves.append(_curve())
     # The prompt is about *unsaved* work now, so keeping a curve has to mark
     # the Measure session dirty the way ``_on_keep`` does.
     window.measure_io.mark_dirty()

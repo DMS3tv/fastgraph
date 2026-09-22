@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QMessageBox
 
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_controller as measure_controller_module
 import dms.ui.measure_io as measure_io_module
 from dms.measure_queue import QueueState
 from dms.measure_session import MeasureSession
@@ -23,7 +23,7 @@ def _curve(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _hrtf_name() -> str:
-    options = sorted(Path(main_window_module.HRTF_DIR).glob("*.txt"))
+    options = sorted(Path(measure_controller_module.HRTF_DIR).glob("*.txt"))
     if not options:
         pytest.skip("No HRTF files are installed in this working tree.")
     return options[0].stem
@@ -65,15 +65,15 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     window = make_main_window()
     hrtf_name = _hrtf_name()
 
-    window._kept_curves.extend([_curve(), _curve(1.0)])
-    window._kept_sweep_meta.extend(
+    window.measure.kept_curves.extend([_curve(), _curve(1.0)])
+    window.measure.kept_sweep_meta.extend(
         [
             {"timing_quality": (12.0, 11.0, 2.0, 40.0)},
             {},
         ]
     )
     window._session = SessionData(rig="Rig 2", brand="Acme", model="Widget")
-    window._recompute_average()
+    window.measure.recompute_average()
     window.measure_tab.hrtf_combo.setCurrentIndex(window.measure_tab.hrtf_combo.findText(hrtf_name))
     window.measure_tab.hrtf_toggle.setChecked(True)
     window.measure_io.mark_dirty()
@@ -90,26 +90,30 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     _open_from(monkeypatch, path)
     assert other.measure_io.load_session() is True
 
-    assert len(other._kept_curves) == 2
+    assert len(other.measure.kept_curves) == 2
     # Arrays serialize rounded to six decimals.
-    np.testing.assert_allclose(other._kept_curves[1][1], window._kept_curves[1][1], atol=1e-5)
+    np.testing.assert_allclose(
+        other.measure.kept_curves[1][1], window.measure.kept_curves[1][1], atol=1e-5
+    )
     assert other._session.brand == "Acme"
     assert other._session.model == "Widget"
     assert other._session.rig == "Rig 2"
-    assert other._hrtf is not None
-    assert Path(other._hrtf.path).stem == hrtf_name
+    assert other.measure.hrtf is not None
+    assert Path(other.measure.hrtf.path).stem == hrtf_name
     assert other.measure_tab.hrtf_toggle.isChecked() is True
-    assert other._level_mode() == "ref_1khz"
-    assert other._average is not None
-    assert other._kept_sweep_meta[0]["timing_quality"] == (12.0, 11.0, 2.0, 40.0)
+    assert other.measure.level_mode() == "ref_1khz"
+    assert other.measure.average is not None
+    assert other.measure.kept_sweep_meta[0]["timing_quality"] == (12.0, 11.0, 2.0, 40.0)
     assert other.measure_io.dirty is False
 
 
 def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main_window) -> None:
     window = make_main_window(settings={"measure_two_channel_enabled": True})
-    window._two_channel_pairs.append(TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(2.0)))
-    window._kept_pair_meta.append({})
-    window._recompute_two_channel_results()
+    window.measure.two_channel_pairs.append(
+        TwoChannelCurvePair(channel_1=_curve(), channel_2=_curve(2.0))
+    )
+    window.measure.kept_pair_meta.append({})
+    window.measure.recompute_two_channel_results()
 
     path = tmp_path / "pairs.fastgraph-measure.json"
     _save_to(monkeypatch, path)
@@ -119,9 +123,11 @@ def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main
     _open_from(monkeypatch, path)
     assert other.measure_io.load_session() is True
 
-    assert other._two_channel_enabled is True
-    assert len(other._two_channel_pairs) == 1
-    np.testing.assert_allclose(other._two_channel_pairs[0].channel_2[1], _curve(2.0)[1], atol=1e-5)
+    assert other.measure.two_channel_enabled is True
+    assert len(other.measure.two_channel_pairs) == 1
+    np.testing.assert_allclose(
+        other.measure.two_channel_pairs[0].channel_2[1], _curve(2.0)[1], atol=1e-5
+    )
 
 
 def test_dirty_flag_and_window_title_track_the_session(
@@ -131,9 +137,9 @@ def test_dirty_flag_and_window_title_track_the_session(
     assert window.measure_io.dirty is False
     assert "•" not in window.windowTitle()
 
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
-    window._recompute_average()
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
+    window.measure.recompute_average()
     window.measure_io.mark_dirty()
     assert window.measure_io.dirty is True
     assert window.windowTitle().endswith("*")
@@ -144,7 +150,7 @@ def test_dirty_flag_and_window_title_track_the_session(
     assert window.measure_io.dirty is False
     assert window.windowTitle().endswith("• tracked")
 
-    window._undo_last_measurement()
+    window.measure.undo_last_measurement()
     assert window.measure_io.dirty is True
     assert window.windowTitle().endswith("• tracked*")
 
@@ -160,8 +166,8 @@ def test_save_as_asks_before_replacing_another_file(
     tmp_path, monkeypatch, make_main_window
 ) -> None:
     window = make_main_window()
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
 
     existing = tmp_path / "taken.fastgraph-measure.json"
     existing.write_text("{}", encoding="utf-8")
@@ -216,8 +222,8 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
         ),
     )
 
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
     window.measure_io.mark_dirty()
 
     answers.append(measure_io_module.QMessageBox.StandardButton.Cancel)
@@ -245,10 +251,10 @@ def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -
     window._queue_target = 1
     window._queue_index = 0
     window._pending_curve = _curve()
-    window._on_keep()
+    window.measure.on_keep()
 
-    assert len(window._kept_curves) == 1
-    assert len(window._kept_sweep_meta) == 1
+    assert len(window.measure.kept_curves) == 1
+    assert len(window.measure.kept_sweep_meta) == 1
     assert scheduled and scheduled[-1]["sweeps"]
     assert window.measure_io.dirty is True
 
@@ -294,7 +300,7 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
 
     window.measure_io.initialize_recovery()
 
-    assert len(window._kept_curves) == 1
+    assert len(window.measure.kept_curves) == 1
     assert window._session.brand == "Recovered"
     assert window.measure_io.dirty is True
     assert window.measure_io.session_path is None
@@ -303,15 +309,15 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
 
 def test_console_session_commands_save_and_load(tmp_path, make_main_window) -> None:
     window = make_main_window()
-    window._kept_curves.append(_curve())
-    window._kept_sweep_meta.append({})
+    window.measure.kept_curves.append(_curve())
+    window.measure.kept_sweep_meta.append({})
     path = tmp_path / "console.fastgraph-measure.json"
 
     window.commands._run_measure_command(["session", "save", str(path)])
     assert path.is_file()
     assert window.measure_io.dirty is False
 
-    window._kept_curves.clear()
-    window._kept_sweep_meta.clear()
+    window.measure.kept_curves.clear()
+    window.measure.kept_sweep_meta.clear()
     window.commands._run_measure_command(["session", "load", str(path)])
-    assert len(window._kept_curves) == 1
+    assert len(window.measure.kept_curves) == 1

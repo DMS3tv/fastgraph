@@ -81,9 +81,9 @@ class RndBridge(QObject):
             self._window._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
 
     def start_measurement(self) -> None:
-        from dms.ui.main_window import _QUEUE_AMBIENT_WARN_DBFS
+        from dms.ui.measure_controller import _QUEUE_AMBIENT_WARN_DBFS
 
-        if self._window._state != QueueState.IDLE:
+        if self._window.measure.queue.state != QueueState.IDLE:
             return
         if self._window.devices.current_output_device() is None:
             QMessageBox.warning(self._window, "No Output Device", "Select an output device.")
@@ -124,18 +124,18 @@ class RndBridge(QObject):
                 return
 
         self.sweep_active = True
-        self._window._current_sweep_attempts = 0
+        self._window.measure.queue.attempts = 0
         self._start_rnd_sweep()
 
     def _start_rnd_sweep(self) -> None:
-        from dms.ui.main_window import _MEASUREMENT_F_MAX, _MEASUREMENT_F_MIN
+        from dms.ui.measure_controller import _MEASUREMENT_F_MAX, _MEASUREMENT_F_MIN
 
-        self._window._stop_channel_balance()
-        self._window._current_sweep_attempts += 1
-        self._window._state = QueueState.SWEEPING
+        self._window.measure.stop_channel_balance()
+        self._window.measure.queue.attempts += 1
+        self._window.measure.queue.state = QueueState.SWEEPING
         self._window._apply_state_ui()
         self._window._rnd_widget.set_status(
-            f"Sweeping attempt {self._window._current_sweep_attempts}..."
+            f"Sweeping attempt {self._window.measure.queue.attempts}..."
         )
         self._window.measure_tab.sweep_progress.setValue(0)
 
@@ -150,8 +150,8 @@ class RndBridge(QObject):
             return
 
         self._window.devices.level_monitor.stop()
-        self._window._last_timing_quality = None
-        self._window._last_measurement_diagnostics = None
+        self._window.measure.queue.last_timing_quality = None
+        self._window.measure.queue.last_diagnostics = None
 
         sweep = generate_log_sweep(
             duration=float(self._window._settings.get("sweep_duration")),
@@ -165,10 +165,10 @@ class RndBridge(QObject):
         worker = SweepWorker()
         worker.finished.connect(self._on_rnd_sweep_finished)
         worker.error.connect(self._on_rnd_sweep_error)
-        worker.progress.connect(self._window._on_sweep_progress)
-        worker.timing_quality.connect(self._window._on_timing_quality)
-        worker.measurement_diagnostics.connect(self._window._on_measurement_diagnostics)
-        started = self._window._sweep_runner.start(
+        worker.progress.connect(self._window.measure.on_sweep_progress)
+        worker.timing_quality.connect(self._window.measure.on_timing_quality)
+        worker.measurement_diagnostics.connect(self._window.measure.on_measurement_diagnostics)
+        started = self._window.measure.sweep_runner.start(
             lambda: worker,
             sweep=sweep,
             output_device=output_device,
@@ -193,7 +193,7 @@ class RndBridge(QObject):
                 self._window._settings.get("sweep_noise_margin_min_db")
             ),
             snr_warn_db=float(self._window._settings.get("snr_warn_db")),
-            failed_recording_dir=self._window._failed_recording_dir(),
+            failed_recording_dir=self._window.measure.failed_recording_dir(),
             sweep_f_low=_MEASUREMENT_F_MIN,
             sweep_f_high=_MEASUREMENT_F_MAX,
         )
@@ -203,13 +203,13 @@ class RndBridge(QObject):
             )
             return
         self._window._statusbar.showMessage(
-            f"R&D sweep started (attempt {self._window._current_sweep_attempts})."
+            f"R&D sweep started (attempt {self._window.measure.queue.attempts})."
         )
         self._window._log_event(
             "INFO",
             "rnd",
             "R&D sweep started",
-            attempt=self._window._current_sweep_attempts,
+            attempt=self._window.measure.queue.attempts,
             sample_rate=int(self._window._settings.get("sample_rate")),
             buffer_size=int(self._window._settings.get("buffer_size")),
             output_level_db=output_level_db,
@@ -217,8 +217,8 @@ class RndBridge(QObject):
 
     def _on_rnd_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
         try:
-            (freqs, mag_db), _distortion = self._window._analyze_sweep(recording, sweep)
-            spl_offset = self._window._spl_offset_db()
+            (freqs, mag_db), _distortion = self._window.measure.analyze_sweep(recording, sweep)
+            spl_offset = self._window.measure.spl_offset_db()
             if spl_offset is None:
                 mag_db = normalize_at_1khz(freqs, mag_db, f_ref=1000.0)
             else:
@@ -230,9 +230,9 @@ class RndBridge(QObject):
                 f_ref=1000.0,
                 normalize_ref=spl_offset is None,
             )
-            self._window._pending_curve = (freqs_ds, mag_ds)
-            self._window._rnd_widget.set_review_curve(self._window._pending_curve)
-            self._window._state = QueueState.PASS_FAIL
+            self._window.measure.queue.pending_curve = (freqs_ds, mag_ds)
+            self._window._rnd_widget.set_review_curve(self._window.measure.queue.pending_curve)
+            self._window.measure.queue.state = QueueState.PASS_FAIL
             self._window._apply_state_ui()
             self._window._rnd_widget.set_status("Sweep complete. Waiting for review.")
             self._window._statusbar.showMessage("R&D sweep complete. Waiting for review.")
@@ -244,32 +244,32 @@ class RndBridge(QObject):
         self._window._log_event("ERROR", "rnd", message)
         self.close_review_dialog()
         self._window._rnd_widget.set_review_curve(None)
-        self._window._pending_curve = None
+        self._window.measure.queue.pending_curve = None
         failure_reason = None
-        if self._window._last_measurement_diagnostics is not None:
+        if self._window.measure.queue.last_diagnostics is not None:
             failure_reason = getattr(
-                self._window._last_measurement_diagnostics, "failure_reason", None
+                self._window.measure.queue.last_diagnostics, "failure_reason", None
             )
         is_timing_quality_error = is_retryable_timing_failure(
             message=message,
             failure_reason=failure_reason,
         )
-        if is_timing_quality_error and self._window._current_sweep_attempts < MAX_SWEEP_ATTEMPTS:
+        if is_timing_quality_error and self._window.measure.queue.attempts < MAX_SWEEP_ATTEMPTS:
             choice = QMessageBox.question(
                 self._window,
                 "Timing Quality Retry",
-                f"{message}\n\nRetry R&D measurement attempt {self._window._current_sweep_attempts + 1} of {MAX_SWEEP_ATTEMPTS}?",
+                f"{message}\n\nRetry R&D measurement attempt {self._window.measure.queue.attempts + 1} of {MAX_SWEEP_ATTEMPTS}?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
             )
             if choice == QMessageBox.StandardButton.Yes:
-                self._window._state = QueueState.IDLE
+                self._window.measure.queue.state = QueueState.IDLE
                 self._window._apply_state_ui()
                 QTimer.singleShot(150, self._start_rnd_sweep)
                 return
         self.sweep_active = False
-        self._window._current_sweep_attempts = 0
-        self._window._state = QueueState.IDLE
+        self._window.measure.queue.attempts = 0
+        self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(0)
         self._window._apply_state_ui()
         self._window.devices.start_level_monitor()
@@ -278,7 +278,10 @@ class RndBridge(QObject):
         QMessageBox.warning(self._window, "R&D Sweep Error", message)
 
     def _show_rnd_review_dialog(self) -> None:
-        if self._window._state != QueueState.PASS_FAIL or self._window._pending_curve is None:
+        if (
+            self._window.measure.queue.state != QueueState.PASS_FAIL
+            or self._window.measure.queue.pending_curve is None
+        ):
             return
         if self.review_dialog is not None:
             self.review_dialog.raise_()
@@ -291,8 +294,8 @@ class RndBridge(QObject):
         )
         dlg = RnDReviewDialog(
             previous,
-            timing_quality=self._window._last_timing_quality,
-            diagnostics=self._window._last_measurement_diagnostics,
+            timing_quality=self._window.measure.queue.last_timing_quality,
+            diagnostics=self._window.measure.queue.last_diagnostics,
             parent=self._window,
         )
         dlg.adjustSize()
@@ -308,8 +311,8 @@ class RndBridge(QObject):
         choice = dlg.choice()
         if choice == RnDReviewDialog.FAIL:
             self._window._rnd_widget.set_review_curve(None)
-            self._window._pending_curve = None
-            self._window._state = QueueState.IDLE
+            self._window.measure.queue.pending_curve = None
+            self._window.measure.queue.state = QueueState.IDLE
             self._window._apply_state_ui()
             self._window._statusbar.showMessage("R&D measurement rejected. Redoing...")
             QTimer.singleShot(100, self.start_measurement)
@@ -323,9 +326,9 @@ class RndBridge(QObject):
         self._cancel_rnd_measurement()
 
     def _keep_rnd_measurement(self, *, change_status: str, notes: str) -> None:
-        if self._window._pending_curve is None:
+        if self._window.measure.queue.pending_curve is None:
             return
-        freqs, mag_db = self._window._pending_curve
+        freqs, mag_db = self._window.measure.queue.pending_curve
         channel_label = (
             self._window.measure_tab.ch_combo.currentText().strip()
             or f"Channel {self._window.devices.current_input_channel() + 1}"
@@ -353,10 +356,10 @@ class RndBridge(QObject):
         )
         self._window._rnd_widget.set_review_curve(None)
         self._window._rnd_widget.add_measurement(measurement)
-        self._window._pending_curve = None
+        self._window.measure.queue.pending_curve = None
         self.sweep_active = False
-        self._window._current_sweep_attempts = 0
-        self._window._state = QueueState.IDLE
+        self._window.measure.queue.attempts = 0
+        self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(100)
         self._window._apply_state_ui()
         self._window.devices.start_level_monitor()
@@ -368,13 +371,13 @@ class RndBridge(QObject):
         self._window.commands.trigger("rnd_measurement_kept")
 
     def _cancel_rnd_measurement(self) -> None:
-        self._window._abort_active_sweep()
+        self._window.measure.abort_active_sweep()
         self.close_review_dialog()
         self._window._rnd_widget.set_review_curve(None)
-        self._window._pending_curve = None
+        self._window.measure.queue.pending_curve = None
         self.sweep_active = False
-        self._window._current_sweep_attempts = 0
-        self._window._state = QueueState.IDLE
+        self._window.measure.queue.attempts = 0
+        self._window.measure.queue.state = QueueState.IDLE
         self._window.measure_tab.sweep_progress.setValue(0)
         self._window._apply_state_ui()
         self._window.devices.start_level_monitor()
@@ -390,11 +393,11 @@ class RndBridge(QObject):
         dlg.close()
 
     def send_to_curator(self) -> None:
-        if self._window._state != QueueState.IDLE:
+        if self._window.measure.queue.state != QueueState.IDLE:
             raise ValueError("Measurements can only be sent to Curator while idle.")
 
-        mode = self._window._bottom_view_mode()
-        active_hrtf = self._window._hrtf if self._window._is_hrtf_active() else None
+        mode = self._window.measure.bottom_view_mode()
+        active_hrtf = self._window.measure.hrtf if self._window.measure.is_hrtf_active() else None
         correction = None
         curve: CurveData
         curator_metadata = self._window._session.to_dict()
@@ -402,20 +405,20 @@ class RndBridge(QObject):
             {
                 "hrtf_name": active_hrtf.name if active_hrtf is not None else "",
                 "compensated": active_hrtf is not None,
-                "measure_channel": self._window._active_measure_label(),
+                "measure_channel": self._window.measure.active_measure_label(),
             }
         )
         if mode == "variation":
-            active_variation = self._window._active_measure_variation()
+            active_variation = self._window.measure.active_measure_variation()
             if active_variation is None:
                 raise ValueError("No variation band is available to send.")
             source_variation = None
             if active_hrtf is not None and getattr(active_hrtf, "is_variation", False):
-                source_variation = self._window._variation_from_curves(
-                    self._window._active_measure_curves(),
-                    self._window._active_two_channel_average()
-                    if self._window._two_channel_enabled
-                    else self._window._average,
+                source_variation = self._window.measure.variation_from_curves(
+                    self._window.measure.active_measure_curves(),
+                    self._window.measure.active_two_channel_average()
+                    if self._window.measure.two_channel_enabled
+                    else self._window.measure.average,
                     hrtf=None,
                 )
             band = source_variation if source_variation is not None else active_variation
@@ -442,7 +445,7 @@ class RndBridge(QObject):
             )
             kind_label = "VAR"
         else:
-            displayed = self._window._bottom_curve_for_display()
+            displayed = self._window.measure.bottom_curve_for_display()
             if displayed is None:
                 raise ValueError("No averaged curve is available to send.")
             freqs, magnitude = displayed
@@ -471,7 +474,7 @@ class RndBridge(QObject):
         if not identity:
             identity = "Fastgraph"
         comp_label = "COMP" if active_hrtf is not None else "RAW"
-        channel_label = self._window._active_measure_label()
+        channel_label = self._window.measure.active_measure_label()
         channel_part = f" {channel_label}" if channel_label else ""
         name = f"{identity}{channel_part} {comp_label} {kind_label}"
         # Make Curator visible before its reveal animation starts. Some Qt
@@ -505,17 +508,17 @@ class RndBridge(QObject):
         return f"{base} ({suffix})"
 
     def measure_to_rnd_unavailable_reason(self) -> str:
-        if self._window._state != QueueState.IDLE:
+        if self._window.measure.queue.state != QueueState.IDLE:
             return "Measurements can only be sent to R&D while Measure is idle."
-        if self._window._channel_balance_mode_active():
+        if self._window.measure.channel_balance_mode_active():
             return "Switch to Frequency Response before sending data to R&D."
-        if self._window._bottom_view_mode() == "variation":
-            if not self._window._active_measure_curves():
+        if self._window.measure.bottom_view_mode() == "variation":
+            if not self._window.measure.active_measure_curves():
                 return "Keep at least one measurement before sending Var to R&D."
         elif (
-            self._window._active_two_channel_average()
-            if self._window._two_channel_enabled
-            else self._window._average
+            self._window.measure.active_two_channel_average()
+            if self._window.measure.two_channel_enabled
+            else self._window.measure.average
         ) is None:
             return "Create an average before sending it to R&D."
         return ""
@@ -526,16 +529,16 @@ class RndBridge(QObject):
             QMessageBox.information(self._window, "Send to R&D Unavailable", unavailable)
             return
 
-        active_hrtf = self._window._hrtf if self._window._is_hrtf_active() else None
+        active_hrtf = self._window.measure.hrtf if self._window.measure.is_hrtf_active() else None
         hrtf_path = str(active_hrtf.path) if active_hrtf is not None else ""
         hrtf_name = active_hrtf.name if active_hrtf is not None else ""
         metadata = self._window._session.to_dict()
         input_label = self._window.devices.current_input_device_label()
         output_label = self._window.devices.current_output_device_label()
-        active_label = self._window._active_measure_label()
+        active_label = self._window.measure.active_measure_label()
         input_channel_index = (
             (1 if active_label == "R" else 0)
-            if self._window._two_channel_enabled
+            if self._window.measure.two_channel_enabled
             else self._window.devices.current_input_channel()
         )
         channel_label = active_label or (
@@ -550,7 +553,7 @@ class RndBridge(QObject):
         )
         identity = identity or "Fastgraph"
 
-        if self._window._bottom_view_mode() == "variation":
+        if self._window.measure.bottom_view_mode() == "variation":
             group_name = self._unique_rnd_transfer_name(
                 f"{identity} VAR",
                 {group.name for group in self._window._rnd_widget.session.groups},
@@ -559,7 +562,9 @@ class RndBridge(QObject):
                 measurement.name for measurement in self._window._rnd_widget.session.measurements
             }
             measurements: list[RnDMeasurement] = []
-            for index, (freqs, mag_db) in enumerate(self._window._active_measure_curves(), start=1):
+            for index, (freqs, mag_db) in enumerate(
+                self._window.measure.active_measure_curves(), start=1
+            ):
                 name = self._unique_rnd_transfer_name(
                     f"{group_name} Sweep {index}",
                     existing_names,
@@ -599,9 +604,9 @@ class RndBridge(QObject):
             transfer_mode = "variation"
         else:
             active_average = (
-                self._window._active_two_channel_average()
-                if self._window._two_channel_enabled
-                else self._window._average
+                self._window.measure.active_two_channel_average()
+                if self._window.measure.two_channel_enabled
+                else self._window.measure.average
             )
             assert active_average is not None
             freqs, mag_db = active_average
@@ -648,7 +653,7 @@ class RndBridge(QObject):
         )
 
     def send_rnd_to_curator(self) -> None:
-        if self._window._state != QueueState.IDLE:
+        if self._window.measure.queue.state != QueueState.IDLE:
             return
         measurement = self._window._rnd_widget.selected_measurement()
         group = self._window._rnd_widget.selected_group()
@@ -744,7 +749,7 @@ class RndBridge(QObject):
         )
 
     def export_selected(self) -> None:
-        if self._window._state != QueueState.IDLE:
+        if self._window.measure.queue.state != QueueState.IDLE:
             return
         measurement = self._window._rnd_widget.selected_measurement()
         group = self._window._rnd_widget.selected_group()

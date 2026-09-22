@@ -890,7 +890,7 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
     assert not window.measure_tab.send_to_rnd_btn.isEnabled()
     assert "average" in window.measure_tab.send_to_rnd_btn.toolTip().lower()
 
-    window._average = (
+    window.measure.average = (
         np.array([100.0, 1000.0]),
         np.array([1.0, 0.0]),
     )
@@ -911,8 +911,8 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     window = make_main_window()
     freqs = np.array([100.0, 1000.0])
     mag_db = np.array([3.0, -1.0])
-    window._average = (freqs, mag_db)
-    window._hrtf = object()
+    window.measure.average = (freqs, mag_db)
+    window.measure.hrtf = object()
     window.measure_tab.hrtf_toggle.setChecked(False)
     window._rnd_widget.session.hrtf_path = "rnd-default.txt"
     window._rnd_widget.session.hrtf_name = "R&D Default"
@@ -975,10 +975,10 @@ def test_measure_average_copies_active_hrtf_as_editable_state(tmp_path, make_mai
     window = make_main_window()
     hrtf_path = tmp_path / "average-hrtf.txt"
     hrtf_path.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window._hrtf = HRTFCurve(str(hrtf_path))
+    window.measure.hrtf = HRTFCurve(str(hrtf_path))
     window.measure_tab.hrtf_toggle.setChecked(True)
     source_mag = np.array([4.0, 0.0])
-    window._average = (np.array([100.0, 1000.0]), source_mag)
+    window.measure.average = (np.array([100.0, 1000.0]), source_mag)
 
     window.rnd.send_measure_to_rnd()
 
@@ -1004,13 +1004,13 @@ def test_measure_var_sends_all_kept_curves_as_one_group(
     window = make_main_window()
     hrtf_path = tmp_path / "transfer-hrtf.txt"
     hrtf_path.write_text(hrtf_rows, encoding="utf-8")
-    window._hrtf = HRTFCurve(str(hrtf_path))
+    window.measure.hrtf = HRTFCurve(str(hrtf_path))
     window.measure_tab.hrtf_toggle.setChecked(True)
     window.measure_tab.variation_toggle.setChecked(True)
     freqs = np.array([100.0, 1000.0])
     first_mag = np.array([1.0, 0.0])
     second_mag = np.array([2.0, 1.0])
-    window._kept_curves = [(freqs, first_mag), (freqs, second_mag)]
+    window.measure.kept_curves = [(freqs, first_mag), (freqs, second_mag)]
     existing = RnDGroup(name="DMS Demo VAR", expanded=False)
     window._rnd_widget.session.groups = [existing]
     window._rnd_widget._sync_tree()

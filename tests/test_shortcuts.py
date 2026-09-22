@@ -26,7 +26,7 @@ def test_keyboard_shortcuts_dispatch_to_measurement_tabs(make_main_window) -> No
     window = make_main_window()
     calls: list[str] = []
     window._shortcut_focus_is_editing = lambda: False
-    window._start_queue = lambda: calls.append("measure")
+    window.measure.start_queue = lambda: calls.append("measure")
     window.rnd.start_measurement = lambda: calls.append("rnd")
 
     window._tabs.setCurrentIndex(0)
@@ -42,7 +42,7 @@ def test_keyboard_shortcuts_dispatch_to_measurement_tabs(make_main_window) -> No
 def test_keyboard_shortcuts_ignore_text_editing_focus(make_main_window) -> None:
     window = make_main_window()
     calls: list[str] = []
-    window._start_queue = lambda: calls.append("measure")
+    window.measure.start_queue = lambda: calls.append("measure")
     window._shortcut_focus_is_editing = lambda: True
 
     window._tabs.setCurrentIndex(0)

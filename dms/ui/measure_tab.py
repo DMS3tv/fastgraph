@@ -54,8 +54,8 @@ class MeasureTab(QWidget):
         plots.set_header_widget(self._build_queue_bar())
         plots.set_between_plots_widget(self._build_plot_controls())
         plots.set_footer_widget(self._build_export_controls())
-        plots.set_two_channel_enabled(window._two_channel_enabled)
-        plots.two.set_bottom_mode(window._two_channel_bottom_mode)
+        plots.set_two_channel_enabled(window.measure.two_channel_enabled)
+        plots.two.set_bottom_mode(window.measure.two_channel_bottom_mode)
         root.addWidget(plots, 1)
 
     def _build_inputs_overlay(self) -> None:
@@ -139,32 +139,32 @@ class MeasureTab(QWidget):
 
         self.start_queue_btn = QPushButton("Measure")
         self.start_queue_btn.setObjectName("btn_start")
-        self.start_queue_btn.clicked.connect(self._window._start_queue)
+        self.start_queue_btn.clicked.connect(self._window.measure.start_queue)
         primary.addWidget(self.start_queue_btn)
 
         self.cancel_queue_btn = QPushButton("Cancel Queue")
         self.cancel_queue_btn.setObjectName("btn_cancel")
-        self.cancel_queue_btn.clicked.connect(self._window._cancel_queue)
+        self.cancel_queue_btn.clicked.connect(self._window.measure.cancel_queue)
         primary.addWidget(self.cancel_queue_btn)
 
         self.two_channel_toggle = ToggleSwitch("Two Channel")
-        self.two_channel_toggle.setChecked(self._window._two_channel_enabled)
+        self.two_channel_toggle.setChecked(self._window.measure.two_channel_enabled)
         self.two_channel_toggle.setToolTip(
             "Measure output/input channel 1 as L and channel 2 as R."
         )
-        self.two_channel_toggle.stateChanged.connect(self._window._on_two_channel_toggled)
+        self.two_channel_toggle.stateChanged.connect(self._window.measure.on_two_channel_toggled)
         primary.addWidget(self.two_channel_toggle)
 
         self.measure_submode_control = _MeasureSubmodeControl()
         self.measure_frequency_button = self.measure_submode_control.frequency_button
         self.measure_balance_button = self.measure_submode_control.balance_button
         self.measure_submode_control.balance_toggled.connect(
-            self._window._on_measure_submode_toggled
+            self._window.measure.on_measure_submode_toggled
         )
         self.measure_submode_control.minimum_width_changed.connect(
             self.sync_queue_bar_submode_width
         )
-        self.measure_submode_control.setVisible(self._window._two_channel_enabled)
+        self.measure_submode_control.setVisible(self._window.measure.two_channel_enabled)
         primary.addWidget(self.measure_submode_control)
 
         n_label = QLabel("Count")
@@ -175,7 +175,7 @@ class MeasureTab(QWidget):
         self.queue_n_spin.setRange(1, 100)
         self.queue_n_spin.setValue(int(self._window._settings.get("queue_count") or 5))
         self.queue_n_spin.setFixedWidth(110)
-        self.queue_n_spin.valueChanged.connect(self._window._on_queue_count_changed)
+        self.queue_n_spin.valueChanged.connect(self._window.measure.on_queue_count_changed)
         primary.addWidget(self.queue_n_spin)
 
         level_label = QLabel("Output")
@@ -192,12 +192,12 @@ class MeasureTab(QWidget):
         if not persist_output_level:
             initial_output_level = -6.0
         self.queue_level_spin.setValue(max(-120.0, min(0.0, initial_output_level)))
-        self.queue_level_spin.valueChanged.connect(self._window._on_queue_level_changed)
+        self.queue_level_spin.valueChanged.connect(self._window.measure.on_queue_level_changed)
         primary.addWidget(self.queue_level_spin)
         self.queue_level_persist_toggle = ToggleSwitch("")
         self.queue_level_persist_toggle.setChecked(persist_output_level)
         self.queue_level_persist_toggle.stateChanged.connect(
-            self._window._on_queue_level_persist_changed
+            self._window.measure.on_queue_level_persist_changed
         )
         primary.addWidget(
             self.queue_level_persist_toggle,
@@ -273,7 +273,7 @@ class MeasureTab(QWidget):
         self.queue_progress_widget.setVisible(False)
 
     def _build_plot_controls(self) -> QWidget:
-        from dms.ui.main_window import _DISTORTION_MIN_SNR_DB
+        from dms.ui.measure_controller import _DISTORTION_MIN_SNR_DB
 
         row_widget = QWidget()
         row_widget.setObjectName("measure_interplot_controls")
@@ -296,26 +296,26 @@ class MeasureTab(QWidget):
 
         self.level_meter_2 = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
         self.level_meter_2.setMinimumWidth(120)
-        self.level_meter_2.setVisible(self._window._two_channel_enabled)
+        self.level_meter_2.setVisible(self._window.measure.two_channel_enabled)
         row.addWidget(self.level_meter_2, 1, Qt.AlignmentFlag.AlignVCenter)
         self.level_status_label_2 = QLabel("R")
         self.level_status_label_2.setProperty("tone", "muted")
-        self.level_status_label_2.setVisible(self._window._two_channel_enabled)
+        self.level_status_label_2.setVisible(self._window.measure.two_channel_enabled)
         row.addWidget(self.level_status_label_2)
 
         self.bottom_layout_label = QLabel("Bottom")
         self.bottom_layout_label.setProperty("tone", "muted")
-        self.bottom_layout_label.setVisible(self._window._two_channel_enabled)
+        self.bottom_layout_label.setVisible(self._window.measure.two_channel_enabled)
         row.addWidget(self.bottom_layout_label)
         self.bottom_layout_combo = QComboBox()
         self.bottom_layout_combo.addItem("Combined", "combined")
         self.bottom_layout_combo.addItem("Separate", "separate")
         self.bottom_layout_combo.setCurrentIndex(
-            1 if self._window._two_channel_bottom_mode == "separate" else 0
+            1 if self._window.measure.two_channel_bottom_mode == "separate" else 0
         )
-        self.bottom_layout_combo.setVisible(self._window._two_channel_enabled)
+        self.bottom_layout_combo.setVisible(self._window.measure.two_channel_enabled)
         self.bottom_layout_combo.currentIndexChanged.connect(
-            self._window._on_two_channel_bottom_mode_changed
+            self._window.measure.on_two_channel_bottom_mode_changed
         )
         row.addWidget(self.bottom_layout_combo)
 
@@ -323,7 +323,7 @@ class MeasureTab(QWidget):
         self.variation_toggle.setToolTip(
             "Show confidence-style spread of kept measurements in the bottom viewport."
         )
-        self.variation_toggle.stateChanged.connect(self._window._on_bottom_view_changed)
+        self.variation_toggle.stateChanged.connect(self._window.measure.on_bottom_view_changed)
         row.addWidget(self.variation_toggle)
 
         self.distortion_toggle = ToggleSwitch("Distortion")
@@ -335,18 +335,20 @@ class MeasureTab(QWidget):
         self.distortion_toggle.setChecked(
             bool(self._window._settings.get("measure_distortion_overlay"))
         )
-        self.distortion_toggle.stateChanged.connect(self._window._on_distortion_overlay_changed)
+        self.distortion_toggle.stateChanged.connect(
+            self._window.measure.on_distortion_overlay_changed
+        )
         row.addWidget(self.distortion_toggle)
 
         self.hrtf_toggle = ToggleSwitch("HRTF")
         self.hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
-        self.hrtf_toggle.stateChanged.connect(self._window._update_plots)
+        self.hrtf_toggle.stateChanged.connect(self._window.measure.update_plots)
         row.addWidget(self.hrtf_toggle)
 
         self.hrtf_combo = QComboBox()
         self.hrtf_combo.setMinimumWidth(120)
         self.hrtf_combo.setToolTip("Select the HRTF used for compensation.")
-        self.hrtf_combo.currentIndexChanged.connect(self._window._on_hrtf_selected)
+        self.hrtf_combo.currentIndexChanged.connect(self._window.measure.on_hrtf_selected)
         row.addWidget(self.hrtf_combo)
         self.hrtf_label = QLabel("None")
         self.hrtf_label.setProperty("tone", "muted")
@@ -359,24 +361,28 @@ class MeasureTab(QWidget):
         self.level_mode_combo = QComboBox()
         self.level_mode_combo.addItem("1 kHz ref", "ref_1khz")
         self.level_mode_combo.addItem("dB SPL", "dbspl")
-        self.level_mode_combo.setCurrentIndex(1 if self._window._level_mode() == "dbspl" else 0)
+        self.level_mode_combo.setCurrentIndex(
+            1 if self._window.measure.level_mode() == "dbspl" else 0
+        )
         self.level_mode_combo.setToolTip(
             "1 kHz ref normalizes every curve to 0 dB at 1 kHz. dB SPL keeps "
             "the absolute level and needs a calibrated input device."
         )
-        self.level_mode_combo.currentIndexChanged.connect(self._window._on_level_mode_changed)
+        self.level_mode_combo.currentIndexChanged.connect(
+            self._window.measure.on_level_mode_changed
+        )
         row.addWidget(self.level_mode_combo)
 
         self.compare_menu_btn = self._window.measure_compare.build_menu()
         row.addWidget(self.compare_menu_btn)
 
         self.undo_btn = QPushButton("Undo")
-        self.undo_btn.clicked.connect(self._window._undo_last_measurement)
+        self.undo_btn.clicked.connect(self._window.measure.undo_last_measurement)
         row.addWidget(self.undo_btn)
 
         self.clear_btn = QPushButton("Clear All")
         self.clear_btn.setObjectName("btn_danger")
-        self.clear_btn.clicked.connect(self._window._clear_all)
+        self.clear_btn.clicked.connect(self._window.measure.clear_all)
         row.addWidget(self.clear_btn)
         return row_widget
 

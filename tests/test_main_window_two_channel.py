@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 import dms.dither_fonts as dither_fonts
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_controller as measure_controller_module
 from dms.measure_queue import QueueState
 from dms.style_tokens import DITHER_TOKENS
 from dms.theme import (
@@ -129,14 +129,14 @@ def _settle_segment_width_refresh(qapp, window: MainWindow) -> None:
 def test_restores_two_channel_layout_but_starts_in_frequency_response(make_main_window) -> None:
     window = _window(make_main_window)
 
-    assert window._two_channel_enabled is True
+    assert window.measure.two_channel_enabled is True
     assert window._plots._stack.currentWidget() is window._plots.two
-    assert window._two_channel_bottom_mode == "separate"
+    assert window.measure.two_channel_bottom_mode == "separate"
     assert window.measure_tab.measure_frequency_button.isChecked() is True
     assert window.measure_tab.measure_balance_button.isChecked() is False
     assert window.measure_tab.measure_frequency_button.text() == "Frequency Response"
     assert window.measure_tab.measure_balance_button.text() == "Channel Balance"
-    assert window._channel_balance_active is False
+    assert window.measure.channel_balance_active is False
 
 
 def test_measure_submode_segments_change_mode_and_stop_generator(
@@ -145,19 +145,19 @@ def test_measure_submode_segments_change_mode_and_stop_generator(
     window = _window(make_main_window)
     stop_calls = []
     monkeypatch.setattr(
-        window,
-        "_stop_channel_balance",
+        window.measure,
+        "stop_channel_balance",
         lambda *_args: stop_calls.append(True),
     )
 
     assert window.measure_tab.measure_submode_control.isHidden() is False
     window.measure_tab.measure_balance_button.setChecked(True)
-    assert window._channel_balance_mode_active() is True
+    assert window.measure.channel_balance_mode_active() is True
     assert window.measure_tab.measure_frequency_button.isChecked() is False
     assert window.measure_tab.measure_balance_button.isChecked() is True
 
     window.measure_tab.measure_frequency_button.setChecked(True)
-    assert window._channel_balance_mode_active() is False
+    assert window.measure.channel_balance_mode_active() is False
     assert window.measure_tab.measure_frequency_button.isChecked() is True
     assert window.measure_tab.measure_balance_button.isChecked() is False
     assert stop_calls
@@ -291,22 +291,22 @@ def test_measure_submode_accessibility_and_responsive_width(make_main_window) ->
 
 def test_single_and_two_channel_workspaces_survive_mode_changes(make_main_window) -> None:
     window = _window(make_main_window)
-    window._kept_curves = [_curve(9.0)]
-    window._recompute_average()
-    window._two_channel_pairs = [TwoChannelCurvePair(_curve(1.0), _curve(-2.0))]
-    window._recompute_two_channel_results()
+    window.measure.kept_curves = [_curve(9.0)]
+    window.measure.recompute_average()
+    window.measure.two_channel_pairs = [TwoChannelCurvePair(_curve(1.0), _curve(-2.0))]
+    window.measure.recompute_two_channel_results()
 
     window.measure_tab.two_channel_toggle.setChecked(False)
-    assert len(window._kept_curves) == 1
-    assert len(window._two_channel_pairs) == 1
-    np.testing.assert_allclose(window._bottom_curve_for_display_and_export()[1], 0.0)
+    assert len(window.measure.kept_curves) == 1
+    assert len(window.measure.two_channel_pairs) == 1
+    np.testing.assert_allclose(window.measure.bottom_curve_for_display_and_export()[1], 0.0)
 
     window.measure_tab.two_channel_toggle.setChecked(True)
     window._plots.two.set_selection("channel_2")
-    assert window._active_measure_label() == "R"
-    assert window._active_measure_session().channel_side == "R"
+    assert window.measure.active_measure_label() == "R"
+    assert window.measure.active_measure_session().channel_side == "R"
     assert window._session.channel_side == ""
-    np.testing.assert_allclose(window._bottom_curve_for_display_and_export()[1], -2.0)
+    np.testing.assert_allclose(window.measure.bottom_curve_for_display_and_export()[1], -2.0)
 
 
 def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main_window) -> None:
@@ -319,22 +319,22 @@ def test_pair_processing_uses_one_shared_reference_offset(monkeypatch, make_main
         ]
     )
     monkeypatch.setattr(
-        main_window_module,
+        measure_controller_module,
         "compute_frequency_response",
         lambda **_kwargs: next(responses),
     )
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args: None)
+    monkeypatch.setattr(measure_controller_module.QTimer, "singleShot", lambda *_args: None)
     window._queue_target = 1
     window._state = QueueState.SWEEPING
     window._two_channel_stage = 1
 
-    window._on_sweep_finished(np.zeros(8), np.zeros(8))
+    window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
     assert window._pending_pair_first_raw is not None
     assert window._start_second_pair_stage is True
 
     window._two_channel_stage = 2
     window._state = QueueState.SWEEPING
-    window._on_sweep_finished(np.zeros(8), np.zeros(8))
+    window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
     assert window._pending_pair is not None
     first = window._pending_pair.channel_1[1]
@@ -360,21 +360,21 @@ def test_second_stage_failure_discards_pair_and_schedules_full_retry(
     window._pending_pair_first_diagnostics = object()
     scheduled = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
+        measure_controller_module.QMessageBox,
         "question",
-        lambda *_args, **_kwargs: main_window_module.QMessageBox.StandardButton.Yes,
+        lambda *_args, **_kwargs: measure_controller_module.QMessageBox.StandardButton.Yes,
     )
     monkeypatch.setattr(
-        main_window_module.QTimer,
+        measure_controller_module.QTimer,
         "singleShot",
         lambda _delay, callback: scheduled.append(callback),
     )
 
-    window._on_sweep_error("Channel 2 stream failed.")
+    window.measure.on_sweep_error("Channel 2 stream failed.")
 
     assert window._pending_pair_first_raw is None
     assert window._pending_pair_first_diagnostics is None
     assert window._two_channel_stage == 0
     assert window._state == QueueState.QUEUE_RUNNING
-    assert window._start_next_sweep in scheduled
+    assert window.measure.start_next_sweep in scheduled
     window._queue_target = 0

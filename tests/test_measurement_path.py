@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_controller as measure_controller_module
 import dms.ui.squiglink_controller as squiglink_module
 from dms import audio_engine
 from dms.console import ConsoleEventStore
@@ -52,12 +52,12 @@ _KNOWN = 7.0 + 3.0 * np.sin(np.log10(_FREQS) * 4.0) - 0.5 * np.log10(_FREQS)
 def _sweep_ready_window(make_main_window, monkeypatch, settings=None):
     window = make_main_window(settings=settings)
     monkeypatch.setattr(
-        main_window_module,
+        measure_controller_module,
         "compute_frequency_response",
         lambda **_kwargs: (_FREQS.copy(), _KNOWN.copy()),
     )
-    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda *_args: None)
-    window._distortion_analysis_allowed = lambda: False
+    monkeypatch.setattr(measure_controller_module.QTimer, "singleShot", lambda *_args: None)
+    window.measure.distortion_analysis_allowed = lambda: False
     window._queue_target = 1
     window._state = QueueState.SWEEPING
     return window
@@ -105,7 +105,7 @@ def test_single_channel_sweep_is_normalized_then_downsampled_only(
 ) -> None:
     window = _sweep_ready_window(make_main_window, monkeypatch)
 
-    window._on_sweep_finished(np.zeros(8), np.zeros(8))
+    window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
     pending = window._pending_curve
     assert pending is not None
@@ -127,7 +127,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
         output_level_db=float(window.measure_tab.queue_level_spin.value()),
     )
 
-    window._on_sweep_finished(np.zeros(8), np.zeros(8))
+    window.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
 
     pending = window._pending_curve
     assert len(pending[1]) == 600
@@ -139,7 +139,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
     # Uncalibrated input: falls back to the 1 kHz reference path.
     fallback = _sweep_ready_window(make_main_window, monkeypatch, {"measure_level_mode": "dbspl"})
     fallback.devices.current_input_device_info = lambda: {"name": "Uncalibrated"}
-    fallback._on_sweep_finished(np.zeros(8), np.zeros(8))
+    fallback.measure.on_sweep_finished(np.zeros(8), np.zeros(8))
     reference = downsample_to_log_points(_FREQS, normalize_at_1khz(_FREQS, _KNOWN), n_points=600)
     np.testing.assert_allclose(fallback._pending_curve[1], reference[1], rtol=0, atol=1e-9)
     assert _value_at_1khz(fallback._pending_curve) == 0.0
@@ -278,7 +278,7 @@ def test_squiglink_upload_sends_exactly_the_export(make_main_window, monkeypatch
     window = make_main_window(
         session=SessionData(rig="Rig", brand="DMS", model="Demo", channel_side="L")
     )
-    window._average = (_FREQS.copy(), _KNOWN - _KNOWN[0])
+    window.measure.average = (_FREQS.copy(), _KNOWN - _KNOWN[0])
     monkeypatch.setattr(squiglink_module, "SquiglinkAuthDialog", _AcceptedAuth)
     window.squiglink.endpoint = lambda: ("sftp.example", 22)
     window.squiglink.ensure_upload_metadata = lambda **_kwargs: True
@@ -292,7 +292,7 @@ def test_squiglink_upload_sends_exactly_the_export(make_main_window, monkeypatch
 
     window.squiglink.upload()
 
-    displayed = smooth_fractional_octave(*window._average, fraction=48)
+    displayed = smooth_fractional_octave(*window.measure.average, fraction=48)
     direct = tmp_path / "direct.txt"
     export_curve(
         freqs=displayed[0],
@@ -301,7 +301,7 @@ def test_squiglink_upload_sends_exactly_the_export(make_main_window, monkeypatch
         output_path=direct,
         compensated=False,
         hrtf=None,
-        n_sweeps=window._active_measure_count(),
+        n_sweeps=window.measure.active_measure_count(),
         smoothing_fraction=48,
         level_mode="ref_1khz",
     )

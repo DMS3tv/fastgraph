@@ -360,7 +360,7 @@ class DeviceController(QObject):
         previous_in = self.current_input_device()
         previous_ch = self.current_input_channel()
 
-        self._window._stop_channel_balance()
+        self._window.measure.stop_channel_balance()
         self.stop_level_monitor()
         refresh_audio_backend()
         self.refresh_devices()
@@ -411,7 +411,9 @@ class DeviceController(QObject):
         poller = getattr(self, "device_poller", None)
         if poller is None:
             return
-        busy = not self._window._queue.allows_device_reselect() or self._window.rnd.sweep_active
+        busy = (
+            not self._window.measure.queue.allows_device_reselect() or self._window.rnd.sweep_active
+        )
         poller.pause(busy)
 
     def check_devices(
@@ -439,7 +441,7 @@ class DeviceController(QObject):
         if current_out == self._last_output_devices and current_in == (self._last_input_devices):
             return
 
-        window._stop_channel_balance()
+        window.measure.stop_channel_balance()
 
         selected_out = self.current_output_device()
         selected_in = self.current_input_device()
@@ -447,20 +449,20 @@ class DeviceController(QObject):
             idx for idx, _name, _hostapi in current_out
         } or selected_in not in {idx for idx, _name, _hostapi in current_in}
 
-        if selected_vanished and window._state != QueueState.IDLE:
+        if selected_vanished and window.measure.queue.state != QueueState.IDLE:
             # Whether a sweep is running, a pair is between channels, or a
             # review is open: the device is gone, so the queue is over.
-            window._abort_active_sweep()
-            window._close_pass_fail_dialog()
-            window._queue.reset()
-            window._state = QueueState.IDLE
-            window._update_queue_progress()
+            window.measure.abort_active_sweep()
+            window.measure.close_pass_fail_dialog()
+            window.measure.queue.reset()
+            window.measure.queue.state = QueueState.IDLE
+            window.measure.update_queue_progress()
             window._apply_state_ui()
             window._statusbar.showMessage(
                 "Audio device change detected. Active measurement aborted safely."
             )
 
-        if window._queue.allows_device_reselect() and not window.rnd.sweep_active:
+        if window.measure.queue.allows_device_reselect() and not window.rnd.sweep_active:
             self.refresh_devices()
         else:
             # Never re-select devices under a running queue or an open review;
@@ -473,7 +475,7 @@ class DeviceController(QObject):
 
     def on_output_device_changed(self) -> None:
         window = self._window
-        window._stop_channel_balance()
+        window.measure.stop_channel_balance()
         window._settings.set("output_device", self.current_output_device_setting())
         window._refresh_session_labels()
         window._apply_state_ui()
@@ -487,7 +489,7 @@ class DeviceController(QObject):
 
     def on_input_device_changed(self) -> None:
         window = self._window
-        window._stop_channel_balance()
+        window.measure.stop_channel_balance()
         window._settings.set("input_device", self.current_input_device_setting())
         self._sync_windows_output_to_input()
         self._refresh_channels()
@@ -525,7 +527,7 @@ class DeviceController(QObject):
 
     def automation_switch_input_device(self, requested: str) -> None:
         window = self._window
-        if window._state != QueueState.IDLE:
+        if window.measure.queue.state != QueueState.IDLE:
             raise ValueError("Input device can only be changed while idle.")
         text = requested.strip()
         for index in range(window.measure_tab.in_dev_combo.count()):
@@ -538,7 +540,7 @@ class DeviceController(QObject):
 
     def automation_switch_input_channel(self, requested: str) -> None:
         window = self._window
-        if window._state != QueueState.IDLE:
+        if window.measure.queue.state != QueueState.IDLE:
             raise ValueError("Input channel can only be changed while idle.")
         raw = requested.strip().lower()
         text = raw.removeprefix("ch").strip()
@@ -562,7 +564,10 @@ class DeviceController(QObject):
         window = self._window
         self.stop_level_monitor()
 
-        if window._state == QueueState.SWEEPING or window._channel_balance_active:
+        if (
+            window.measure.queue.state == QueueState.SWEEPING
+            or window.measure.channel_balance_active
+        ):
             return
 
         input_device = self.current_input_device()
@@ -573,7 +578,7 @@ class DeviceController(QObject):
             return
 
         try:
-            if window._two_channel_enabled:
+            if window.measure.two_channel_enabled:
                 if not self.two_channel_devices_ready():
                     window.measure_tab.level_status_label.setText("Two inputs needed")
                     window.measure_tab.level_status_label_2.setText("R")
@@ -607,7 +612,7 @@ class DeviceController(QObject):
 
     def _refresh_level_meter_display(self) -> None:
         window = self._window
-        if window._two_channel_enabled:
+        if window.measure.two_channel_enabled:
             left_db, right_db = self._last_dual_levels
             window.measure_tab.level_meter.set_level(max(-60.0, min(0.0, left_db)))
             window.measure_tab.level_meter_2.set_level(max(-60.0, min(0.0, right_db)))

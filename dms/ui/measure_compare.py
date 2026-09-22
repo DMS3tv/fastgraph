@@ -124,7 +124,7 @@ class MeasureCompare(QObject):
         for warning in warnings[:4]:
             self._window._log_event("WARNING", "measure", warning)
         self.sync_layers()
-        self._window._update_plots()
+        self._window.measure.update_plots()
         self._window._statusbar.showMessage(f"Target loaded: {Path(path_str).name}")
         self._window._log_event("INFO", "measure", "Target loaded", path=str(path_str))
         return True
@@ -136,7 +136,7 @@ class MeasureCompare(QObject):
         if getattr(self, "_delta_view_action", None) is not None:
             self._delta_view_action.setChecked(False)
         self.sync_layers()
-        self._window._update_plots()
+        self._window.measure.update_plots()
         self._window._statusbar.showMessage("Target cleared.")
 
     def _on_delta_view_toggled(self, checked: bool) -> None:
@@ -150,7 +150,7 @@ class MeasureCompare(QObject):
             return
         self._window._settings.set("measure_delta_view", bool(checked))
         self.sync_layers()
-        self._window._update_plots()
+        self._window.measure.update_plots()
         self._window._statusbar.showMessage("Delta view on." if checked else "Delta view off.")
 
     def load_reference(self, requested_path: str | None = None) -> bool:
@@ -220,7 +220,10 @@ class MeasureCompare(QObject):
         if getattr(self, "_clear_references_action", None) is not None:
             self._clear_references_action.setEnabled(bool(self._measure_reference_layers))
         if getattr(self, "_eq_suggestion_action", None) is not None:
-            can_fit = has_target and self._window._bottom_curve_for_display_and_export() is not None
+            can_fit = (
+                has_target
+                and self._window.measure.bottom_curve_for_display_and_export() is not None
+            )
             self._eq_suggestion_action.setEnabled(bool(can_fit))
             self._eq_suggestion_action.setToolTip(
                 "" if can_fit else "Needs a loaded target and at least one kept measurement."
@@ -270,21 +273,21 @@ class MeasureCompare(QObject):
 
     def pending_deviation_summary(self) -> str | None:
         """Band-by-band deviation of the sweep awaiting review, if any."""
-        if self._measure_target is None or self._window._two_channel_enabled:
+        if self._measure_target is None or self._window.measure.two_channel_enabled:
             return None
-        delta = self.delta_result(self._window._pending_curve)
+        delta = self.delta_result(self._window.measure.queue.pending_curve)
         if delta is None:
             return None
         return format_deviation_summary(deviation_score(delta))
 
     def target_match_message(self) -> str | None:
-        delta = self.delta_result(self._window._bottom_curve_for_display_and_export())
+        delta = self.delta_result(self._window.measure.bottom_curve_for_display_and_export())
         if delta is None:
             return None
         return f"Match: {deviation_score(delta).match_percent:.0f} %"
 
     def open_eq_suggestion(self) -> None:
-        average = self._window._bottom_curve_for_display_and_export()
+        average = self._window.measure.bottom_curve_for_display_and_export()
         if self._measure_target is None:
             self._window._statusbar.showMessage(
                 "Load a target curve before asking for an EQ suggestion."
@@ -304,4 +307,4 @@ class MeasureCompare(QObject):
         dialog.exec()
         self._window._settings.set("measure_delta_offset_mode", dialog.offset_mode())
         dialog.deleteLater()
-        self._window._update_plots()
+        self._window.measure.update_plots()

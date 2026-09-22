@@ -73,10 +73,10 @@ class SquiglinkController(QObject):
         return host, port
 
     def upload(self) -> None:
-        from dms.ui.main_window import _DISPLAY_AVG_SMOOTHING
+        from dms.ui.measure_controller import _DISPLAY_AVG_SMOOTHING
 
         # Upload what is displayed, exactly as Export Average writes it.
-        curve = self._window._bottom_curve_for_display()
+        curve = self._window.measure.bottom_curve_for_display()
         if curve is None:
             QMessageBox.information(
                 self._window,
@@ -119,13 +119,15 @@ class SquiglinkController(QObject):
         # host key was rejected) are never written to disk: the save happens in
         # _on_squiglink_upload_finished, after a successful upload.
 
-        compensated = self._window._is_hrtf_active()
-        channel_label = self._window._active_measure_label()
+        compensated = self._window.measure.is_hrtf_active()
+        channel_label = self._window.measure.active_measure_label()
         # Squiglink requires exactly one channel side per file and has no way to
         # represent a combined L/R result. A Combined ("BOTH") upload is sent as
         # the L side on purpose; the "BOTH L" name modifier below marks it.
         required_side = (
-            ("R" if channel_label == "R" else "L") if self._window._two_channel_enabled else None
+            ("R" if channel_label == "R" else "L")
+            if self._window.measure.two_channel_enabled
+            else None
         )
         if not self.ensure_upload_metadata(required_side=required_side):
             return
@@ -135,7 +137,7 @@ class SquiglinkController(QObject):
             else self._window._session
         )
         modifier = auth.name_modifier()
-        if self._window._two_channel_enabled and channel_label == "BOTH" and not modifier:
+        if self._window.measure.two_channel_enabled and channel_label == "BOTH" and not modifier:
             modifier = "BOTH L"
         upload_stem = build_upload_name_stem(upload_session, modifier)
         phone_book_stem = build_phone_book_name_stem(upload_session, modifier)
@@ -160,11 +162,11 @@ class SquiglinkController(QObject):
                 session=upload_session,
                 output_path=tmp_path,
                 compensated=compensated,
-                hrtf=self._window._hrtf if compensated else None,
-                n_sweeps=self._window._active_measure_count(),
+                hrtf=self._window.measure.hrtf if compensated else None,
+                n_sweeps=self._window.measure.active_measure_count(),
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=self._window._level_mode()
-                if self._window._spl_offset_db() is not None
+                level_mode=self._window.measure.level_mode()
+                if self._window.measure.spl_offset_db() is not None
                 else "ref_1khz",
             )
         except Exception as exc:

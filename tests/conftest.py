@@ -126,6 +126,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     from dms.settings_manager import SettingsManager
     from dms.theme import ThemeController
     from dms.ui.main_window import MainWindow
+    from dms.ui.update_check import UpdateCheck
 
     created: list[Any] = []
 
@@ -146,7 +147,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         if stub_level_monitor:
             monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
         if stub_update_check:
-            monkeypatch.setattr(MainWindow, "_start_update_check", lambda self: None)
+            monkeypatch.setattr(UpdateCheck, "start", lambda self: None)
         manager = settings_manager or SettingsManager()
         if theme is not None:
             manager.set("theme", theme)

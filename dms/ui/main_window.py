@@ -204,7 +204,7 @@ from dms.ui.squiglink_worker import SquiglinkUploadWorker
 from dms.ui.sweep_runner import SweepRunner
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
-from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
+from dms.ui.update_check import UpdateCheck
 from dms.version import __version__
 
 _MEASUREMENT_F_MIN = 20.0
@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         self._refresh_devices()
         self._start_level_monitor()
         self._apply_state_ui()
-        self._start_update_check()
+        self.update_check.start()
         self._log_event(
             "INFO",
             "application",
@@ -672,7 +672,7 @@ class MainWindow(QMainWindow):
             )
         )
         self._statusbar.addPermanentWidget(self._feedback_btn)
-        self._build_update_indicator()
+        self.update_check = UpdateCheck(self)
 
     def _on_tab_changed(self, _index: int) -> None:
         self._close_inputs_overlay()
@@ -2489,17 +2489,6 @@ class MainWindow(QMainWindow):
         self._queue_primary_layout.addWidget(self._sweep_progress, 1)
         self._queue_progress_widget.setVisible(False)
 
-    def _build_update_indicator(self) -> None:
-        self._update_button = QPushButton("Update")
-        self._update_button.setObjectName("btn_update")
-        self._update_button.setVisible(False)
-        self._update_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._update_button.setToolTip("A new app version is available.")
-        self._update_button.clicked.connect(self._open_update_url)
-        self._statusbar.addPermanentWidget(self._update_button)
-        self._pending_update_url: str | None = None
-        self._update_check_thread: QThread | None = None
-
     def _current_output_device(self) -> int | None:
         value = self._out_dev_combo.currentData()
         return int(value) if value is not None else None
@@ -3030,76 +3019,6 @@ class MainWindow(QMainWindow):
 
     def _on_level_error(self, message: str) -> None:
         self._statusbar.showMessage(message)
-
-    def _start_update_check(self) -> None:
-        enabled = bool(self._settings.get("update_check_enabled"))
-        feed_url = str(self._settings.get("update_feed_url") or "").strip()
-        if not enabled or not feed_url:
-            return
-        if not is_allowed_feed_url(feed_url):
-            self._log_event(
-                "WARNING",
-                "update",
-                "Update check skipped: feed URL must use https://",
-                url=feed_url,
-            )
-            return
-
-        worker = UpdateCheckWorker(current_version=__version__, feed_url=feed_url)
-        thread = QThread(self)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.update_available.connect(self._on_update_available)
-        worker.up_to_date.connect(self._on_update_up_to_date)
-        worker.check_failed.connect(self._on_update_check_failed)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        self._update_check_thread = thread
-        thread.start()
-
-    def _on_update_available(
-        self,
-        latest_version: str,
-        release_url: str,
-        summary: str,
-    ) -> None:
-        self._pending_update_url = release_url
-        self._update_button.setVisible(True)
-        summary_text = f" - {summary}" if summary else ""
-        self._update_button.setToolTip(f"v{latest_version} is available{summary_text}")
-        self._statusbar.showMessage(
-            f"Update available: v{latest_version}. Click 'Update' to open release notes."
-        )
-        self._log_event("INFO", "update", "Update available", version=latest_version)
-
-    def _on_update_up_to_date(self, _latest_version: str) -> None:
-        self._pending_update_url = None
-        self._update_button.setVisible(False)
-        self._log_event("DEBUG", "update", "Application is up to date", version=_latest_version)
-
-    def _on_update_check_failed(self, _error: str) -> None:
-        # Keep this fully non-intrusive by silently failing.
-        self._pending_update_url = None
-        self._update_button.setVisible(False)
-        self._log_event("WARNING", "update", "Update check failed", error=_error)
-
-    def _open_update_url(self) -> None:
-        if not self._pending_update_url:
-            return
-        # Second gate: the feed was validated at parse time, but the URL is
-        # about to be handed to the OS browser, so re-check it here too.
-        if not is_allowed_release_url(self._pending_update_url):
-            self._log_event(
-                "WARNING",
-                "update",
-                "Blocked update link outside the project release org",
-                url=self._pending_update_url,
-            )
-            self._pending_update_url = None
-            self._update_button.setVisible(False)
-            return
-        QDesktopServices.openUrl(QUrl(self._pending_update_url))
 
     def _apply_state_ui(self) -> None:
         if (
@@ -7025,12 +6944,8 @@ class MainWindow(QMainWindow):
         with contextlib.suppress(Exception):
             self._stop_channel_balance()
 
-        try:
-            if self._update_check_thread is not None and self._update_check_thread.isRunning():
-                self._update_check_thread.quit()
-                self._update_check_thread.wait(500)
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            self.update_check.shutdown()
 
         # A Squiglink upload in flight: ask it to stop and give it a moment so
         # its QThread is not destroyed while running.

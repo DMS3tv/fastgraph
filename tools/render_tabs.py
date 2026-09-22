@@ -33,10 +33,11 @@ from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
 from dms.ui.main_window import MainWindow
+from dms.ui.update_check import UpdateCheck
 
 MainWindow._refresh_devices = lambda self: None
 MainWindow._start_level_monitor = lambda self: None
-MainWindow._start_update_check = lambda self: None
+UpdateCheck.start = lambda self: None
 MainWindow._confirm_measure_close = lambda self: True
 
 app = QApplication.instance() or QApplication([])

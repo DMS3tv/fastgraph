@@ -101,6 +101,16 @@
   them by about 0.0001 dB.
 - R&D exports take blank headphone fields as blank instead of writing
   "Unknown".
+- Variation bands are one named type, `VariationBand`, built by
+  `processing.percentile_band` everywhere. The Measure, R&D, HRTF and
+  Curator code previously passed the five percentiles in two different
+  orders. Band values are unchanged.
+- Graph helpers now have one home each: variation and preference-bounds
+  drawing, plot setup, frequency ticks and markers, and the dither band
+  (`dms/graph_display.py`); the BRAND-or-theme colour choice and colour
+  mixing (`theme.colors_for`, `theme.mix_colors`). Theme tokens moved to
+  `dms/style_tokens.py`, so Curator image export no longer loads UI
+  modules. Graphs look the same.
 
 ### Added
 

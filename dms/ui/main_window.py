@@ -114,7 +114,6 @@ from dms.measure_persistence import (
     save_measure_session,
 )
 from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
-from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
 from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
 from dms.measurement_alignment import (
     MeasurementWarningReason,
@@ -141,6 +140,7 @@ from dms.processing import (
     normalize_at_1khz,
     smooth_fractional_octave,
 )
+from dms.recovery import RecoveryCandidate, measure_recovery_manager, rnd_recovery_manager
 from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
@@ -159,7 +159,6 @@ from dms.rnd.persistence import (
 from dms.rnd.persistence import (
     session_snapshot as rnd_persistence_snapshot,
 )
-from dms.rnd.recovery import RecoveryCandidate, RnDRecoveryManager
 from dms.secure_store import decrypt_credentials, encrypt_credentials
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager, config_dir
@@ -281,7 +280,7 @@ class MeasureRecoveryDialog(QDialog):
 
     def __init__(
         self,
-        candidates: list[MeasureRecoveryCandidate],
+        candidates: list[RecoveryCandidate],
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -314,7 +313,7 @@ class MeasureRecoveryDialog(QDialog):
         row.addWidget(keep)
         layout.addLayout(row)
 
-    def selected_candidate(self) -> MeasureRecoveryCandidate:
+    def selected_candidate(self) -> RecoveryCandidate:
         return self._candidate_combo.currentData()
 
     def _finish(self, action: str) -> None:
@@ -1336,7 +1335,7 @@ class MainWindow(QMainWindow):
         # it holds changes that file does not.
         self._measure_session_path: Path | None = None
         self._measure_dirty = False
-        self._restored_measure_candidate: MeasureRecoveryCandidate | None = None
+        self._restored_measure_candidate: RecoveryCandidate | None = None
         # Target comparison. The target survives restarts through settings;
         # reference layers are deliberately session-only.
         self._measure_target: tuple[np.ndarray, np.ndarray] | None = None
@@ -1355,7 +1354,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 700)
 
         self._build_ui()
-        self._rnd_recovery = RnDRecoveryManager(
+        self._rnd_recovery = rnd_recovery_manager(
             config_dir() / "recovery" / "rnd",
             self._rnd_recovery_snapshot,
             parent=self,
@@ -1364,7 +1363,7 @@ class MainWindow(QMainWindow):
         self._rnd_recovery.save_failed.connect(self._on_rnd_recovery_failed)
         # The manager appends its own ``measure/`` segment, so both workspaces
         # share one recovery root without colliding.
-        self._measure_recovery = MeasureRecoveryManager(
+        self._measure_recovery = measure_recovery_manager(
             config_dir() / "recovery",
             parent=self,
         )
@@ -6356,7 +6355,7 @@ class MainWindow(QMainWindow):
                         "place so a newer Fastgraph can recover it.",
                     )
                 elif dialog.action == RnDRecoveryDialog.RESTORE:
-                    session, missing_photos = self._rnd_recovery.load_candidate(
+                    session, missing_photos = self._rnd_recovery.restore(
                         candidate,
                         self._rnd_widget.photo_store,
                     )

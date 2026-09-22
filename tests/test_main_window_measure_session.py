@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import QMessageBox
 
 import dms.ui.main_window as main_window_module
 from dms.measure_queue import QueueState
-from dms.measure_recovery import MeasureRecoveryCandidate
 from dms.measure_session import MeasureSession
+from dms.recovery import RecoveryCandidate
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
 from dms.ui.main_window import MeasureRecoveryDialog
@@ -259,12 +259,11 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
     )
     freqs, mag_db = _curve(3.0)
     recovered.add_sweep(freqs, mag_db)
-    candidate = MeasureRecoveryCandidate(
+    candidate = RecoveryCandidate(
         path=Path("current.fastgraph-measure.json"),
         kind="current",
         preserved_at=datetime.now(),
-        sweep_count=1,
-        pair_count=0,
+        summary="1 sweeps",
     )
 
     window._measure_recovery.candidates = lambda: [candidate]

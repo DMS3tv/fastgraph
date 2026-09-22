@@ -9,12 +9,11 @@ import numpy as np
 import pytest
 from PyQt6.QtTest import QTest
 
-import dms.measure_recovery as recovery_module
-from dms.measure_recovery import MeasureRecoveryManager
 from dms.measure_session import (
     MEASURE_SESSION_SCHEMA_VERSION,
     MeasureSession,
 )
+from dms.recovery import RecoveryManager, measure_recovery_manager
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
 
@@ -35,8 +34,8 @@ def _session(model: str = "First", two_channel: bool = False) -> MeasureSession:
     return session
 
 
-def _manager(tmp_path: Path, **kwargs) -> MeasureRecoveryManager:
-    return MeasureRecoveryManager(tmp_path / "recovery", **kwargs)
+def _manager(tmp_path: Path, **kwargs) -> RecoveryManager:
+    return measure_recovery_manager(tmp_path / "recovery", **kwargs)
 
 
 def test_snapshot_write_creates_the_current_generation(tmp_path: Path) -> None:
@@ -51,7 +50,7 @@ def test_snapshot_write_creates_the_current_generation(tmp_path: Path) -> None:
     assert not manager.staging_path.exists()
     candidates = manager.candidates()
     assert [item.kind for item in candidates] == ["current"]
-    assert candidates[0].sweep_count == 1
+    assert candidates[0].summary == "1 sweeps"
     assert "1 sweeps" in candidates[0].label
     manager.shutdown_clean()
 
@@ -78,7 +77,7 @@ def test_candidates_fall_back_to_previous_and_quarantine_broken_current(
     manager._save_snapshot(_session("Second").to_dict())
     manager.current_path.write_text("{broken", encoding="utf-8")
 
-    with caplog.at_level("WARNING", logger="dms.measure_recovery"):
+    with caplog.at_level("WARNING", logger="dms.recovery"):
         candidates = manager.candidates()
 
     assert [item.kind for item in candidates] == ["previous"]
@@ -92,7 +91,7 @@ def test_candidates_fall_back_to_previous_and_quarantine_broken_current(
 def test_candidates_are_newest_first_with_deferred_bundles(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     manager._save_snapshot(_session("Deferred", two_channel=True).to_dict())
-    kept = manager.defer(manager.candidates()[0])
+    kept = manager.keep_for_later(manager.candidates()[0])
     manager._save_snapshot(_session("Active").to_dict())
 
     candidates = manager.candidates()
@@ -100,7 +99,7 @@ def test_candidates_are_newest_first_with_deferred_bundles(tmp_path: Path) -> No
     assert [item.kind for item in candidates] == ["current", "deferred"]
     assert candidates[0].preserved_at >= candidates[1].preserved_at
     assert candidates[1].path == kept.path
-    assert candidates[1].pair_count == 1
+    assert candidates[1].summary == "1 pairs"
     assert "Kept for later" in candidates[1].label
     assert "1 pairs" in candidates[1].label
     manager.shutdown_clean()
@@ -110,15 +109,15 @@ def test_defer_moves_the_bundle_and_survives_a_clean_exit(tmp_path: Path) -> Non
     manager = _manager(tmp_path)
     manager._save_snapshot(_session().to_dict())
 
-    kept = manager.defer(manager.candidates()[0])
+    kept = manager.keep_for_later(manager.candidates()[0])
 
     assert kept.kind == "deferred"
     assert kept.path.is_file()
     assert not manager.current_path.exists()
-    assert manager.defer(kept) is kept
+    assert manager.keep_for_later(kept) is kept
     manager.shutdown_clean()
     assert kept.path.is_file()
-    assert MeasureRecoveryManager(tmp_path / "recovery").candidates()[0].kind == "deferred"
+    assert measure_recovery_manager(tmp_path / "recovery").candidates()[0].kind == "deferred"
 
 
 def test_discard_removes_both_active_generations(tmp_path: Path) -> None:
@@ -163,10 +162,10 @@ def test_clean_exit_marker_suppresses_recovery_on_the_next_start(
     # one back and check the marker alone is what suppresses it.
     manager.current_path.write_text(leftover, encoding="utf-8")
 
-    assert MeasureRecoveryManager(tmp_path / "recovery").candidates() == []
+    assert measure_recovery_manager(tmp_path / "recovery").candidates() == []
 
     manager.clean_exit_path.unlink()
-    reopened = MeasureRecoveryManager(tmp_path / "recovery")
+    reopened = measure_recovery_manager(tmp_path / "recovery")
     assert [item.kind for item in reopened.candidates()] == ["current"]
     reopened.shutdown_clean()
 
@@ -258,21 +257,21 @@ def test_failed_rotation_keeps_the_newest_snapshot_and_flags_degraded(
     manager = _manager(tmp_path)
     manager._save_snapshot(_session("First").to_dict())
     assert manager.rotation_degraded is False
-    real_copy = recovery_module.copy_session_file
+    real_copy = manager._copy
 
     def fail_previous(source, destination):
         if Path(destination) == manager.previous_path:
             raise OSError("simulated rotation failure")
         return real_copy(source, destination)
 
-    monkeypatch.setattr(recovery_module, "copy_session_file", fail_previous)
+    monkeypatch.setattr(manager, "_copy", fail_previous)
     manager._save_snapshot(_session("Second").to_dict())
 
     assert manager.rotation_degraded is True
     assert manager.restore(manager.candidates()[0]).metadata.model == "Second"
     assert not manager.staging_path.exists()
 
-    monkeypatch.setattr(recovery_module, "copy_session_file", real_copy)
+    monkeypatch.setattr(manager, "_copy", real_copy)
     manager._save_snapshot(_session("Third").to_dict())
     assert manager.rotation_degraded is False
     manager.shutdown_clean()
@@ -284,19 +283,15 @@ def test_a_failing_save_reports_instead_of_raising(qapp, tmp_path: Path) -> None
     manager.save_failed.connect(failures.append)
     manager.enable()
 
-    def explode(snapshot, path):
+    def explode(snapshot, sources, path):
         raise OSError("simulated disk failure")
 
-    original = recovery_module.save_measure_snapshot
-    recovery_module.save_measure_snapshot = explode
-    try:
-        manager.schedule(_session().to_dict())
-        for _ in range(20):
-            QTest.qWait(10)
-            if failures:
-                break
-    finally:
-        recovery_module.save_measure_snapshot = original
+    manager._save = explode
+    manager.schedule(_session().to_dict())
+    for _ in range(20):
+        QTest.qWait(10)
+        if failures:
+            break
 
     assert failures and "simulated disk failure" in failures[0]
     assert not manager.current_path.exists()

@@ -8,8 +8,8 @@ from PyQt6.QtGui import QImage
 from PyQt6.QtTest import QTest
 
 import dms.rnd.persistence as persistence
-import dms.rnd.recovery as recovery_module
 from dms.file_io import ensure_extension
+from dms.recovery import rnd_recovery_manager
 from dms.rnd.models import RnDGroup, RnDMeasurement, RnDSession
 from dms.rnd.persistence import (
     RND_SESSION_EXTENSION,
@@ -17,7 +17,6 @@ from dms.rnd.persistence import (
     save_rnd_session,
 )
 from dms.rnd.photos import RnDPhotoStore, attachment_directory
-from dms.rnd.recovery import RnDRecoveryManager
 
 
 def _measurement(mid: str = "m1", name: str = "One") -> RnDMeasurement:
@@ -116,7 +115,7 @@ def test_recovery_falls_back_to_previous_and_quarantines_invalid_current(
 ) -> None:
     store = RnDPhotoStore()
     current_session = _session("First")
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(current_session, store),
     )
@@ -131,7 +130,7 @@ def test_recovery_falls_back_to_previous_and_quarantines_invalid_current(
 
     assert len(candidates) == 1
     assert candidates[0].kind == "previous"
-    loaded, _missing = manager.load_candidate(candidates[0], store)
+    loaded, _missing = manager.restore(candidates[0], store)
     assert loaded.measurements[0].name == "First"
     assert list(manager.quarantine_root.glob("*/current.fastgraph-rnd.json"))
     manager.shutdown_clean()
@@ -140,7 +139,7 @@ def test_recovery_falls_back_to_previous_and_quarantines_invalid_current(
 def test_keep_for_later_preserves_bundle_and_clears_active(tmp_path: Path) -> None:
     store = RnDPhotoStore()
     session = _session()
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
     )
@@ -168,7 +167,7 @@ def test_recovery_debounces_rapid_changes_and_clears_error(qapp, tmp_path: Path)
         snapshots += 1
         return persistence.session_snapshot(session, store)
 
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         provider,
         debounce_ms=20,
@@ -198,7 +197,7 @@ def test_recovery_maximum_timer_saves_during_continuous_changes(
 ) -> None:
     store = RnDPhotoStore()
     session = _session()
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
         debounce_ms=1000,
@@ -289,7 +288,7 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
     """C5: a broken current -> previous copy must not cost the new snapshot."""
     store = RnDPhotoStore()
     session = _session("First")
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
     )
@@ -297,14 +296,14 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
     manager._save_snapshot(snapshot, sources)
     assert manager.rotation_degraded is False
 
-    real_copy = recovery_module.copy_session_bundle
+    real_copy = manager._copy
 
     def fail_previous(source, destination):
         if Path(destination) == manager.previous_path:
             raise OSError("simulated rotation failure")
         return real_copy(source, destination)
 
-    monkeypatch.setattr(recovery_module, "copy_session_bundle", fail_previous)
+    monkeypatch.setattr(manager, "_copy", fail_previous)
     second = _session("Second")
     second_snapshot, second_sources = persistence.session_snapshot(second, store)
     manager._save_snapshot(second_snapshot, second_sources)
@@ -314,7 +313,7 @@ def test_failed_rotation_keeps_newest_snapshot_and_flags_degraded(
     assert current.measurements[0].name == "Second"
     assert not manager.staging_path.exists()
 
-    monkeypatch.setattr(recovery_module, "copy_session_bundle", real_copy)
+    monkeypatch.setattr(manager, "_copy", real_copy)
     manager._save_snapshot(second_snapshot, second_sources)
     assert manager.rotation_degraded is False
     manager.shutdown_clean()
@@ -324,7 +323,7 @@ def test_newer_schema_is_reported_not_quarantined(caplog, tmp_path: Path) -> Non
     """C8: a session from a newer Fastgraph is intact; only junk is quarantined."""
     store = RnDPhotoStore()
     session = _session()
-    manager = RnDRecoveryManager(
+    manager = rnd_recovery_manager(
         tmp_path / "recovery",
         lambda: persistence.session_snapshot(session, store),
     )
@@ -343,9 +342,30 @@ def test_newer_schema_is_reported_not_quarantined(caplog, tmp_path: Path) -> Non
     assert not list(manager.quarantine_root.glob("*/*.json"))
 
     manager.current_path.write_text("{not json", encoding="utf-8")
-    with caplog.at_level("WARNING", logger="dms.rnd.recovery"):
+    with caplog.at_level("WARNING", logger="dms.recovery"):
         assert manager.candidates() == []
     quarantined = list(manager.quarantine_root.glob("*/current.fastgraph-rnd.json"))
     assert quarantined
     assert any(str(quarantined[0]) in record.getMessage() for record in caplog.records)
+    manager.shutdown_clean()
+
+
+def test_quarantine_moves_the_photo_sidecar_with_the_manifest(tmp_path: Path) -> None:
+    store = RnDPhotoStore()
+    session = _session()
+    image = QImage(16, 16, QImage.Format.Format_RGB32)
+    session.measurements[0].photos.append(store.add_image(image, display_name="Pads"))
+    manager = rnd_recovery_manager(
+        tmp_path / "recovery",
+        lambda: persistence.session_snapshot(session, store),
+    )
+    manager._save_snapshot(*persistence.session_snapshot(session, store))
+    sidecar = attachment_directory(manager.current_path)
+    assert sidecar.is_dir()
+    manager.current_path.write_text("{broken", encoding="utf-8")
+
+    assert manager.candidates() == []
+
+    assert not sidecar.exists()
+    assert list(manager.quarantine_root.glob(f"*/{sidecar.name}/*.jpg"))
     manager.shutdown_clean()

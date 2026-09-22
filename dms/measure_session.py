@@ -8,7 +8,7 @@ on-disk shape, so a Measure session can be saved, reopened and recovered after
 a crash exactly the way an R&D session can.
 
 Nothing here touches Qt, the filesystem or the audio engine:
-:mod:`dms.measure_persistence` owns file I/O and :mod:`dms.measure_recovery`
+:mod:`dms.measure_persistence` owns file I/O and :mod:`dms.recovery`
 owns the crash-recovery generations. Keeping this module pure is what lets the
 whole format be tested without a window.
 

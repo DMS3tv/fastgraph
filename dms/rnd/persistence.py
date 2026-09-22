@@ -163,15 +163,6 @@ def copy_session_bundle(source: Path, destination: Path) -> None:
     )
 
 
-def remove_session_bundle(path: Path) -> None:
-    path = Path(path)
-    with contextlib.suppress(FileNotFoundError):
-        path.unlink()
-    sidecar = attachment_directory(path)
-    if sidecar.exists():
-        shutil.rmtree(sidecar)
-
-
 def _atomic_copy(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)

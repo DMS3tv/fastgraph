@@ -2,7 +2,6 @@ from pathlib import Path
 
 from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
 from dms.ui.console_widget import ConsoleWidget
-from dms.ui.main_window import MainWindow
 
 
 def test_console_event_store_is_bounded_and_redacts_secrets(tmp_path: Path) -> None:
@@ -23,11 +22,12 @@ def test_console_event_store_is_bounded_and_redacts_secrets(tmp_path: Path) -> N
     assert "nope" not in text
 
 
-def test_console_setting_validation() -> None:
-    assert MainWindow._parse_console_setting("queue_count", "7") == 7
-    assert MainWindow._parse_console_setting("output_level", "-12.5") == -12.5
-    assert MainWindow._parse_console_setting("bluetooth_mode", "on") is True
-    assert MainWindow._parse_console_setting("latency", "HIGH") == "high"
+def test_console_setting_validation(make_main_window) -> None:
+    window = make_main_window()
+    assert window._parse_console_setting("queue_count", "7") == 7
+    assert window._parse_console_setting("output_level", "-12.5") == -12.5
+    assert window._parse_console_setting("bluetooth_mode", "on") is True
+    assert window._parse_console_setting("latency", "HIGH") == "high"
 
 
 def test_console_persistent_log_is_written_and_redacted(tmp_path: Path) -> None:
@@ -56,8 +56,8 @@ def test_runtime_and_exception_diagnostics_are_support_safe() -> None:
     assert details["traceback"]
 
 
-def test_console_help_contains_review_and_export_commands() -> None:
-    help_text = MainWindow._console_help()
+def test_console_help_contains_review_and_export_commands(make_main_window) -> None:
+    help_text = make_main_window()._console_help()
     assert "measure pass" in help_text
     assert "measure fail" in help_text
     assert "export average" in help_text

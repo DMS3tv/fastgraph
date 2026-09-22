@@ -1,44 +1,25 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
 from dms.measure_queue import QueueState
-from dms.ui.main_window import MainWindow
+
+_COUNTED = ("_recompute_average", "_recompute_variation", "_update_queue_progress", "_update_plots")
 
 
-def _make_fake_main_window(state: str = QueueState.IDLE):
-    calls: dict[str, int] = {
-        "recompute_average": 0,
-        "recompute_variation": 0,
-        "update_queue_progress": 0,
-        "update_plots": 0,
-    }
-    status_messages: list[str] = []
-    fake = SimpleNamespace(
-        _state=state,
-        _kept_curves=[],
-        # Imported curves take a metadata slot each and dirty the session.
-        _kept_sweep_meta=[],
-        _mark_measure_dirty=lambda: calls.__setitem__(
-            "mark_measure_dirty", calls.get("mark_measure_dirty", 0) + 1
-        ),
-        _recompute_average=lambda: calls.__setitem__(
-            "recompute_average", calls["recompute_average"] + 1
-        ),
-        _recompute_variation=lambda: calls.__setitem__(
-            "recompute_variation", calls["recompute_variation"] + 1
-        ),
-        _update_queue_progress=lambda: calls.__setitem__(
-            "update_queue_progress", calls["update_queue_progress"] + 1
-        ),
-        _update_plots=lambda: calls.__setitem__("update_plots", calls["update_plots"] + 1),
-        _statusbar=SimpleNamespace(showMessage=lambda msg: status_messages.append(msg)),
-    )
-    return fake, calls, status_messages
+def _counting_window(make_main_window, state: str = QueueState.IDLE):
+    """A real window whose follow-up refreshes are replaced by counters."""
+    window = make_main_window()
+    window._state = state
+    calls = dict.fromkeys(_COUNTED, 0)
+    for name in _COUNTED:
+        setattr(window, name, lambda name=name: calls.__setitem__(name, calls[name] + 1))
+    return window, calls
 
 
-def test_import_dropped_measurement_files_appends_curves(monkeypatch, tmp_path: Path) -> None:
+def test_import_dropped_measurement_files_appends_curves(
+    make_main_window, monkeypatch, tmp_path: Path
+) -> None:
     good = tmp_path / "good.txt"
     bad = tmp_path / "bad.txt"
     good.write_text("100 1\n200 2\n")
@@ -54,22 +35,24 @@ def test_import_dropped_measurement_files_appends_curves(monkeypatch, tmp_path: 
         lambda *_args, **_kwargs: None,
     )
 
-    fake, calls, status_messages = _make_fake_main_window()
-    MainWindow._import_dropped_measurement_files(fake, [str(good), str(bad)])
+    window, calls = _counting_window(make_main_window)
+    window._import_dropped_measurement_files([str(good), str(bad)])
 
-    assert len(fake._kept_curves) == 1
-    freqs, mags = fake._kept_curves[0]
+    assert len(window._kept_curves) == 1
+    freqs, mags = window._kept_curves[0]
     assert np.allclose(freqs, np.array([100.0, 200.0]))
     assert np.allclose(mags, np.array([1.0, 2.0]))
-    assert calls["recompute_average"] == 1
-    assert calls["recompute_variation"] == 1
-    assert calls["update_queue_progress"] == 1
-    assert calls["update_plots"] == 1
+    assert calls["_recompute_average"] == 1
+    assert calls["_recompute_variation"] == 1
+    assert calls["_update_queue_progress"] == 1
+    assert calls["_update_plots"] == 1
     assert warnings
-    assert "loaded 1, failed 1" in status_messages[-1].lower()
+    assert "loaded 1, failed 1" in window._statusbar.currentMessage().lower()
 
 
-def test_import_dropped_measurement_files_blocked_when_busy(monkeypatch, tmp_path: Path) -> None:
+def test_import_dropped_measurement_files_blocked_when_busy(
+    make_main_window, monkeypatch, tmp_path: Path
+) -> None:
     info_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "dms.ui.main_window.QMessageBox.information",
@@ -80,13 +63,13 @@ def test_import_dropped_measurement_files_blocked_when_busy(monkeypatch, tmp_pat
         lambda *_args, **_kwargs: None,
     )
 
-    fake, calls, status_messages = _make_fake_main_window(state=QueueState.QUEUE_RUNNING)
+    window, calls = _counting_window(make_main_window, state=QueueState.QUEUE_RUNNING)
     path = tmp_path / "curve.txt"
     path.write_text("100 1\n200 2\n")
-    MainWindow._import_dropped_measurement_files(fake, [str(path)])
+    window._import_dropped_measurement_files([str(path)])
 
-    assert len(fake._kept_curves) == 0
+    assert len(window._kept_curves) == 0
     assert info_calls
     assert "only available while idle" in info_calls[0][1].lower()
-    assert "blocked" in status_messages[-1].lower()
-    assert calls["update_plots"] == 0
+    assert "blocked" in window._statusbar.currentMessage().lower()
+    assert calls["_update_plots"] == 0

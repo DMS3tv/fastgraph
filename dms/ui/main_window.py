@@ -4588,7 +4588,7 @@ class MainWindow(QMainWindow):
             self._update_plots()
 
     def _import_dropped_measurement_files(self, paths: list[str]) -> None:
-        if getattr(self, "_two_channel_enabled", False):
+        if self._two_channel_enabled:
             QMessageBox.information(
                 self,
                 "Single Channel Only",

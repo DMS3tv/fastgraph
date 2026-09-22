@@ -7,7 +7,6 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.interpolate import interp1d
 
 #: The shared analysis grid: 1200 log-spaced points over 20 Hz - 20 kHz with an
 #: exact 1 kHz reference point (see :func:`log_grid`).
@@ -653,10 +652,7 @@ def resample_log_band_average(
     def _interpolated() -> np.ndarray:
         if freqs.size == 1:
             return np.full(target.size, values[0])
-        interp = interp1d(
-            freqs, values, kind="linear", bounds_error=False, fill_value=(values[0], values[-1])
-        )
-        return np.asarray(interp(target), dtype=np.float64)
+        return np.interp(target, freqs, values)
 
     if target.size < 2 or freqs.size < 2:
         out_mag = _interpolated()
@@ -739,10 +735,7 @@ def compute_rms_average(
     sum_lin = np.zeros(n_points)
     count = 0
     for freqs, mag_db in curves:
-        interp = interp1d(
-            freqs, mag_db, kind="linear", bounds_error=False, fill_value=(mag_db[0], mag_db[-1])
-        )
-        vals = interp(common_freqs)
+        vals = np.interp(common_freqs, freqs, mag_db)
         # RMS average in linear (power) space
         sum_lin += 10.0 ** (vals / 10.0)
         count += 1

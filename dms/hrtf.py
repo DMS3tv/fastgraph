@@ -1,25 +1,9 @@
 from pathlib import Path
 
 import numpy as np
-from scipy.interpolate import interp1d
 
 from dms.curator.parser import parse_measurement_txt
 from dms.processing import _Z_P75, _Z_P90, sigma_from_percentiles
-
-
-def _edge_held_interp(freqs: np.ndarray, values: np.ndarray) -> interp1d:
-    """Linear interpolator that holds the first/last value outside the file range.
-
-    Filling with 0 dB instead put a step at the edge of every HRTF file, which
-    showed up as a kink in the compensated curve.
-    """
-    return interp1d(
-        freqs,
-        values,
-        kind="linear",
-        bounds_error=False,
-        fill_value=(float(values[0]), float(values[-1])),
-    )
 
 
 class HRTFCurve:
@@ -29,27 +13,25 @@ class HRTFCurve:
         self.freqs, columns = _load_hrtf_data(path)
         self.is_variation = len(columns) == 5
         self.mags = columns[2] if self.is_variation else columns[0]
-        self._interp = _edge_held_interp(self.freqs, self.mags)
-        self._variation_interps: tuple[interp1d, interp1d, interp1d, interp1d, interp1d] | None = (
-            None
-        )
-        if self.is_variation:
-            self._variation_interps = tuple(
-                _edge_held_interp(self.freqs, values) for values in columns
-            )
+        self._variation = columns if self.is_variation else None
 
     def evaluate(self, freqs_hz: np.ndarray) -> np.ndarray:
-        """Return the HRTF line, or the median for a variation HRTF."""
-        return self._interp(freqs_hz)
+        """Return the HRTF line, or the median for a variation HRTF.
+
+        Outside the file range the first/last value is held (``np.interp``'s
+        default). Filling with 0 dB instead put a step at the edge of every
+        HRTF file, which showed up as a kink in the compensated curve.
+        """
+        return np.interp(freqs_hz, self.freqs, self.mags)
 
     def evaluate_variation(
         self,
         freqs_hz: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         """Return P10, P25, median, P75, and P90 at requested frequencies."""
-        if self._variation_interps is None:
+        if self._variation is None:
             return None
-        return tuple(interp(freqs_hz) for interp in self._variation_interps)
+        return tuple(np.interp(freqs_hz, self.freqs, values) for values in self._variation)
 
     def apply(self, freqs_hz: np.ndarray, mag_db: np.ndarray, invert: bool = False) -> np.ndarray:
         """

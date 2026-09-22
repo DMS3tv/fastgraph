@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -14,7 +13,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -29,7 +27,6 @@ from dms.automation import (
     ACTIONS,
     CONDITIONS,
     TRIGGERS,
-    AUTOMATION_SUFFIX,
     AutomationCondition,
     AutomationDefinition,
     AutomationStep,

@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from dms.rnd.models import RnDSession, UnsupportedSessionVersion
+from dms.rnd.models import UnsupportedSessionVersion
 from dms.rnd.persistence import (
     copy_session_bundle,
     load_rnd_session,

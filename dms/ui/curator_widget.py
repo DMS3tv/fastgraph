@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QMenu,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,

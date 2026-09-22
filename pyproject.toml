@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["build", "dist", "releases", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "SIM108", # ternaries are not clearer than short if/else blocks
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dms"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["default::pytest.PytestWarning"]

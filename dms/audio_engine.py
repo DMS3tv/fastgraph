@@ -7,7 +7,7 @@ import time
 import threading
 import os
 from dataclasses import replace
-from typing import Any, Optional, Callable
+from typing import Any, Optional
 
 import numpy as np
 import sounddevice as sd

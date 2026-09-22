@@ -7,7 +7,7 @@ records RMS, then stores Pa/FS sensitivity.
 import numpy as np
 import sounddevice as sd
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QPushButton, QProgressBar,
+    QDialog, QVBoxLayout, QLabel, QProgressBar,
     QHBoxLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal

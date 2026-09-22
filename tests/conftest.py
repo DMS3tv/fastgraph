@@ -23,7 +23,7 @@ import gc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

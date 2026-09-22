@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import pytest
 from PyQt6.QtWidgets import QMessageBox
 
 import dms.ui.automation_widget as automation_widget_module

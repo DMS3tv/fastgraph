@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )

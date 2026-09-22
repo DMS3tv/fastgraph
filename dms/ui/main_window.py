@@ -7,7 +7,6 @@ pass/fail UI, HRTF selector, settings/calibration, and export.
 import sys
 import shlex
 import tempfile
-import json
 import os
 import re
 from dataclasses import replace
@@ -124,7 +123,7 @@ from dms.measure_persistence import (
     save_measure_session,
     same_session_file as same_measure_session_file,
 )
-from dms.measure_queue import Effect, MeasurementQueue, QueueDecision, QueueState
+from dms.measure_queue import MeasurementQueue, QueueState
 from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
 from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
 from dms.ui.sweep_runner import SweepRunner
@@ -157,7 +156,6 @@ from dms.two_channel import (
 from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
-    RnDSession,
     generate_measurement_name,
     group_variation as rnd_group_variation,
     measurement_session_data,
@@ -3753,9 +3751,6 @@ class MainWindow(QMainWindow):
 
         self._refresh_channels(selected_ch=selected_ch)
         self._ch_combo.blockSignals(False)
-
-        current_out = self._current_output_device()
-        current_in = self._current_input_device()
 
         self._settings.set("output_device", self._current_output_device_setting())
         self._settings.set("input_device", self._current_input_device_setting())
@@ -8134,7 +8129,7 @@ class MainWindow(QMainWindow):
             "Create Fresh Phone Book",
             QMessageBox.ButtonRole.AcceptRole,
         )
-        fail_btn = dialog.addButton(
+        dialog.addButton(
             "Fail Upload",
             QMessageBox.ButtonRole.DestructiveRole,
         )

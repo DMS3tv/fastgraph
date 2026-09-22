@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 from dms.file_io import atomic_write_json, load_json_with_backup

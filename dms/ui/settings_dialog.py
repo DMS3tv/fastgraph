@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QFileDialog,
     QMessageBox,
-    QPushButton,
     QRadioButton,
     QVBoxLayout,
     QWidget,

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import deque
 import math
 import threading
-import time
 
 import numpy as np
 import sounddevice as sd

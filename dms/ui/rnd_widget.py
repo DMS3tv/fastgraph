@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import logging
 import os
 import re
@@ -24,7 +26,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QScrollArea,
     QSizePolicy,
@@ -62,7 +63,6 @@ from dms.graph_display import (
     uses_retro_steps,
 )
 from dms.theme import (
-    LIGHT,
     ensure_graph_color,
     brand_theme_colors,
     normalize_theme,
@@ -2251,5 +2251,3 @@ class RnDWidget(QWidget):
             index += 1
         return f"{base} ({index})"
 
-
-from uuid import uuid4

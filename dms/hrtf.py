@@ -111,20 +111,16 @@ class HRTFCurve:
         median_db: np.ndarray,
         p75_db: np.ndarray,
         p90_db: np.ndarray,
-        combination: str = "independent",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Apply the compensation spread to an existing variation envelope.
 
-        ``combination="independent"`` treats the measurement spread and the
-        population spread as independent and adds their variances in
-        quadrature, which is what two unrelated sources of variation actually
-        do. ``combination="worst_case"`` reproduces Fastgraph's historical
-        pairing of opposing percentiles (p10 against comp_p90), which assumes
-        the two spreads always conspire and therefore reads much wider.
+        The measurement spread and the population spread are treated as
+        independent and their variances are added in quadrature, which is
+        what two unrelated sources of variation actually do.
         """
         variation = self.evaluate_variation(freqs_hz)
         if variation is None:
-            # A mono HRTF has no spread of its own; both modes are identical.
+            # A mono HRTF has no spread of its own.
             correction = self.evaluate(freqs_hz)
             return (
                 p10_db - correction,
@@ -134,15 +130,6 @@ class HRTFCurve:
                 p90_db - correction,
             )
         comp_p10, comp_p25, comp_median, comp_p75, comp_p90 = variation
-        if str(combination) == "worst_case":
-            return (
-                p10_db - comp_p90,
-                p25_db - comp_p75,
-                median_db - comp_median,
-                p75_db - comp_p25,
-                p90_db - comp_p10,
-            )
-
         sigma_meas = sigma_from_percentiles(p10_db, p25_db, p75_db, p90_db)
         sigma_hrtf = sigma_from_percentiles(comp_p10, comp_p25, comp_p75, comp_p90)
         sigma = np.sqrt(np.square(sigma_meas) + np.square(sigma_hrtf))

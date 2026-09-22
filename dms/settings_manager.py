@@ -7,7 +7,7 @@ from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
 
 _DEFAULTS: dict[str, Any] = {
-    "settings_schema_version": 2,
+    "settings_schema_version": 3,
     "theme": "dark",
     "brand_mode": False,
     "brand_mode_unlocked": False,
@@ -24,10 +24,6 @@ _DEFAULTS: dict[str, Any] = {
     # "ref_1khz" normalizes every curve to 0 dB at 1 kHz; "dbspl" keeps the
     # absolute level, and needs a calibrated input device.
     "measure_level_mode": "ref_1khz",
-    # How measurement spread and population-HRTF spread are combined:
-    # "independent" adds the two variances in quadrature; "worst_case" pairs
-    # the opposing percentiles the way Fastgraph did before.
-    "hrtf_variation_combination": "independent",
     "windows_advanced_audio_drivers": False,
     "queue_count": 5,
     "queue_output_level_db": -6.0,
@@ -212,6 +208,7 @@ class SettingsManager:
         if not bool(self._data.get("brand_mode_unlocked")):
             self._data["brand_mode"] = False
         self._migrate_alignment_confidence(saved)
+        self._migrate_drop_variation_combination(saved)
 
     def _coerce_types(self, saved: dict[str, Any]) -> None:
         """Force stored values back onto their declared type.
@@ -276,6 +273,23 @@ class SettingsManager:
                 "start_alignment_confidence_min"
             ]
         self._data["settings_schema_version"] = 2
+
+    def _migrate_drop_variation_combination(self, saved: dict[str, Any]) -> None:
+        """Drop the removed ``hrtf_variation_combination`` key (schema 3).
+
+        The "worst_case" option had no UI control and was removed; the
+        independent combination is now the only behaviour.
+        """
+        if not saved:
+            return
+        try:
+            schema = int(saved.get("settings_schema_version") or 1)
+        except (TypeError, ValueError):
+            schema = 1
+        if schema >= 3:
+            return
+        self._data.pop("hrtf_variation_combination", None)
+        self._data["settings_schema_version"] = 3
 
     def _save(self) -> None:
         # settings.json holds the encrypted Squiglink credentials, so it is

@@ -149,7 +149,7 @@ def test_alignment_confidence_migration_still_runs_after_coercion(
     )
     settings = SettingsManager()
     assert settings.get("start_alignment_confidence_min") == 6.0
-    assert settings.get("settings_schema_version") == 2
+    assert settings.get("settings_schema_version") == 3
 
 
 def test_deliberate_confidence_value_is_preserved(monkeypatch, tmp_path: Path) -> None:
@@ -159,3 +159,18 @@ def test_deliberate_confidence_value_is_preserved(monkeypatch, tmp_path: Path) -
         {"settings_schema_version": 1, "start_alignment_confidence_min": "12.5"},
     )
     assert SettingsManager().get("start_alignment_confidence_min") == 12.5
+
+
+def test_removed_variation_combination_key_is_dropped(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    _write_settings(
+        tmp_path,
+        {"settings_schema_version": 2, "hrtf_variation_combination": "worst_case"},
+    )
+    settings = SettingsManager()
+    assert settings.get("hrtf_variation_combination") is None
+    assert settings.get("settings_schema_version") == 3
+
+    settings.set("theme", "dark")
+    saved = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert "hrtf_variation_combination" not in saved

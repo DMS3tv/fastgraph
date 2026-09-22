@@ -182,9 +182,7 @@ def _draw_poster(
         retro=tokens.retro_graph,
         dither_tokens=tokens if dither else None,
     )
-    visible_layers = visible_display_layers(
-        state.layers, state.smoothing_fraction, state.variation_combination
-    )
+    visible_layers = visible_display_layers(state.layers, state.smoothing_fraction)
     trace_indexes_by_id = {layer.id: index for index, layer in enumerate(state.layers)}
     visible_trace_indexes = [
         trace_indexes_by_id.get(layer.id, fallback_index)

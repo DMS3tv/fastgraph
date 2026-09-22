@@ -86,9 +86,6 @@ class GraphState:
     background: str = "#101217"
     aspect_locked_25db: bool = True
     smoothing_fraction: int = 48
-    #: How a population HRTF's spread is merged with a layer's own spread:
-    #: "independent" (variances in quadrature) or "worst_case" (legacy).
-    variation_combination: str = "independent"
     show_layer_names: bool = True
     brand_clean_slate: bool = False
     export_text: ExportText = field(default_factory=ExportText)

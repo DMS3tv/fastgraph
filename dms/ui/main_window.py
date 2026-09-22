@@ -507,17 +507,6 @@ class TestLevelDialog(QDialog):
             self._hint_label.setText("Noise ping sent. Confirm input level responds in dBFS.")
 
 
-def variation_combination_setting(settings: object | None) -> str:
-    """Read ``hrtf_variation_combination``, defaulting to "independent".
-
-    Takes the settings object rather than the window so the pure variation
-    helpers keep working when called on a bare stand-in.
-    """
-    getter = getattr(settings, "get", None)
-    mode = getter("hrtf_variation_combination") if getter is not None else None
-    return "worst_case" if str(mode) == "worst_case" else "independent"
-
-
 def thd_band_summary(
     analysis: HarmonicAnalysis | None,
 ) -> tuple[float, float, float] | None:
@@ -1510,9 +1499,6 @@ class MainWindow(QMainWindow):
             self._console_events,
             theme=self._theme_controller.theme,
             brand_mode=self._theme_controller.brand_mode,
-            variation_combination=str(
-                self._settings.get("hrtf_variation_combination") or "independent"
-            ),
             parent=self,
         )
         self._tabs.addTab(self._curator_widget, "Curator")
@@ -5228,7 +5214,6 @@ class MainWindow(QMainWindow):
                 median,
                 p75,
                 p90,
-                combination=variation_combination_setting(getattr(self, "_settings", None)),
             )
         return (base_freqs, p10, p25, p75, p90, median)
 

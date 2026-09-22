@@ -1,5 +1,6 @@
 import pytest
-from PyQt6.QtCore import QEvent, QSize, Qt
+from helpers import pump_until
+from PyQt6.QtCore import QAbstractAnimation, QEvent, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
@@ -457,15 +458,22 @@ def test_modern_button_animates_hover_and_press(qapp) -> None:
     qapp.setProperty("fastgraphVisualMode", "dark")
     button = ModernButton("Action")
     button.resize(button.sizeHint())
+
+    def finish(animation) -> None:
+        # Wait for the animation to end, not for a fixed time: a loaded
+        # machine can deliver the animation's frames late.
+        assert pump_until(qapp, lambda: animation.state() == QAbstractAnimation.State.Stopped)
+
     button._animate_hover(1.0)
-    QTest.qWait(DARK_TOKENS.motion.hover_in_ms + 30)
+    assert button._hover_animation.duration() == DARK_TOKENS.motion.hover_in_ms
+    finish(button._hover_animation)
     assert button.hoverProgress() > 0.95
 
     button._animate_press(1.0)
-    QTest.qWait(DARK_TOKENS.motion.press_ms + 20)
+    finish(button._press_animation)
     assert button.pressProgress() > 0.95
     button._animate_press(0.0)
-    QTest.qWait(DARK_TOKENS.motion.press_ms + 20)
+    finish(button._press_animation)
     assert button.pressProgress() < 0.05
 
 

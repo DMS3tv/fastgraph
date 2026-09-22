@@ -42,11 +42,20 @@ _LEAK_WARN_THRESHOLD = 50
 
 
 def flush_deferred_deletes() -> None:
-    """Deliver pending ``deleteLater()`` requests and collect Python wrappers."""
+    """Deliver pending posted events and ``deleteLater()`` requests, then collect.
+
+    Two rounds are needed. Collecting a dead wrapper makes PyQt
+    ``deleteLater()`` its slot proxies, and a proxy holds its lambda (which
+    may capture a window) until that DeferredDelete is delivered; only the
+    next collection can then free the window.
+    """
     gc.collect()
-    if QCoreApplication.instance() is not None:
+    if QCoreApplication.instance() is None:
+        return
+    for _ in range(2):
+        QCoreApplication.sendPostedEvents()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    gc.collect()
+        gc.collect()
 
 
 def _live_widget_count() -> int:

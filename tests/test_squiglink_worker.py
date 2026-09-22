@@ -1,7 +1,7 @@
 """The Squiglink upload must not block the GUI thread, and must ask before
 trusting a new SSH host key."""
 
-import time
+import threading
 
 from helpers import pump_until
 from PyQt6.QtCore import QThread, QTimer
@@ -71,11 +71,16 @@ def _make_worker(tmp_path, *, upload, sync=None, host_keys=None, **kwargs):
 
 
 def test_slow_upload_leaves_the_gui_thread_responsive(qapp, tmp_path) -> None:
-    """A 0.2 s network stall must not stop the GUI timer from firing."""
+    """The GUI timer keeps firing while the upload is still blocked.
+
+    The fake upload does not return until the GUI thread has ticked five
+    times, so a blocked GUI thread fails the upload instead of racing a clock.
+    """
+    gui_ticked = threading.Event()
 
     def _slow_upload(**kwargs):
         assert kwargs["confirm_host_key"] is not None
-        time.sleep(0.2)
+        assert gui_ticked.wait(3.0), "GUI thread was blocked during the upload"
 
     worker = _make_worker(
         tmp_path,
@@ -83,13 +88,13 @@ def test_slow_upload_leaves_the_gui_thread_responsive(qapp, tmp_path) -> None:
         host_keys={"sftp.squig.link:2022": "sha256:known"},
     )
     harness = _Harness(qapp, worker)
+    harness.timer.timeout.connect(lambda: harness.ticks >= 5 and gui_ticked.set())
     harness.run()
 
     assert harness.error is None
     assert harness.result is not None
     assert harness.result["phone_book_status"] == "Phone book updated successfully."
-    # 200 ms of blocking network work against a 10 ms timer.
-    assert harness.ticks >= 5, f"GUI thread was blocked (only {harness.ticks} ticks)"
+    assert harness.ticks >= 5
     assert harness.progress[0].startswith("Connecting to sftp.squig.link")
 
 

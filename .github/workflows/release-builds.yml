@@ -32,8 +32,31 @@ env:
   PYTHON_VERSION: "3.14"
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: python -m pip install ruff==0.14.0
+
+      - name: Check formatting and lint rules
+        run: |
+          ruff format --check dms tests tools main.py
+          ruff check dms tests tools main.py
+
   test:
     name: Test ${{ matrix.name }}
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

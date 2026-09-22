@@ -628,6 +628,20 @@ release. Verify a download against it before installing:
 sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
+## Code Style
+
+The repository is formatted and linted with ruff (pinned in
+`requirements-dev.txt`); CI refuses a build that fails either check. Before
+committing:
+
+```bash
+ruff format dms tests tools main.py && ruff check dms tests tools main.py && python -m pytest -q -n auto
+```
+
+The one-off formatting commit is listed in `.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+skips it.
+
 ## Project Records
 
 Historical engineering records that are useful when maintaining the app are

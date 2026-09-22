@@ -5,8 +5,6 @@ import pytest
 
 from dms.curator.models import CurveData, LayerState
 from dms.curator.transforms import (
-    Z_P75,
-    Z_P90,
     apply_layer_transform,
     can_combine_layers,
     combine_variation_layers,
@@ -255,7 +253,7 @@ def _normal_band_layer(
     """A variation layer whose percentiles come from an exact normal band."""
     if freqs is None:
         freqs = np.array([20.0, 1000.0, 20000.0])
-    sigma = half_width_db / Z_P90
+    sigma = half_width_db / _Z_P90
     ones = np.ones(len(freqs))
     metadata: dict[str, object] = {}
     if sweeps is not None:
@@ -264,11 +262,11 @@ def _normal_band_layer(
         curve=CurveData(
             kind="variation",
             freqs=freqs,
-            p10_db=ones * (median_db - Z_P90 * sigma),
-            p25_db=ones * (median_db - Z_P75 * sigma),
+            p10_db=ones * (median_db - _Z_P90 * sigma),
+            p25_db=ones * (median_db - _Z_P75 * sigma),
             median_db=ones * median_db,
-            p75_db=ones * (median_db + Z_P75 * sigma),
-            p90_db=ones * (median_db + Z_P90 * sigma),
+            p75_db=ones * (median_db + _Z_P75 * sigma),
+            p90_db=ones * (median_db + _Z_P90 * sigma),
             metadata=metadata,
         ),
         source_path=Path(f"{name}.txt"),
@@ -405,3 +403,15 @@ def test_normalization_offset_still_anchors_a_curve_that_covers_1khz() -> None:
 
     assert offset == -5.0
     assert warning is None
+
+
+def test_combine_sigma_matches_the_former_band_sigma_up_to_z_precision() -> None:
+    """``_band_sigma`` used 4-digit Z constants; the exact ones move it < 4e-5."""
+    rng = np.random.default_rng(2)
+    median = rng.normal(0.0, 3.0, 500)
+    spread = rng.uniform(0.2, 6.0, 500)
+    p10, p25, p75, p90 = (median + k * spread for k in (-1.3, -0.7, 0.66, 1.25))
+    former = np.maximum(
+        (np.abs(p90 - p10) / (2.0 * 1.2816) + np.abs(p75 - p25) / (2.0 * 0.6745)) / 2.0, 1e-9
+    )
+    np.testing.assert_allclose(sigma_from_percentiles(p10, p25, p75, p90), former, rtol=4e-5)

@@ -6,11 +6,9 @@ import numpy as np
 from scipy.special import erf
 
 from dms.curator.models import CurveData, LayerState
+from dms.hrtf import sigma_from_percentiles
 from dms.processing import F_REF, log_grid, smooth_fractional_octave, value_at
 
-# Standard normal quantiles used to turn a percentile band into a sigma.
-Z_P90 = 1.2816
-Z_P75 = 0.6745
 _MIXTURE_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 _MIXTURE_GRID_POINTS = 2048
 _MIXTURE_SIGMA_FLOOR = 1e-9
@@ -117,18 +115,6 @@ def layer_sweep_count(layer: LayerState) -> int | None:
     return None
 
 
-def _band_sigma(
-    p10: np.ndarray,
-    p25: np.ndarray,
-    p75: np.ndarray,
-    p90: np.ndarray,
-) -> np.ndarray:
-    """Sigma of the normal that best matches both reported inter-percentile widths."""
-    outer = np.abs(p90 - p10) / (2.0 * Z_P90)
-    inner = np.abs(p75 - p25) / (2.0 * Z_P75)
-    return np.maximum((outer + inner) / 2.0, _MIXTURE_SIGMA_FLOOR)
-
-
 def _normal_cdf(x: np.ndarray) -> np.ndarray:
     return 0.5 * (1.0 + erf(x / np.sqrt(2.0)))
 
@@ -200,7 +186,9 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
             )
         )
         means.append(median)
-        sigmas.append(_band_sigma(p10, p25, p75, p90))
+        sigmas.append(
+            np.maximum(np.abs(sigma_from_percentiles(p10, p25, p75, p90)), _MIXTURE_SIGMA_FLOOR)
+        )
         coverage.append(
             ((freqs >= float(np.min(source))) & (freqs <= float(np.max(source)))).astype(float)
         )

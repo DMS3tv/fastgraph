@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 
 from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QFont, QFontDatabase
@@ -18,7 +19,6 @@ HEADING_FALLBACKS = (
     "Inter",
 )
 
-_heading_family_cache: str | None = None
 _typography_filter: _DitherTypographyFilter | None = None
 
 
@@ -33,16 +33,20 @@ class DitherFontStatus:
 
 
 def _resolve_heading_family() -> str:
-    global _heading_family_cache
-    if _heading_family_cache is None:
-        if QApplication.instance() is None:
-            return HEADING_FAMILY
-        families = set(QFontDatabase.families())
-        _heading_family_cache = next(
-            (family for family in HEADING_FALLBACKS if family in families),
-            HEADING_FALLBACKS[-1],
-        )
-    return _heading_family_cache
+    # Without an application there is no font database to ask, and nothing
+    # is cached so the first call after startup still resolves.
+    if QApplication.instance() is None:
+        return HEADING_FAMILY
+    return _installed_heading_family()
+
+
+@cache
+def _installed_heading_family() -> str:
+    families = set(QFontDatabase.families())
+    return next(
+        (family for family in HEADING_FALLBACKS if family in families),
+        HEADING_FALLBACKS[-1],
+    )
 
 
 def dither_font_status() -> DitherFontStatus:
@@ -53,9 +57,7 @@ def dither_font_status() -> DitherFontStatus:
 
 def reset_font_cache() -> None:
     """Reset the cached family choice after a font list change."""
-
-    global _heading_family_cache
-    _heading_family_cache = None
+    _installed_heading_family.cache_clear()
 
 
 def dither_heading_font(base: QFont | None = None) -> QFont:

@@ -367,14 +367,7 @@ def group_variation(
     if len(measurements) < 2:
         return None
     curves = [(item.freqs, item.mag_db) for item in measurements]
-    base_freqs, _avg = compute_rms_average(
-        curves,
-        n_points=1200,
-        f_ref=1000.0,
-        f_min=20.0,
-        f_max=20000.0,
-        normalize_ref=True,
-    )
+    base_freqs, _avg = compute_rms_average(curves, normalize_ref=True)
     rows = []
     for measurement in measurements:
         values = np.interp(base_freqs, measurement.freqs, measurement.mag_db)

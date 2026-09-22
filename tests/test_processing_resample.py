@@ -89,3 +89,34 @@ def test_band_average_is_power_mean_not_db_mean() -> None:
     assert out[1] == pytest.approx(power_mean, abs=1e-9)
     # The arithmetic mean of the dB values would have said 10 dB.
     assert abs(out[1] - 10.0) > 5.0
+
+
+def _inline_log_grid(n_points: int, f_min: float, f_max: float, f_ref: float) -> np.ndarray:
+    """The grid that compute_rms_average, comparison and transforms each built."""
+    grid = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+    grid[int(np.argmin(np.abs(grid - f_ref)))] = f_ref
+    return grid
+
+
+@pytest.mark.parametrize(
+    "args",
+    [(1200, 20.0, 20000.0, 1000.0), (600, 20.0, 20000.0, 1000.0), (1024, 31.7, 17999.0, 1000.0)],
+)
+def test_log_grid_matches_the_former_inline_grids(args) -> None:
+    from dms.processing import log_grid
+
+    assert np.array_equal(log_grid(*args), _inline_log_grid(*args))
+
+
+def test_shared_grids_are_the_default_log_grid() -> None:
+    from dms.comparison import COMMON_GRID
+    from dms.processing import compute_rms_average, log_grid
+
+    rng = np.random.default_rng(3)
+    freqs = np.geomspace(10.0, 24000.0, 777)
+    curves = [(freqs, rng.normal(0.0, 3.0, freqs.size)) for _ in range(3)]
+    avg_freqs, _ = compute_rms_average(curves)
+    expected = _inline_log_grid(1200, 20.0, 20000.0, 1000.0)
+    assert np.array_equal(log_grid(), expected)
+    assert np.array_equal(COMMON_GRID, expected)
+    assert np.array_equal(avg_freqs, expected)

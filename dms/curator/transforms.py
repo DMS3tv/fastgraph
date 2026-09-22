@@ -6,12 +6,8 @@ import numpy as np
 from scipy.special import erf
 
 from dms.curator.models import CurveData, LayerState
-from dms.processing import smooth_fractional_octave
+from dms.processing import F_REF, log_grid, smooth_fractional_octave
 
-NORMALIZATION_FREQ_HZ = 1000.0
-COMBINE_GRID_POINTS = 1200
-COMBINE_F_MIN = 20.0
-COMBINE_F_MAX = 20000.0
 # Standard normal quantiles used to turn a percentile band into a sigma.
 Z_P90 = 1.2816
 Z_P75 = 0.6745
@@ -41,12 +37,12 @@ def normalization_offset_at_1khz_with_warning(
         return 0.0, None
     low = float(np.min(freqs))
     high = float(np.max(freqs))
-    if not (low <= NORMALIZATION_FREQ_HZ <= high):
+    if not (low <= F_REF <= high):
         return 0.0, (
             "1 kHz is outside this curve's frequency range "
             f"({low:g}-{high:g} Hz); it was left un-normalized."
         )
-    return -float(np.interp(NORMALIZATION_FREQ_HZ, freqs, values)), None
+    return -float(np.interp(F_REF, freqs, values)), None
 
 
 def apply_layer_transform(layer: LayerState) -> CurveData:
@@ -106,18 +102,6 @@ def visible_display_layers(
 
 def can_combine_layers(layers: list[LayerState]) -> bool:
     return len(layers) >= 2 and all(_is_complete_variation(layer.curve) for layer in layers)
-
-
-def combine_grid(
-    n_points: int = COMBINE_GRID_POINTS,
-    f_min: float = COMBINE_F_MIN,
-    f_max: float = COMBINE_F_MAX,
-    f_ref: float = NORMALIZATION_FREQ_HZ,
-) -> np.ndarray:
-    """Log grid with an exact 1 kHz point, matching ``compute_rms_average``."""
-    freqs = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
-    freqs[int(np.argmin(np.abs(freqs - f_ref)))] = f_ref
-    return freqs
 
 
 def layer_sweep_count(layer: LayerState) -> int | None:
@@ -191,7 +175,7 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
     if not can_combine_layers(layers):
         raise ValueError("Select at least two complete variation layers to combine.")
 
-    freqs = combine_grid()
+    freqs = log_grid()
     means: list[np.ndarray] = []
     sigmas: list[np.ndarray] = []
     coverage: list[np.ndarray] = []

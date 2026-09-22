@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from scipy.interpolate import interp1d
 
-from dms.processing import compute_rms_average
+from dms.processing import F_REF, GRID_POINTS, compute_rms_average
 
 Curve = tuple[np.ndarray, np.ndarray]
 Variation = tuple[
@@ -37,7 +37,7 @@ def shared_normalize_pair_at_1khz(
     second_freqs: np.ndarray,
     second_mag_db: np.ndarray,
     *,
-    f_ref: float = 1000.0,
+    f_ref: float = F_REF,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Apply one power-mean reference offset to both channel magnitudes."""
 
@@ -65,7 +65,7 @@ def channel_curves(
 def combined_pair_curves(
     pairs: list[TwoChannelCurvePair],
     *,
-    n_points: int = 1200,
+    n_points: int = GRID_POINTS,
 ) -> list[Curve]:
     return [
         compute_rms_average(

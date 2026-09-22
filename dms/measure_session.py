@@ -38,6 +38,7 @@ from typing import Any
 
 import numpy as np
 
+from dms.processing import GRID_POINTS
 from dms.session import SessionData
 from dms.two_channel import (
     TwoChannelCurvePair,
@@ -52,10 +53,6 @@ MEASURE_SESSION_EXTENSION = ".fastgraph-measure.json"
 #: Decimals kept when an array is serialized. Six is well below the noise
 #: floor of any real measurement and keeps the JSON small.
 ARRAY_DECIMALS = 6
-
-#: Point count used when paired captures are collapsed into one curve, the
-#: same grid the Measure plots use.
-DEFAULT_COMBINE_POINTS = 1200
 
 LEVEL_MODES = ("ref_1khz", "dbspl")
 BOTTOM_MODES = ("combined", "separate")
@@ -433,7 +430,7 @@ class MeasureSession:
         self,
         *,
         selection: str = "combined",
-        n_points: int = DEFAULT_COMBINE_POINTS,
+        n_points: int = GRID_POINTS,
     ) -> list[Curve]:
         """The curves of the active workspace, mirroring the Measure plots.
 

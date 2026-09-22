@@ -9,6 +9,13 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.interpolate import interp1d
 
+#: The shared analysis grid: 1200 log-spaced points over 20 Hz - 20 kHz with an
+#: exact 1 kHz reference point (see :func:`log_grid`).
+GRID_POINTS = 1200
+F_LOW = 20.0
+F_HIGH = 20000.0
+F_REF = 1000.0
+
 # ---------------------------------------------------------------------------
 # Log swept-sine generation
 # ---------------------------------------------------------------------------
@@ -527,7 +534,7 @@ def absolute_spl_offset_db(
 def normalize_at_1khz(
     freqs: np.ndarray,
     mag_db: np.ndarray,
-    f_ref: float = 1000.0,
+    f_ref: float = F_REF,
 ) -> np.ndarray:
     """
     Normalize so that 1 kHz = 0 dB.
@@ -545,9 +552,14 @@ def normalize_at_1khz(
 # ---------------------------------------------------------------------------
 
 
-def _log_target_grid(f_min: float, f_max: float, n_points: int, f_ref: float) -> np.ndarray:
+def log_grid(
+    n_points: int = GRID_POINTS,
+    f_low: float = F_LOW,
+    f_high: float = F_HIGH,
+    f_ref: float = F_REF,
+) -> np.ndarray:
     """Log-spaced grid with the point nearest ``f_ref`` snapped onto it."""
-    target = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+    target = np.logspace(np.log10(f_low), np.log10(f_high), n_points)
     # Replace nearest point to f_ref with exactly f_ref
     idx_ref = int(np.argmin(np.abs(target - f_ref)))
     target[idx_ref] = f_ref
@@ -560,7 +572,7 @@ def resample_log_band_average(
     mag_db: np.ndarray,
     *,
     n_points: int = 600,
-    f_ref: float = 1000.0,
+    f_ref: float = F_REF,
     f_min: float | None = None,
     f_max: float | None = None,
     normalize_ref: bool = True,
@@ -593,7 +605,7 @@ def resample_log_band_average(
 
     lo = float(freqs[0]) if f_min is None else float(f_min)
     hi = float(freqs[-1]) if f_max is None else float(f_max)
-    target = _log_target_grid(lo, hi, n_points, f_ref)
+    target = log_grid(n_points, lo, hi, f_ref)
 
     def _interpolated() -> np.ndarray:
         if freqs.size == 1:
@@ -637,7 +649,7 @@ def downsample_to_log_points(
     freqs: np.ndarray,
     mag_db: np.ndarray,
     n_points: int = 600,
-    f_ref: float = 1000.0,
+    f_ref: float = F_REF,
     normalize_ref: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -665,10 +677,10 @@ def downsample_to_log_points(
 
 def compute_rms_average(
     curves: list[tuple[np.ndarray, np.ndarray]],
-    n_points: int = 1200,
-    f_ref: float = 1000.0,
-    f_min: float = 20.0,
-    f_max: float = 20000.0,
+    n_points: int = GRID_POINTS,
+    f_ref: float = F_REF,
+    f_min: float = F_LOW,
+    f_max: float = F_HIGH,
     normalize_ref: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -678,9 +690,8 @@ def compute_rms_average(
     if not curves:
         return np.array([]), np.array([])
 
-    common_freqs = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+    common_freqs = log_grid(n_points, f_min, f_max, f_ref)
     idx_ref = int(np.argmin(np.abs(common_freqs - f_ref)))
-    common_freqs[idx_ref] = f_ref
 
     sum_lin = np.zeros(n_points)
     count = 0

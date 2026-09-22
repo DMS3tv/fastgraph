@@ -36,16 +36,17 @@ from typing import Any
 
 import numpy as np
 
-from dms.processing import compute_rms_average, smooth_fractional_octave
+from dms.processing import (
+    F_REF,
+    GRID_POINTS,
+    compute_rms_average,
+    log_grid,
+    smooth_fractional_octave,
+)
 
 # ---------------------------------------------------------------------------
 # The common grid
 # ---------------------------------------------------------------------------
-
-GRID_POINTS = 1200
-GRID_F_MIN = 20.0
-GRID_F_MAX = 20000.0
-F_REF = 1000.0
 
 #: Sample rate the suggested peaking filters are defined at. Equalizer APO,
 #: every AutoEQ preset and the usual convolution hosts all assume 48 kHz, and
@@ -54,26 +55,9 @@ F_REF = 1000.0
 EQ_SAMPLE_RATE = 48000.0
 
 
-def _build_common_grid(
-    n_points: int = GRID_POINTS,
-    f_min: float = GRID_F_MIN,
-    f_max: float = GRID_F_MAX,
-    f_ref: float = F_REF,
-) -> np.ndarray:
-    """Log grid with the point nearest ``f_ref`` snapped exactly onto it.
-
-    Deliberately the same construction as ``compute_rms_average`` so an
-    averaged measurement and a resampled target land on identical abscissae.
-    """
-    grid = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
-    idx_ref = int(np.argmin(np.abs(grid - f_ref)))
-    grid[idx_ref] = f_ref
-    return grid
-
-
 #: The shared abscissa for every curve this module returns. Read-only: it is
 #: a module-level singleton that several callers hold references to.
-COMMON_GRID = _build_common_grid()
+COMMON_GRID = log_grid()
 COMMON_GRID.flags.writeable = False
 
 _LOG_COMMON_GRID = np.log10(np.asarray(COMMON_GRID, dtype=float))

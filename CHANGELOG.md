@@ -83,6 +83,10 @@
   (`* Offset: <x> dB`) in the file header.
 - Variation exports record the level mode (1 kHz reference or calibrated dB
   SPL) in the header, the same way average exports do.
+- Removed dead and legacy code paths: unused helpers and widgets (the old
+  session dialog, theme toggle and chirp marker among them), the unwindowed
+  frequency-response and point-sampled resampling paths, the `AppState`
+  mirror of the measure queue's states, and several one-line wrappers.
 
 ### Added
 

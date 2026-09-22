@@ -13,7 +13,7 @@ from dms.measure_session import MeasureSession
 from dms.recovery import RecoveryCandidate
 from dms.session import SessionData
 from dms.two_channel import TwoChannelCurvePair
-from dms.ui.main_window import MeasureRecoveryDialog
+from dms.ui.measure_dialogs import MeasureRecoveryDialog
 
 
 def _curve(offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:

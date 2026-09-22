@@ -24,7 +24,8 @@ from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
 from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95
-from dms.ui.main_window import MainWindow, RnDReviewDialog
+from dms.ui.main_window import MainWindow
+from dms.ui.measure_dialogs import RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 
 

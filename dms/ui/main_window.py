@@ -6,6 +6,7 @@ measurement queue live in ``MeasureController`` (``window.measure``).
 """
 
 import contextlib
+import logging
 import os
 
 from PyQt6.QtCore import (
@@ -42,7 +43,12 @@ from PyQt6.QtWidgets import (
 
 from dms.calibration import CalibrationStore
 from dms.channel_balance import frequency_limit
-from dms.console import ConsoleEventStore, runtime_diagnostics
+from dms.console import (
+    ConsoleEvent,
+    ConsoleEventStore,
+    install_console_handler,
+    runtime_diagnostics,
+)
 from dms.measure_persistence import (
     MEASURE_SESSION_EXTENSION,
 )
@@ -77,6 +83,8 @@ from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 from dms.ui.update_check import UpdateCheck
 from dms.version import __version__
+
+logger = logging.getLogger(__name__)
 
 
 class _EventStatusBar(QStatusBar):
@@ -122,6 +130,8 @@ class MainWindow(QMainWindow):
             parent=self,
             log_path=config_dir() / "logs" / "fastgraph-console.log",
         )
+        install_console_handler(self._console_events)
+        self._console_events.event_added.connect(self._on_console_event)
         self._report_settings_load_problems()
         self.squiglink = SquiglinkController(self)
         self.commands = CommandController(self)
@@ -148,15 +158,20 @@ class MainWindow(QMainWindow):
         self.devices.start_level_monitor()
         self._apply_state_ui()
         self.update_check.start()
-        self._log_event(
-            "INFO",
-            "application",
+        logger.info(
             "Fastgraph ready",
-            version=__version__,
-            session_id=self._console_events.session_id,
-            log_path=str(self._console_events.log_path),
+            extra={
+                "source": "application",
+                "details": {
+                    "version": __version__,
+                    "session_id": self._console_events.session_id,
+                    "log_path": str(self._console_events.log_path),
+                },
+            },
         )
-        self._log_event("DEBUG", "diagnostics", "Runtime environment", **runtime_diagnostics())
+        logger.debug(
+            "Runtime environment", extra={"source": "diagnostics", "details": runtime_diagnostics()}
+        )
         QTimer.singleShot(0, self.rnd.initialize_recovery)
         QTimer.singleShot(0, self.measure_io.initialize_recovery)
 
@@ -190,7 +205,6 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._rnd_widget, "R&&D")
 
         self._curator_widget = CuratorWidget(
-            self._console_events,
             theme=self._theme_controller.theme,
             brand_mode=self._theme_controller.brand_mode,
             parent=self,
@@ -419,7 +433,7 @@ class MainWindow(QMainWindow):
         if key == "theme":
             # SettingsWidget._save already persisted this value; avoid a redundant write.
             self._theme_controller.set_theme(str(_value), persist=False)
-        self._log_event("INFO", "settings", "Setting saved", name=key)
+        logger.info("Setting saved", extra={"source": "settings", "details": {"name": key}})
         self._statusbar.showMessage("Setting saved.")
 
     def _configure_keyboard_shortcuts(self) -> None:
@@ -560,7 +574,9 @@ class MainWindow(QMainWindow):
             measure_tab.level_meter.update()
             measure_tab.level_meter_2.update()
         if log and hasattr(self, "_console_events"):
-            self._log_event("INFO", "theme", "Application theme changed", theme=theme)
+            logger.info(
+                "Application theme changed", extra={"source": "theme", "details": {"theme": theme}}
+            )
 
     def _on_brand_mode_changed(self, enabled: bool) -> None:
         settings_widget = getattr(self, "_settings_widget", None)
@@ -570,13 +586,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, "measure_tab"):
             self.measure_io.sync_export_button()
         if hasattr(self, "_console_events"):
-            self._log_event("INFO", "theme", "brand mode changed", brand_mode=enabled)
+            logger.info(
+                "brand mode changed",
+                extra={"source": "theme", "details": {"brand_mode": enabled}},
+            )
 
-    def _log_event(self, severity: str, source: str, message: str, **details) -> None:
-        self._console_events.publish(severity, source, message, details)
+    def _on_console_event(self, event: ConsoleEvent) -> None:
         if (
-            severity.upper() == "ERROR"
-            and source != "automation"
+            event.severity == "ERROR"
+            and event.source != "automation"
             and hasattr(self, "_automation_widget")
             and not self.commands.running
         ):
@@ -595,8 +613,9 @@ class MainWindow(QMainWindow):
         load_error = getattr(self._settings, "load_error", None)
         if load_error:
             problems.append(str(load_error))
-            self._log_event(
-                "ERROR", "settings", "Settings file was damaged", detail=str(load_error)
+            logger.error(
+                "Settings file was damaged",
+                extra={"source": "settings", "details": {"detail": str(load_error)}},
             )
 
         corrected = list(getattr(self._settings, "corrected_keys", []) or [])
@@ -605,18 +624,17 @@ class MainWindow(QMainWindow):
                 "These settings had unusable values and were reset to their "
                 f"defaults: {', '.join(corrected)}."
             )
-            self._log_event(
-                "WARNING",
-                "settings",
+            logger.warning(
                 "Settings values reset to defaults",
-                keys=corrected,
+                extra={"source": "settings", "details": {"keys": corrected}},
             )
 
         cal_error = getattr(self._cal_store, "load_error", None)
         if cal_error:
             problems.append(str(cal_error))
-            self._log_event(
-                "ERROR", "calibration", "Calibration file was damaged", detail=str(cal_error)
+            logger.error(
+                "Calibration file was damaged",
+                extra={"source": "calibration", "details": {"detail": str(cal_error)}},
             )
 
         if not problems:

@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
 
 import dms.curator.export_image as export_image_module
 import dms.ui.curator_widget as main_window_module
-from dms.console import ConsoleEventStore
 from dms.curator.export_image import (
     ACCENT_COLOR,
     DITHER_FOOTER_HEIGHT,
@@ -78,7 +77,7 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(
         encoding="utf-8",
     )
 
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([first, second])
 
     assert len(window.graph_state.layers) == 2
@@ -92,7 +91,7 @@ def test_main_window_imports_multiple_files_normalizes_and_locks_viewport(
 
 
 def test_curator_preview_curves_have_no_glow_items(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     fr = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -115,7 +114,7 @@ def test_curator_preview_curves_have_no_glow_items(make_curator, qapp) -> None:
 
 
 def test_fastgraph95_curves_use_the_fine_step_display_renderer(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore(), theme=FASTGRAPH_95)
+    window = make_curator(theme=FASTGRAPH_95)
     fr = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -139,7 +138,7 @@ def test_fastgraph95_curves_use_the_fine_step_display_renderer(make_curator, qap
 def test_hackerman95_new_layers_start_green_then_use_distinct_neon_colors(
     make_curator, qapp
 ) -> None:
-    window = make_curator(ConsoleEventStore(), theme=HACKERMAN_95)
+    window = make_curator(theme=HACKERMAN_95)
     curve = CurveData(
         kind="fr",
         freqs=np.array([100.0, 1000.0]),
@@ -180,7 +179,7 @@ def test_color_dialog_standard_swatches_follow_active_theme_and_background(
         freqs=np.array([100.0, 1000.0]),
         mag_db=np.array([1.0, 0.0]),
     )
-    window = make_curator(ConsoleEventStore(), theme=DITHER)
+    window = make_curator(theme=DITHER)
     layer = window.add_curve(curve, "Layer", animate=False)
     window._choose_layer_color(layer.id, QPushButton())
 
@@ -266,7 +265,7 @@ def test_dither_curator_variation_median_matches_solid_measure_median(make_curat
         p75_db=np.array([1.0, 2.0]),
         p90_db=np.array([2.0, 3.0]),
     )
-    curator = make_curator(ConsoleEventStore(), theme=DITHER)
+    curator = make_curator(theme=DITHER)
     curator.add_curve(variation, "Variation", animate=False)
     curator._redraw()
     curator_median = next(
@@ -296,7 +295,7 @@ def test_dither_curator_variation_median_matches_solid_measure_median(make_curat
 def test_layer_row_checkbox_toggles_visibility(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([source])
 
     item = window._layer_list.item(0)
@@ -309,7 +308,7 @@ def test_layer_row_checkbox_toggles_visibility(make_curator, qapp, tmp_path: Pat
 def test_data_rows_expose_inline_layer_controls(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([source])
 
     group_titles = {box.title() for box in window.findChildren(QGroupBox)}
@@ -351,7 +350,7 @@ def test_create_combined_variation_hides_sources_and_disables_hrtf(
         "100 5 6 7 8 9\n1000 15 16 17 18 19\n",
         encoding="utf-8",
     )
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([first, second])
 
     for index in range(window._layer_list.count()):
@@ -382,7 +381,7 @@ def test_combine_button_ignores_fr_layers(make_curator, qapp, tmp_path: Path) ->
         encoding="utf-8",
     )
     fr.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([variation, fr])
 
     for index in range(window._layer_list.count()):
@@ -405,7 +404,7 @@ def test_hrtf_dropdown_reads_hrtf_folder(make_curator, qapp, tmp_path: Path, mon
 
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([source])
 
     row = window._layer_list.itemWidget(window._layer_list.item(0))
@@ -428,7 +427,7 @@ def test_bounds_switch_uses_bounds_folder(make_curator, qapp, tmp_path: Path, mo
     monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", upper)
     monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", lower)
 
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     assert window.graph_state.bounds.upper_path == upper
     assert window.graph_state.bounds.enabled is False
@@ -437,7 +436,7 @@ def test_bounds_switch_uses_bounds_folder(make_curator, qapp, tmp_path: Path, mo
 
 
 def test_export_button_lives_inside_view_box(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     assert window._export_btn.parent() == window._view_box
     assert window._export_btn.objectName() == "exportButton"
@@ -445,7 +444,7 @@ def test_export_button_lives_inside_view_box(make_curator, qapp) -> None:
 
 
 def test_view_aspect_toggle_and_reset(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     assert window._bounds_enabled.minimumSizeHint().width() >= 54
     assert window._aspect_lock_enabled.minimumSizeHint().width() >= 54
@@ -475,7 +474,7 @@ def test_curator_uses_right_sidebar_and_drop_import(
     unsupported.write_text("100,1\n", encoding="utf-8")
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[-1]))
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     class _Mime:
         def urls(self):
@@ -559,7 +558,7 @@ def test_export_legend_expands_and_never_elides_layer_names(qapp) -> None:
 
 
 def test_viewport_text_inputs_update_export_text(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     assert window._graph_stage.fixture_input.text() == ""
     assert window._graph_stage.hrtf_note_input.text() == "Test Fixture"
@@ -590,7 +589,7 @@ def test_wipe_runs_for_bounds_and_measurement_changes(
     monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", upper)
     monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", lower)
 
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     wipes: list[dict] = []
     assert not hasattr(window._graph_stage, "_wipe_overlay")
     window._graph.start_data_wipe = lambda **kwargs: wipes.append(kwargs)
@@ -619,7 +618,7 @@ def test_wipe_runs_for_bounds_and_measurement_changes(
 def test_export_graph_image_writes_16_by_9_png(make_curator, qapp, tmp_path: Path) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.import_files([source])
     output = tmp_path / "poster.png"
 
@@ -636,7 +635,7 @@ def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
 ) -> None:
     source = tmp_path / "curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore(), theme=FASTGRAPH_95_DARK)
+    window = make_curator(theme=FASTGRAPH_95_DARK)
     window.import_files([source])
     output = tmp_path / "poster-dark.png"
 
@@ -667,7 +666,7 @@ def test_dither_export_uses_tokens_and_excludes_gold_accent(
 ) -> None:
     source = tmp_path / "dither-curve.txt"
     source.write_text("100 1\n1000 2\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore(), theme=DITHER)
+    window = make_curator(theme=DITHER)
     window.import_files([source])
     window.graph_state.export_text.title = "Dither Export"
     window.graph_state.export_text.fixture = "Fixture"
@@ -1000,12 +999,12 @@ def test_brand_show_names_works_outside_clean_slate(qapp, tmp_path: Path) -> Non
     assert render(True, True) != render(False, True)
 
 
-def _curator_events(window) -> list:
-    return [event for event in window._events.events() if event.source == "curator"]
+def _curator_events(store) -> list:
+    return [event for event in store.events() if event.source == "curator"]
 
 
 def test_remove_acts_on_every_selected_layer(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     first = window.add_curve(curve, "First", animate=False)
     second = window.add_curve(curve, "Second", animate=False)
@@ -1021,7 +1020,7 @@ def test_remove_acts_on_every_selected_layer(make_curator, qapp) -> None:
 
 
 def test_remove_falls_back_to_the_focused_row_when_nothing_is_selected(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     window.add_curve(curve, "First", animate=False)
     second = window.add_curve(curve, "Second", animate=False)
@@ -1036,7 +1035,7 @@ def test_remove_falls_back_to_the_focused_row_when_nothing_is_selected(make_cura
 
 
 def test_move_up_and_down_reorder_layers(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     window.add_curve(curve, "First", animate=False)
     window.add_curve(curve, "Second", animate=False)
@@ -1081,7 +1080,7 @@ def _variation_curve(offset: float = 0.0) -> CurveData:
 
 
 def test_combined_layer_is_marked_stale_when_a_source_changes(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     first = window.add_curve(_variation_curve(), "First", animate=False, normalize=False)
     second = window.add_curve(_variation_curve(2.0), "Second", animate=False, normalize=False)
 
@@ -1097,7 +1096,7 @@ def test_combined_layer_is_marked_stale_when_a_source_changes(make_curator, qapp
 
 
 def test_combined_layer_is_marked_stale_when_a_source_is_removed(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     first = window.add_curve(_variation_curve(), "First", animate=False, normalize=False)
     second = window.add_curve(_variation_curve(2.0), "Second", animate=False, normalize=False)
     combined = window._combine_layers([first, second])
@@ -1112,9 +1111,9 @@ def test_combined_layer_is_marked_stale_when_a_source_is_removed(make_curator, q
 
 
 def test_bounds_toggle_refuses_to_latch_without_bounds_files(
-    make_curator, qapp, monkeypatch
+    make_curator, qapp, monkeypatch, console_events
 ) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     window.graph_state.bounds = PreferenceBounds(enabled=False)
     monkeypatch.setattr(main_window_module, "UPPER_BOUNDS_PATH", Path("/nonexistent/upper.txt"))
     monkeypatch.setattr(main_window_module, "LOWER_BOUNDS_PATH", Path("/nonexistent/lower.txt"))
@@ -1132,12 +1131,12 @@ def test_bounds_toggle_refuses_to_latch_without_bounds_files(
     assert warned and "bounds" in warned[0][0].lower()
     assert any(
         event.severity == "WARNING" and "Preference bounds are unavailable" in event.message
-        for event in _curator_events(window)
+        for event in _curator_events(console_events)
     )
 
 
 def test_bounds_toggle_still_latches_when_the_files_exist(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
 
     window._bounds_enabled.setChecked(True)
 
@@ -1146,7 +1145,7 @@ def test_bounds_toggle_still_latches_when_the_files_exist(make_curator, qapp) ->
 
 
 def test_layer_row_swatch_uses_the_contrast_corrected_colour(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     layer = window.add_curve(curve, "Dark", animate=False)
     layer.color = "#101010"
@@ -1162,7 +1161,7 @@ def test_layer_row_swatch_uses_the_contrast_corrected_colour(make_curator, qapp)
 
 
 def test_graph_legend_uses_display_colours_and_a_theme_chip(make_curator, qapp) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     curve = CurveData(kind="fr", freqs=np.array([100.0, 1000.0]), mag_db=np.array([1.0, 0.0]))
     layer = window.add_curve(curve, "Dark Layer", animate=False)
     layer.color = "#101010"
@@ -1180,9 +1179,9 @@ def test_graph_legend_uses_display_colours_and_a_theme_chip(make_curator, qapp) 
 
 
 def test_import_status_is_error_toned_when_every_file_fails(
-    make_curator, qapp, tmp_path: Path, monkeypatch
+    make_curator, qapp, tmp_path: Path, monkeypatch, console_events
 ) -> None:
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     bad = tmp_path / "bad.txt"
     bad.write_text("not data at all\n", encoding="utf-8")
     monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
@@ -1192,7 +1191,9 @@ def test_import_status_is_error_toned_when_every_file_fails(
     assert loaded == 0
     assert failures
     statuses = [
-        event for event in _curator_events(window) if event.message.startswith("Import failed")
+        event
+        for event in _curator_events(console_events)
+        if event.message.startswith("Import failed")
     ]
     assert statuses and statuses[-1].severity == "ERROR"
 
@@ -1202,7 +1203,7 @@ def test_import_surfaces_parser_and_normalization_warnings(
 ) -> None:
     partial = tmp_path / "partial.txt"
     partial.write_text("20 1\n100 2\n100 4\n500 3\n", encoding="utf-8")
-    window = make_curator(ConsoleEventStore())
+    window = make_curator()
     shown: list[str] = []
     monkeypatch.setattr(
         QMessageBox,

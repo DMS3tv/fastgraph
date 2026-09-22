@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import time
 
 import pytest
@@ -147,13 +148,13 @@ def test_merge_matches_brand_and_model_case_and_whitespace_insensitive() -> None
     assert phone["file"] == ["Apple AirPods Pro 2", "Apple AirPods Pro 2 sample 2"]
 
 
-def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> None:
+def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="dms.squiglink")
     local = tmp_path / "local.txt"
     local.write_text("x", encoding="utf-8")
     calls = {}
     transport = install_fake_transport(monkeypatch, calls)
 
-    diagnostics = []
     upload_export_sftp(
         local_path=local,
         host="h",
@@ -161,9 +162,9 @@ def test_upload_export_sftp_targets_data_directory(monkeypatch, tmp_path) -> Non
         username="u",
         password="p",
         remote_filename="Apple AirPods Pro 2 L0.txt",
-        diagnostic=lambda stage, details: diagnostics.append((stage, details)),
         host_keys={"h:2022": FAKE_FINGERPRINT},
     )
+    diagnostics = [(record.details["stage"], record.details) for record in caplog.records]
     assert calls["local"] == str(local)
     assert calls["remote"] == "data/Apple AirPods Pro 2 L0.txt"
     assert [stage for stage, _details in diagnostics] == [
@@ -333,11 +334,11 @@ def test_declined_host_key_never_sends_credentials(monkeypatch, tmp_path) -> Non
     assert transport.auth_calls == []
 
 
-def test_changed_host_key_raises_before_authentication(monkeypatch, tmp_path) -> None:
+def test_changed_host_key_raises_before_authentication(monkeypatch, tmp_path, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="dms.squiglink")
     local = tmp_path / "local.txt"
     local.write_text("x", encoding="utf-8")
     transport = install_fake_transport(monkeypatch, {}, key_blob=b"a different server key")
-    stages: list[str] = []
 
     with pytest.raises(SquiglinkHostKeyMismatch) as excinfo:
         upload_export_sftp(
@@ -348,8 +349,8 @@ def test_changed_host_key_raises_before_authentication(monkeypatch, tmp_path) ->
             password="hunter2",
             host_keys={"sftp.squig.link:2022": FAKE_FINGERPRINT},
             confirm_host_key=lambda *_args: True,
-            diagnostic=lambda stage, _details: stages.append(stage),
         )
+    stages = [record.details["stage"] for record in caplog.records]
 
     assert transport.auth_calls == []
     assert transport.closed is True
@@ -360,7 +361,10 @@ def test_changed_host_key_raises_before_authentication(monkeypatch, tmp_path) ->
     assert "host_key_verified" not in stages
 
 
-def test_connection_failure_scrubs_the_password_from_diagnostics(monkeypatch, tmp_path) -> None:
+def test_connection_failure_scrubs_the_password_from_diagnostics(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="dms.squiglink")
     local = tmp_path / "local.txt"
     local.write_text("x", encoding="utf-8")
     install_fake_transport(monkeypatch, {})
@@ -368,7 +372,6 @@ def test_connection_failure_scrubs_the_password_from_diagnostics(monkeypatch, tm
         "dms.squiglink.paramiko.SFTPClient.from_transport",
         lambda _transport: (_ for _ in ()).throw(RuntimeError("server said: bad password hunter2")),
     )
-    details: list[dict] = []
 
     with pytest.raises(RuntimeError):
         upload_export_sftp(
@@ -378,10 +381,12 @@ def test_connection_failure_scrubs_the_password_from_diagnostics(monkeypatch, tm
             username="u",
             password="hunter2",
             host_keys={"h:2022": FAKE_FINGERPRINT},
-            diagnostic=lambda stage, payload: (
-                details.append(payload) if stage == "connection_failed" else None
-            ),
         )
+    details = [
+        record.details
+        for record in caplog.records
+        if record.details["stage"] == "connection_failed"
+    ]
 
     assert details
     assert "hunter2" not in details[0]["exception_message"]

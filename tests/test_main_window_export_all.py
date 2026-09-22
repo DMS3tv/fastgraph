@@ -26,7 +26,7 @@ def _population_hrtf(tmp_path: Path) -> HRTFCurve:
 
 def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     freqs = np.array([100.0, 1000.0])
-    events: list[tuple[str, tuple, dict]] = []
+    events: list = []
     triggers: list[str] = []
     statuses: list[str] = []
     window = make_main_window(session=SessionData(rig="GRAS", brand="DMS", model="Example"))
@@ -38,7 +38,9 @@ def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     window.measure.hrtf = hrtf
     window.measure_tab.export_dir_input.setText(str(tmp_path))
     window._statusbar.messageChanged.connect(statuses.append)
-    window._log_event = lambda *args, **kwargs: events.append(("log", args, kwargs))
+    window._console_events.event_added.connect(
+        lambda event: event.source == "export" and events.append(event)
+    )
     window.commands.trigger = triggers.append
     window.measure_io._confirm_export_all_overwrite = lambda conflicts: True
     return window, events, triggers, statuses

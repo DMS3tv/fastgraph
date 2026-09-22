@@ -13,6 +13,7 @@ generator. The window and the other controllers read that state through
 from __future__ import annotations
 
 import contextlib
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -58,6 +59,8 @@ from dms.two_channel import (
 )
 from dms.ui.measure_dialogs import PassFailDialog
 from dms.ui.sweep_runner import SweepRunner
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -294,7 +297,7 @@ class MeasureController(QObject):
         self._window._plots.two.set_balance_running(False)
 
     def _on_balance_error(self, message: str) -> None:
-        self._window._log_event("ERROR", "channel_balance", message)
+        logger.error(message, extra={"source": "channel_balance"})
         self._window._statusbar.showMessage(message)
         QMessageBox.warning(self._window, "Channel Balance Error", message)
 
@@ -604,18 +607,21 @@ class MeasureController(QObject):
             f"Sweeping {self.queue.index + 1}/{self.queue.target}{channel_text} "
             f"(attempt {self.queue.attempts})..."
         )
-        self._window._log_event(
-            "INFO",
-            "measurement",
+        logger.info(
             "Sweep started",
-            index=self.queue.index + 1,
-            total=self.queue.target,
-            attempt=self.queue.attempts,
-            sample_rate=int(self._window._settings.get("sample_rate")),
-            buffer_size=int(self._window._settings.get("buffer_size")),
-            output_level_db=float(self._window.measure_tab.queue_level_spin.value()),
-            input_channel=input_channel + 1,
-            output_channel=(output_channel + 1) if output_channel is not None else None,
+            extra={
+                "source": "measurement",
+                "details": {
+                    "index": self.queue.index + 1,
+                    "total": self.queue.target,
+                    "attempt": self.queue.attempts,
+                    "sample_rate": int(self._window._settings.get("sample_rate")),
+                    "buffer_size": int(self._window._settings.get("buffer_size")),
+                    "output_level_db": float(self._window.measure_tab.queue_level_spin.value()),
+                    "input_channel": input_channel + 1,
+                    "output_channel": (output_channel + 1) if output_channel is not None else None,
+                },
+            },
         )
 
     def _start_second_two_channel_sweep(self) -> None:
@@ -646,8 +652,8 @@ class MeasureController(QObject):
             )
             if hasattr(diagnostics, name)
         }
-        self._window._log_event(
-            "INFO", "diagnostics", "Measurement diagnostics received", **details
+        logger.info(
+            "Measurement diagnostics received", extra={"source": "diagnostics", "details": details}
         )
 
     def on_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
@@ -723,12 +729,12 @@ class MeasureController(QObject):
             )
 
             self.queue.pending_curve = (freqs_ds, mag_ds)
-            self._window._log_event(
-                "INFO",
-                "processing",
+            logger.info(
                 "Frequency response processed",
-                input_points=len(freqs),
-                output_points=len(freqs_ds),
+                extra={
+                    "source": "processing",
+                    "details": {"input_points": len(freqs), "output_points": len(freqs_ds)},
+                },
             )
             self.queue.state = QueueState.PASS_FAIL
             self.state_changed.emit()
@@ -776,7 +782,7 @@ class MeasureController(QObject):
             self.on_sweep_error(f"Processing error: {exc}")
 
     def on_sweep_error(self, message: str) -> None:
-        self._window._log_event("ERROR", "measurement", message)
+        logger.error(message, extra={"source": "measurement"})
         self.close_pass_fail_dialog()
         self.queue.pending_curve = None
         self.queue.pending_pair = None
@@ -917,12 +923,12 @@ class MeasureController(QObject):
             }
         )
         self.kept_distortion = self.queue.last_distortion
-        self._window._log_event(
-            "INFO",
-            "review",
+        logger.info(
             "Measurement kept",
-            index=self.queue.index + 1,
-            kept_count=len(self.kept_curves),
+            extra={
+                "source": "review",
+                "details": {"index": self.queue.index + 1, "kept_count": len(self.kept_curves)},
+            },
         )
         self._window.commands.trigger("measurement_kept")
         self.queue.pending_curve = None
@@ -957,8 +963,9 @@ class MeasureController(QObject):
             return
 
         self.close_pass_fail_dialog()
-        self._window._log_event(
-            "WARNING", "review", "Measurement rejected", index=self.queue.index + 1
+        logger.warning(
+            "Measurement rejected",
+            extra={"source": "review", "details": {"index": self.queue.index + 1}},
         )
         # A manual Fail repeats the same index with a fresh retry budget; the
         # attempts that produced the rejected sweep were not timing failures.
@@ -1381,10 +1388,8 @@ class MeasureController(QObject):
                     f_high=_MEASUREMENT_F_MAX,
                 )
             except Exception as exc:  # never fail a sweep over the overlay
-                self._window._log_event(
-                    "WARNING",
-                    "processing",
-                    f"Distortion analysis skipped: {exc}",
+                logger.warning(
+                    f"Distortion analysis skipped: {exc}", extra={"source": "processing"}
                 )
                 distortion = None
         self.queue.last_distortion = distortion

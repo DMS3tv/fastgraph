@@ -54,7 +54,7 @@ from dms.rnd.persistence import (
 )
 from dms.rnd.photos import attachment_directory
 
-_LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 CLEAN_EXIT_MARKER = "clean-exit.marker"
 
@@ -231,7 +231,7 @@ class RecoveryManager(QObject):
             self.root.mkdir(parents=True, exist_ok=True)
             self.clean_exit_path.write_text(datetime.now().isoformat(), encoding="utf-8")
         except OSError as exc:  # pragma: no cover - best effort only
-            _LOG.warning("Could not record a clean %s exit: %s", self._name, exc)
+            logger.warning("Could not record a clean %s exit: %s", self._name, exc)
 
     # -- candidates ------------------------------------------------------
 
@@ -342,7 +342,7 @@ class RecoveryManager(QObject):
     def _note_rotation_failure(self, exc: BaseException) -> None:
         """Log one failure per degraded stretch instead of on every debounce."""
         if not self.rotation_degraded:
-            _LOG.warning(
+            logger.warning(
                 "%s recovery could not keep a previous generation (%s -> %s): %s",
                 self._name,
                 self.current_path,
@@ -353,7 +353,7 @@ class RecoveryManager(QObject):
 
     def _note_rotation_success(self) -> None:
         if self.rotation_degraded:
-            _LOG.info("%s recovery generation rotation recovered.", self._name)
+            logger.info("%s recovery generation rotation recovered.", self._name)
         self.rotation_degraded = False
 
     def _on_worker_finished(self, future: Future) -> None:
@@ -401,7 +401,7 @@ class RecoveryManager(QObject):
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         destination_dir = self.quarantine_root / stamp
         destination_dir.mkdir(parents=True, exist_ok=True)
-        _LOG.warning(
+        logger.warning(
             "Quarantined an unreadable %s recovery file: %s -> %s (%s)",
             self._name,
             path,

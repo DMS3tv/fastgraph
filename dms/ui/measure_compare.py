@@ -8,6 +8,7 @@ review dialog, the status-bar "Match" text and the EQ suggestion.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,8 @@ from dms.comparison import (
 )
 from dms.theme import theme_trace_palette
 from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -122,11 +125,13 @@ class MeasureCompare(QObject):
         self._measure_target_path = Path(path_str)
         self._window._settings.set("measure_target_path", str(path_str))
         for warning in warnings[:4]:
-            self._window._log_event("WARNING", "measure", warning)
+            logger.warning(warning, extra={"source": "measure"})
         self.sync_layers()
         self._window.measure.refresh()
         self._window._statusbar.showMessage(f"Target loaded: {Path(path_str).name}")
-        self._window._log_event("INFO", "measure", "Target loaded", path=str(path_str))
+        logger.info(
+            "Target loaded", extra={"source": "measure", "details": {"path": str(path_str)}}
+        )
         return True
 
     def clear_target(self) -> None:
@@ -188,7 +193,9 @@ class MeasureCompare(QObject):
         self._measure_reference_layers.append(layer)
         self.sync_layers()
         self._window._statusbar.showMessage(f"Reference added: {layer.name}")
-        self._window._log_event("INFO", "measure", "Reference layer added", path=str(path))
+        logger.info(
+            "Reference layer added", extra={"source": "measure", "details": {"path": str(path)}}
+        )
         return True
 
     def clear_references(self) -> None:
@@ -268,7 +275,10 @@ class MeasureCompare(QObject):
                 offset_mode=self.delta_offset_mode(),
             )
         except Exception as exc:  # pragma: no cover - defensive
-            self._window._log_event("ERROR", "measure", "Delta computation failed", error=str(exc))
+            logger.error(
+                "Delta computation failed",
+                extra={"source": "measure", "details": {"error": str(exc)}},
+            )
             return None
 
     def pending_deviation_summary(self) -> str | None:

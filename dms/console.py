@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import platform
 import sys
 import traceback
@@ -167,3 +168,39 @@ class ConsoleEventStore(QObject):
     def export(self, path: Path, events: Iterable[ConsoleEvent] | None = None) -> None:
         text = self.formatted(events)
         path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+
+
+class ConsoleLogHandler(logging.Handler):
+    """Publish ``dms`` log records to a :class:`ConsoleEventStore`.
+
+    ``extra={"source": ..., "details": {...}}`` sets the event's source and
+    details; without them the source is the last logger-name component.
+    ``publish`` is lock-guarded and ``event_added`` is queued to the receiver's
+    thread, so records logged from worker threads are safe.
+    """
+
+    def __init__(self, store: ConsoleEventStore) -> None:
+        super().__init__(logging.DEBUG)
+        self._store = store
+
+    def emit(self, record: logging.LogRecord) -> None:
+        details = dict(getattr(record, "details", None) or {})
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            details.setdefault("error", f"{type(exc).__name__}: {exc}")
+        self._store.publish(
+            record.levelname,
+            getattr(record, "source", record.name.rsplit(".", 1)[-1]),
+            record.getMessage(),
+            details,
+        )
+
+
+def install_console_handler(store: ConsoleEventStore) -> ConsoleLogHandler:
+    """Route every ``dms.*`` logger into ``store`` until the store is destroyed."""
+    logger = logging.getLogger("dms")
+    logger.setLevel(logging.DEBUG)
+    handler = ConsoleLogHandler(store)
+    logger.addHandler(handler)
+    store.destroyed.connect(lambda: logger.removeHandler(handler))
+    return handler

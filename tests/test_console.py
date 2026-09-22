@@ -1,3 +1,5 @@
+import logging
+import threading
 from pathlib import Path
 
 from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
@@ -20,6 +22,32 @@ def test_console_event_store_is_bounded_and_redacts_secrets(tmp_path: Path) -> N
     assert "two" in text
     assert "three" in text
     assert "nope" not in text
+
+
+def test_log_records_become_console_events(console_events) -> None:
+    logger = logging.getLogger("dms.ui.measure_io")
+    logger.warning(
+        "Average export failed", extra={"source": "export", "details": {"password": "x", "n": 2}}
+    )
+    logger.debug("No extras")
+    worker = threading.Thread(target=lambda: logger.error("From a thread"))
+    worker.start()
+    worker.join()
+
+    first, second, third = console_events.events()
+    assert (first.severity, first.source, first.message, first.details) == (
+        "WARNING",
+        "export",
+        "Average export failed",
+        {"password": "<redacted>", "n": 2},
+    )
+    assert (second.severity, second.source, second.message, second.details) == (
+        "DEBUG",
+        "measure_io",
+        "No extras",
+        {},
+    )
+    assert (third.severity, third.message) == ("ERROR", "From a thread")
 
 
 def test_console_setting_validation(make_main_window) -> None:

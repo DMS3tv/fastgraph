@@ -2,6 +2,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import logging
 import re
 import socket
 from collections.abc import Callable
@@ -12,10 +13,11 @@ import paramiko
 
 from dms.session import SessionData
 
+logger = logging.getLogger(__name__)
+
 PHONE_BOOK_REMOTE_PATH = "data/phone_book.json"
 DATA_UPLOAD_DIR = "data"
 DEFAULT_CONNECT_TIMEOUT = 20.0
-SftpDiagnosticCallback = Callable[[str, dict[str, Any]], None]
 # (host, port, fingerprint, key_type) -> True to trust and pin this key.
 HostKeyConfirmCallback = Callable[[str, int, str, str], bool]
 
@@ -134,13 +136,12 @@ def build_phone_book_name_stem(session: SessionData, name_modifier: str) -> str:
     return f"{base} {modifier}".strip()
 
 
-def _emit_diagnostic(
-    callback: SftpDiagnosticCallback | None,
-    stage: str,
-    **details: Any,
-) -> None:
-    if callback is not None:
-        callback(stage, details)
+def _emit_diagnostic(stage: str, **details: Any) -> None:
+    logger.log(
+        logging.WARNING if stage.endswith("failed") else logging.DEBUG,
+        stage.replace("_", " ").capitalize(),
+        extra={"source": "squiglink", "details": {"stage": stage, **details}},
+    )
 
 
 def _transport_diagnostics(transport: paramiko.Transport) -> dict[str, Any]:
@@ -169,7 +170,6 @@ def _verify_host_key(
     port: int,
     host_keys: dict[str, str] | None,
     confirm_host_key: HostKeyConfirmCallback | None,
-    diagnostic: SftpDiagnosticCallback | None,
 ) -> str:
     """Run the trust-on-first-use check and return the server's fingerprint.
 
@@ -185,7 +185,6 @@ def _verify_host_key(
     if stored:
         if not _fingerprints_match(stored, fingerprint):
             _emit_diagnostic(
-                diagnostic,
                 "host_key_mismatch",
                 host=host,
                 port=int(port),
@@ -195,7 +194,6 @@ def _verify_host_key(
             )
             raise SquiglinkHostKeyMismatch(host, int(port), stored, fingerprint)
         _emit_diagnostic(
-            diagnostic,
             "host_key_verified",
             host=host,
             port=int(port),
@@ -210,7 +208,6 @@ def _verify_host_key(
         accepted = bool(confirm_host_key(host, int(port), fingerprint, key_type))
     if not accepted:
         _emit_diagnostic(
-            diagnostic,
             "host_key_rejected",
             host=host,
             port=int(port),
@@ -220,7 +217,6 @@ def _verify_host_key(
         raise SquiglinkHostKeyUnknown(host, int(port), fingerprint, key_type)
 
     _emit_diagnostic(
-        diagnostic,
         "host_key_verified",
         host=host,
         port=int(port),
@@ -236,7 +232,6 @@ def open_sftp_connection(
     port: int,
     username: str,
     password: str,
-    diagnostic: SftpDiagnosticCallback | None = None,
     host_keys: dict[str, str] | None = None,
     confirm_host_key: HostKeyConfirmCallback | None = None,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
@@ -251,7 +246,6 @@ def open_sftp_connection(
     was handed.
     """
     _emit_diagnostic(
-        diagnostic,
         "connection_start",
         host=host,
         port=int(port),
@@ -271,7 +265,7 @@ def open_sftp_connection(
             sock.close()
         raise
     try:
-        _emit_diagnostic(diagnostic, "transport_created")
+        _emit_diagnostic("transport_created")
         # start_client() completes the key exchange only. Authentication is a
         # separate call below so the host key can be checked in between.
         transport.start_client(timeout=float(connect_timeout))
@@ -281,24 +275,20 @@ def open_sftp_connection(
             int(port),
             host_keys,
             confirm_host_key,
-            diagnostic,
         )
         transport.auth_password(username, password)
         _emit_diagnostic(
-            diagnostic,
             "authentication_succeeded",
             **_transport_diagnostics(transport),
         )
         sftp = paramiko.SFTPClient.from_transport(transport)
         _emit_diagnostic(
-            diagnostic,
             "sftp_subsystem_opened",
             **_transport_diagnostics(transport),
         )
         return transport, sftp
     except Exception as exc:
         _emit_diagnostic(
-            diagnostic,
             "connection_failed",
             exception_type=f"{type(exc).__module__}.{type(exc).__name__}",
             exception_message=_scrub_secret(exc, password),
@@ -316,7 +306,6 @@ def upload_export_sftp(
     username: str,
     password: str,
     remote_filename: str | None = None,
-    diagnostic: SftpDiagnosticCallback | None = None,
     host_keys: dict[str, str] | None = None,
     confirm_host_key: HostKeyConfirmCallback | None = None,
     connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
@@ -330,7 +319,6 @@ def upload_export_sftp(
         port=port,
         username=username,
         password=password,
-        diagnostic=diagnostic,
         host_keys=host_keys,
         confirm_host_key=confirm_host_key,
         connect_timeout=connect_timeout,
@@ -339,14 +327,13 @@ def upload_export_sftp(
         try:
             filename = (remote_filename or local_path.name).strip().split("/")[-1]
             _emit_diagnostic(
-                diagnostic,
                 "measurement_upload_start",
                 remote_directory=DATA_UPLOAD_DIR,
                 filename=filename,
                 bytes=local_path.stat().st_size,
             )
             sftp.put(str(local_path), f"{DATA_UPLOAD_DIR}/{filename}")
-            _emit_diagnostic(diagnostic, "measurement_upload_complete", filename=filename)
+            _emit_diagnostic("measurement_upload_complete", filename=filename)
         finally:
             sftp.close()
     finally:

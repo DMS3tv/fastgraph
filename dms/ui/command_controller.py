@@ -9,6 +9,7 @@ automations one after another.
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
 from pathlib import Path
@@ -25,6 +26,8 @@ from dms.measure_persistence import MEASURE_SESSION_EXTENSION, save_measure_sess
 from dms.measure_queue import QueueState
 from dms.measurement_alignment import format_diagnostics_summary
 from dms.measurement_profiles import BLUETOOTH_PROFILE_DEFAULTS, PROFILE_SNAPSHOT_SETTING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -77,7 +80,7 @@ class CommandController(QObject):
         self.running = False
 
     def _command_reply(self, message: str, error: bool = False) -> None:
-        self._window._log_event("ERROR" if error else "INFO", "console", message)
+        logger.log(logging.ERROR if error else logging.INFO, message, extra={"source": "console"})
 
     def automation_default_dir(self) -> Path:
         configured = str(self._window._settings.get("automation_directory") or "").strip()
@@ -99,22 +102,20 @@ class CommandController(QObject):
             return
         running = self.running
         if running and trigger in _AUTOMATION_REENTRANT_TRIGGERS:
-            self._window._log_event(
-                "DEBUG",
-                "automation",
+            logger.debug(
                 "Automation trigger ignored while an automation is running",
-                trigger=trigger,
+                extra={"source": "automation", "details": {"trigger": trigger}},
             )
             return
         queue = self._automation_pending()
         for automation in widget.events.automations_for_trigger(trigger):
             if len(queue) >= _AUTOMATION_QUEUE_LIMIT:
-                self._window._log_event(
-                    "WARNING",
-                    "automation",
+                logger.warning(
                     "Automation queue is full; dropped an automation",
-                    name=automation.name,
-                    trigger=trigger,
+                    extra={
+                        "source": "automation",
+                        "details": {"name": automation.name, "trigger": trigger},
+                    },
                 )
                 break
             queue.append((automation, trigger))
@@ -146,20 +147,26 @@ class CommandController(QObject):
         self, automation: AutomationDefinition, triggered_by: str = "manual"
     ) -> None:
         if self.running:
-            self._window._log_event(
-                "WARNING", "automation", "Automation already running", name=automation.name
+            logger.warning(
+                "Automation already running",
+                extra={"source": "automation", "details": {"name": automation.name}},
             )
             return
         self.running = True
         variables = dict(automation.variables)
-        self._window._log_event(
-            "INFO", "automation", "Automation started", name=automation.name, trigger=triggered_by
+        logger.info(
+            "Automation started",
+            extra={
+                "source": "automation",
+                "details": {"name": automation.name, "trigger": triggered_by},
+            },
         )
         try:
             for index, step in enumerate(automation.steps, start=1):
                 if not self._automation_condition_matches(step, variables):
-                    self._window._log_event(
-                        "DEBUG", "automation", "Automation step skipped", step=index
+                    logger.debug(
+                        "Automation step skipped",
+                        extra={"source": "automation", "details": {"step": index}},
                     )
                     continue
                 if self._automation_step_is_risky(step) and not step.skip_risky_confirmation:
@@ -173,15 +180,21 @@ class CommandController(QObject):
                     if choice != QMessageBox.StandardButton.Yes:
                         raise RuntimeError(f"Automation canceled before step {index}.")
                 self._execute_automation_step(step, variables)
-                self._window._log_event(
-                    "INFO", "automation", "Automation step complete", step=index, action=step.action
+                logger.info(
+                    "Automation step complete",
+                    extra={
+                        "source": "automation",
+                        "details": {"step": index, "action": step.action},
+                    },
                 )
-            self._window._log_event(
-                "INFO", "automation", "Automation complete", name=automation.name
+            logger.info(
+                "Automation complete",
+                extra={"source": "automation", "details": {"name": automation.name}},
             )
         except Exception as exc:
-            self._window._log_event(
-                "ERROR", "automation", f"Automation failed: {exc}", name=automation.name
+            logger.error(
+                f"Automation failed: {exc}",
+                extra={"source": "automation", "details": {"name": automation.name}},
             )
             if triggered_by == "manual":
                 QMessageBox.warning(self._window, "Automation Failed", str(exc))
@@ -366,7 +379,7 @@ class CommandController(QObject):
         echo = command
         if any(word in command.lower() for word in ("password", "credential", "secret", "token")):
             echo = "<redacted command>"
-        self._window._log_event("COMMAND", "console", f"> {echo}")
+        self._window._console_events.publish("COMMAND", "console", f"> {echo}")
         try:
             args = shlex.split(command)
         except ValueError as exc:
@@ -388,13 +401,16 @@ class CommandController(QObject):
             elif args[0] == "settings":
                 self._run_settings_command(args[1:])
             elif args == ["diagnostics", "system"]:
-                self._window._log_event(
-                    "INFO",
-                    "diagnostics",
+                logger.info(
                     "System information",
-                    session_id=self._window._console_events.session_id,
-                    persistent_log=str(self._window._console_events.log_path),
-                    **runtime_diagnostics(),
+                    extra={
+                        "source": "diagnostics",
+                        "details": {
+                            "session_id": self._window._console_events.session_id,
+                            "persistent_log": str(self._window._console_events.log_path),
+                            **runtime_diagnostics(),
+                        },
+                    },
                 )
             elif args == ["diagnostics", "last"]:
                 if self._window.measure.queue.last_diagnostics is None:
@@ -411,12 +427,12 @@ class CommandController(QObject):
                 try:
                     self._run_curator_command(args[1:])
                 except Exception as exc:
-                    self._window._log_event(
-                        "ERROR",
-                        "curator",
+                    logger.error(
                         "Curator command failed",
-                        command=" ".join(args[1:]),
-                        error=str(exc),
+                        extra={
+                            "source": "curator",
+                            "details": {"command": " ".join(args[1:]), "error": str(exc)},
+                        },
                     )
                     raise
             else:
@@ -491,8 +507,9 @@ class CommandController(QObject):
             value = self._parse_console_setting(name, args[2])
             self._set_console_setting(name, value)
             self._command_reply(f"Session setting applied: {name} = {value}")
-            self._window._log_event(
-                "INFO", "settings", "Session setting changed", name=name, value=value
+            logger.info(
+                "Session setting changed",
+                extra={"source": "settings", "details": {"name": name, "value": value}},
             )
             return
         if args and args[0] == "save" and len(args) <= 2:
@@ -524,8 +541,9 @@ class CommandController(QObject):
                     self._window.measure_tab.queue_level_persist_toggle.setChecked(True)
                     self._window.measure_tab.queue_level_persist_toggle.blockSignals(False)
                 self._command_reply("Saved settings: " + ", ".join(saved))
-                self._window._log_event(
-                    "INFO", "settings", "Session settings persisted", keys=saved
+                logger.info(
+                    "Session settings persisted",
+                    extra={"source": "settings", "details": {"keys": saved}},
                 )
             return
         raise ValueError("Usage: settings list|get <name>|set <name> <value>|save [<name>|all]")
@@ -602,7 +620,7 @@ class CommandController(QObject):
                 or self._window.measure.queue.pending_curve is None
             ):
                 raise ValueError("There is no measurement awaiting review.")
-            self._window._log_event("INFO", "review", "Measurement passed from console")
+            logger.info("Measurement passed from console", extra={"source": "review"})
             self._window.measure.on_keep()
             return
         if args == ["fail"]:
@@ -611,7 +629,7 @@ class CommandController(QObject):
                 or self._window.measure.queue.pending_curve is None
             ):
                 raise ValueError("There is no measurement awaiting review.")
-            self._window._log_event("WARNING", "review", "Measurement failed from console")
+            logger.warning("Measurement failed from console", extra={"source": "review"})
             self._window.measure.on_fail()
             return
         if args == ["cancel"]:
@@ -834,5 +852,7 @@ class CommandController(QObject):
         if path is None:
             return
         self._window._console_events.export(path)
-        self._window._log_event("INFO", "export", "Console log exported", path=str(path))
+        logger.info(
+            "Console log exported", extra={"source": "export", "details": {"path": str(path)}}
+        )
         self.trigger("export_complete")

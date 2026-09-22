@@ -9,6 +9,7 @@ share.
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -36,6 +37,8 @@ from dms.processing import smooth_fractional_octave
 from dms.recovery import RecoveryCandidate, measure_recovery_manager
 from dms.settings_manager import config_dir
 from dms.ui.measure_dialogs import MeasureRecoveryDialog
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -82,8 +85,9 @@ class MeasureIO(QObject):
         try:
             self._measure_recovery.shutdown_clean()
         except Exception as exc:
-            self._window._log_event(
-                "ERROR", "measure", "Measure recovery cleanup failed", error=str(exc)
+            logger.error(
+                "Measure recovery cleanup failed",
+                extra={"source": "measure", "details": {"error": str(exc)}},
             )
 
     # ------------------------------------------------------------------
@@ -161,7 +165,7 @@ class MeasureIO(QObject):
         self.session_path = None
         self.clear_dirty()
         window._statusbar.showMessage("New Measure session.")
-        window._log_event("INFO", "measure", "New Measure session started")
+        logger.info("New Measure session started", extra={"source": "measure"})
 
     def save_session(self, *, save_as: bool = False) -> bool:
         window = self._window
@@ -207,7 +211,9 @@ class MeasureIO(QObject):
         window._settings_widget.refresh_from_settings()
         self.clear_dirty()
         window._statusbar.showMessage(f"Saved Measure session: {written}")
-        window._log_event("INFO", "measure", "Measure session saved", path=str(written))
+        logger.info(
+            "Measure session saved", extra={"source": "measure", "details": {"path": str(written)}}
+        )
         return True
 
     def load_session(self, requested_path: str | None = None) -> bool:
@@ -257,7 +263,10 @@ class MeasureIO(QObject):
         window._settings_widget.refresh_from_settings()
         self.clear_dirty()
         window._statusbar.showMessage(f"Loaded Measure session: {path_str}")
-        window._log_event("INFO", "measure", "Measure session loaded", path=str(path_str))
+        logger.info(
+            "Measure session loaded",
+            extra={"source": "measure", "details": {"path": str(path_str)}},
+        )
         return True
 
     def _apply_measure_session(self, session: MeasureSession) -> None:
@@ -462,7 +471,9 @@ class MeasureIO(QObject):
 
     def _on_measure_recovery_failed(self, error: str) -> None:
         self._window._statusbar.showMessage("Measure recovery save failed.")
-        self._window._log_event("ERROR", "measure", "Measure recovery save failed", error=error)
+        logger.error(
+            "Measure recovery save failed", extra={"source": "measure", "details": {"error": error}}
+        )
 
     # ------------------------------------------------------------------
     # Exports
@@ -567,12 +578,16 @@ class MeasureIO(QObject):
                 else "ref_1khz",
             )
             window._statusbar.showMessage(f"Exported average: {path}")
-            window._log_event(
-                "INFO", "export", "Average exported", path=str(path), compensated=compensated
+            logger.info(
+                "Average exported",
+                extra={
+                    "source": "export",
+                    "details": {"path": str(path), "compensated": compensated},
+                },
             )
             window.commands.trigger("export_complete")
         except Exception as exc:
-            window._log_event("ERROR", "export", f"Average export failed: {exc}")
+            logger.error(f"Average export failed: {exc}", extra={"source": "export"})
             QMessageBox.warning(window, "Export Error", str(exc))
 
     def export_variation(self, requested_path: str | None = None) -> None:
@@ -626,12 +641,16 @@ class MeasureIO(QObject):
                 else "ref_1khz",
             )
             window._statusbar.showMessage(f"Exported variation: {path}")
-            window._log_event(
-                "INFO", "export", "Variation exported", path=str(path), compensated=compensated
+            logger.info(
+                "Variation exported",
+                extra={
+                    "source": "export",
+                    "details": {"path": str(path), "compensated": compensated},
+                },
             )
             window.commands.trigger("export_complete")
         except Exception as exc:
-            window._log_event("ERROR", "export", f"Variation export failed: {exc}")
+            logger.error(f"Variation export failed: {exc}", extra={"source": "export"})
             QMessageBox.warning(window, "Export Error", str(exc))
 
     def run_upload_action(self) -> None:
@@ -845,19 +864,21 @@ class MeasureIO(QObject):
                 for name, destination in zip(filenames, destinations):
                     os.replace(temp_dir / name, destination)
         except Exception as exc:
-            window._log_event("ERROR", "export", "Export All failed", error=str(exc))
+            logger.error(
+                "Export All failed", extra={"source": "export", "details": {"error": str(exc)}}
+            )
             QMessageBox.warning(window, "Export All Failed", str(exc))
             return
 
         window.measure_tab.export_dir_input.setText(str(directory))
         window._settings.set("export_directory", str(directory))
         window._statusbar.showMessage(f"Exported all Measure files: {directory}")
-        window._log_event(
-            "INFO",
-            "export",
+        logger.info(
             "Export All completed",
-            directory=str(directory),
-            files=filenames,
+            extra={
+                "source": "export",
+                "details": {"directory": str(directory), "files": filenames},
+            },
         )
         window.commands.trigger("export_complete")
         QMessageBox.information(

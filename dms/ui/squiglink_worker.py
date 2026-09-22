@@ -18,7 +18,6 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -67,7 +66,6 @@ class SquiglinkUploadWorker(QObject):
         host_keys: dict[str, str] | None = None,
         sync_phone_book: Callable[..., str],
         upload: Callable[..., None] = upload_export_sftp,
-        diagnostic: Callable[[str, dict[str, Any]], None] | None = None,
         connect_timeout: float = 20.0,
         prompt_timeout: float = PROMPT_TIMEOUT_S,
         parent: QObject | None = None,
@@ -83,7 +81,6 @@ class SquiglinkUploadWorker(QObject):
         self._host_keys = dict(host_keys or {})
         self._sync_phone_book = sync_phone_book
         self._upload = upload
-        self._diagnostic = diagnostic
         self._connect_timeout = float(connect_timeout)
         self._prompt_timeout = float(prompt_timeout)
 
@@ -167,7 +164,6 @@ class SquiglinkUploadWorker(QObject):
                 username=self._username,
                 password=self._password,
                 remote_filename=self._remote_filename,
-                diagnostic=self._diagnostic,
                 host_keys=self._host_keys,
                 confirm_host_key=self._confirm_host_key,
                 connect_timeout=self._connect_timeout,

@@ -28,7 +28,6 @@ import pytest
 import dms.ui.measure_controller as measure_controller_module
 import dms.ui.squiglink_controller as squiglink_module
 from dms import audio_engine
-from dms.console import ConsoleEventStore
 from dms.curator.models import CurveData
 from dms.curator.transforms import apply_layer_transform
 from dms.export import export_curve
@@ -220,7 +219,7 @@ class _FakeHrtf:
 def test_curator_offset_to_1khz_uses_the_corrected_curve(qapp) -> None:
     freqs = np.array([100.0, 1000.0, 10000.0])
     source = np.array([4.0, 8.0, 2.0])
-    widget = CuratorWidget(ConsoleEventStore())
+    widget = CuratorWidget()
     try:
         plain = widget.add_curve(
             CurveData(kind="fr", freqs=freqs, mag_db=source),

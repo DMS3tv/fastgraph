@@ -9,6 +9,7 @@ R&D, Measure → Curator, R&D → Curator).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,8 @@ from dms.session import SessionData
 from dms.settings_manager import config_dir
 from dms.ui.measure_dialogs import RnDRecoveryDialog, RnDReviewDialog
 from dms.version import __version__
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -78,7 +81,10 @@ class RndBridge(QObject):
         try:
             self._recovery.shutdown_clean()
         except Exception as exc:
-            self._window._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
+            logger.error(
+                "R&D recovery cleanup failed",
+                extra={"source": "rnd", "details": {"error": str(exc)}},
+            )
 
     def start_measurement(self) -> None:
         from dms.ui.measure_controller import _QUEUE_AMBIENT_WARN_DBFS
@@ -205,14 +211,17 @@ class RndBridge(QObject):
         self._window._statusbar.showMessage(
             f"R&D sweep started (attempt {self._window.measure.queue.attempts})."
         )
-        self._window._log_event(
-            "INFO",
-            "rnd",
+        logger.info(
             "R&D sweep started",
-            attempt=self._window.measure.queue.attempts,
-            sample_rate=int(self._window._settings.get("sample_rate")),
-            buffer_size=int(self._window._settings.get("buffer_size")),
-            output_level_db=output_level_db,
+            extra={
+                "source": "rnd",
+                "details": {
+                    "attempt": self._window.measure.queue.attempts,
+                    "sample_rate": int(self._window._settings.get("sample_rate")),
+                    "buffer_size": int(self._window._settings.get("buffer_size")),
+                    "output_level_db": output_level_db,
+                },
+            },
         )
 
     def _on_rnd_sweep_finished(self, recording: np.ndarray, sweep: np.ndarray) -> None:
@@ -241,7 +250,7 @@ class RndBridge(QObject):
             self._on_rnd_sweep_error(f"Processing error: {exc}")
 
     def _on_rnd_sweep_error(self, message: str) -> None:
-        self._window._log_event("ERROR", "rnd", message)
+        logger.error(message, extra={"source": "rnd"})
         self.close_review_dialog()
         self._window._rnd_widget.set_review_curve(None)
         self._window.measure.queue.pending_curve = None
@@ -365,8 +374,9 @@ class RndBridge(QObject):
         self._window.devices.start_level_monitor()
         self._window._rnd_widget.set_status("Ready")
         self._window._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
-        self._window._log_event(
-            "INFO", "rnd", "R&D measurement kept", name=measurement.name, status=change_status
+        logger.info(
+            "R&D measurement kept",
+            extra={"source": "rnd", "details": {"name": measurement.name, "status": change_status}},
         )
         self._window.commands.trigger("rnd_measurement_kept")
 
@@ -489,13 +499,16 @@ class RndBridge(QObject):
         )
         self._window._curator_widget.offset_layer_to_zero_at_1khz(layer)
         self._window._statusbar.showMessage(f"Sent to Curator: {layer.name}")
-        self._window._log_event(
-            "INFO",
-            "curator",
+        logger.info(
             "Measure view sent to Curator",
-            name=layer.name,
-            kind=curve.kind,
-            hrtf=active_hrtf.name if active_hrtf else None,
+            extra={
+                "source": "curator",
+                "details": {
+                    "name": layer.name,
+                    "kind": curve.kind,
+                    "hrtf": active_hrtf.name if active_hrtf else None,
+                },
+            },
         )
 
     @staticmethod
@@ -642,14 +655,17 @@ class RndBridge(QObject):
             f"Sent to R&D: {transferred_name} ({transferred_count} measurement"
             f"{'s' if transferred_count != 1 else ''})"
         )
-        self._window._log_event(
-            "INFO",
-            "rnd",
+        logger.info(
             "Measure view sent to R&D",
-            name=transferred_name,
-            mode=transfer_mode,
-            measurement_count=transferred_count,
-            hrtf=hrtf_name or None,
+            extra={
+                "source": "rnd",
+                "details": {
+                    "name": transferred_name,
+                    "mode": transfer_mode,
+                    "measurement_count": transferred_count,
+                    "hrtf": hrtf_name or None,
+                },
+            },
         )
 
     def send_rnd_to_curator(self) -> None:
@@ -744,8 +760,9 @@ class RndBridge(QObject):
         )
         self._window._curator_widget.offset_layer_to_zero_at_1khz(layer)
         self._window._statusbar.showMessage(f"Sent R&D item to Curator: {layer.name}")
-        self._window._log_event(
-            "INFO", "rnd", "R&D item sent to Curator", name=layer.name, kind=curve.kind
+        logger.info(
+            "R&D item sent to Curator",
+            extra={"source": "rnd", "details": {"name": layer.name, "kind": curve.kind}},
         )
 
     def export_selected(self) -> None:
@@ -798,7 +815,9 @@ class RndBridge(QObject):
         self._window._settings.set("export_directory", str(path.parent))
         self._window.measure_tab.export_dir_input.setText(str(path.parent))
         self._window._statusbar.showMessage(f"Exported R&D measurement: {path}")
-        self._window._log_event("INFO", "rnd", "R&D measurement exported", path=str(path))
+        logger.info(
+            "R&D measurement exported", extra={"source": "rnd", "details": {"path": str(path)}}
+        )
         self._window.commands.trigger("export_complete")
 
     def _export_rnd_group_variation(self, group) -> None:
@@ -849,7 +868,9 @@ class RndBridge(QObject):
         self._window._settings.set("export_directory", str(path.parent))
         self._window.measure_tab.export_dir_input.setText(str(path.parent))
         self._window._statusbar.showMessage(f"Exported R&D variation: {path}")
-        self._window._log_event("INFO", "rnd", "R&D variation exported", path=str(path))
+        logger.info(
+            "R&D variation exported", extra={"source": "rnd", "details": {"path": str(path)}}
+        )
         self._window.commands.trigger("export_complete")
 
     def _export_rnd_group_measurements(self, group) -> None:
@@ -989,7 +1010,9 @@ class RndBridge(QObject):
 
     def _on_rnd_recovery_failed(self, error: str) -> None:
         self._window._rnd_widget.set_recovery_warning("R&D recovery save failed")
-        self._window._log_event("ERROR", "rnd", "R&D recovery save failed", error=error)
+        logger.error(
+            "R&D recovery save failed", extra={"source": "rnd", "details": {"error": error}}
+        )
 
     def save_session(self) -> bool:
         default_dir = self._rnd_default_dir()
@@ -1033,7 +1056,7 @@ class RndBridge(QObject):
         self._window._settings.set("rnd_session_directory", str(path.parent))
         self._window._settings_widget.refresh_from_settings()
         self._window._statusbar.showMessage(f"Saved R&D session: {path}")
-        self._window._log_event("INFO", "rnd", "R&D session saved", path=str(path))
+        logger.info("R&D session saved", extra={"source": "rnd", "details": {"path": str(path)}})
         self.dirty = False
         return True
 
@@ -1085,7 +1108,10 @@ class RndBridge(QObject):
         self._window._settings.set("rnd_session_directory", str(Path(path_str).parent))
         self._window._settings_widget.refresh_from_settings()
         self._window._statusbar.showMessage(f"Loaded R&D session: {path_str}")
-        self._window._log_event("INFO", "rnd", "R&D session loaded", path=path_str, mode=mode)
+        logger.info(
+            "R&D session loaded",
+            extra={"source": "rnd", "details": {"path": path_str, "mode": mode}},
+        )
         if missing_photos:
             QMessageBox.warning(
                 self._window,

@@ -9,6 +9,7 @@ test-level dialogs for the selected input.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -42,6 +43,8 @@ from dms.measurement_profiles import (
 )
 from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.measure_dialogs import TestLevelDialog
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -331,15 +334,18 @@ class DeviceController(QObject):
 
         self._last_output_devices = out_signature
         self._last_input_devices = in_signature
-        window._log_event(
-            "INFO",
-            "devices",
+        logger.info(
             "Audio devices refreshed",
-            output_count=len(out_devices),
-            input_count=len(in_devices),
-            selected_output=self.current_output_device_label(),
-            selected_input=self.current_input_device_label(),
-            input_channel=self.current_input_channel() + 1,
+            extra={
+                "source": "devices",
+                "details": {
+                    "output_count": len(out_devices),
+                    "input_count": len(in_devices),
+                    "selected_output": self.current_output_device_label(),
+                    "selected_input": self.current_input_device_label(),
+                    "input_channel": self.current_input_channel() + 1,
+                },
+            },
         )
 
         if out_ambiguous or in_ambiguous:

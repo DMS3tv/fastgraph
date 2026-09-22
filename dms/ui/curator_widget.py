@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -29,7 +30,6 @@ from PyQt6.QtWidgets import (
 )
 
 from dms import brand_brand
-from dms.console import ConsoleEventStore
 from dms.curator.export_image import export_graph_image
 from dms.curator.export_brand import draw_brand_poster, brand_export_warnings
 from dms.curator.metadata import automatic_export_values, metadata_has_identity
@@ -62,6 +62,8 @@ from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
+
+logger = logging.getLogger(__name__)
 
 ACCENT_COLOR = "#FCBE11"
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -326,14 +328,12 @@ class GraphStage(QWidget):
 class CuratorWidget(QWidget):
     def __init__(
         self,
-        events: ConsoleEventStore,
         theme: str = DARK,
         parent: QWidget | None = None,
         *,
         brand_mode: bool = False,
     ) -> None:
         super().__init__(parent)
-        self._events = events
         self._theme = theme
         self._brand_mode = bool(brand_mode)
         self._custom_background = False
@@ -360,11 +360,8 @@ class CuratorWidget(QWidget):
     def graph_state(self) -> GraphState:
         return self._state
 
-    def _log(self, severity: str, message: str, **details) -> None:
-        self._events.publish(severity, "curator", message, details)
-
     def _show_status(self, message: str, severity: str = "INFO") -> None:
-        self._log(severity, message)
+        logger.log(logging.getLevelName(severity), message, extra={"source": "curator"})
         window = self.window()
         if hasattr(window, "statusBar"):
             window.statusBar().showMessage(message)
@@ -390,7 +387,10 @@ class CuratorWidget(QWidget):
             brand_brand.BACKGROUND if self._brand_mode else theme_colors(self._theme)["plot_bg"]
         )
         self._redraw()
-        self._log("INFO", "Graph background reset to theme", theme=self._theme)
+        logger.info(
+            "Graph background reset to theme",
+            extra={"source": "curator", "details": {"theme": self._theme}},
+        )
 
     def add_curve(
         self,
@@ -423,7 +423,10 @@ class CuratorWidget(QWidget):
                 message = f"{name}: {normalization_warning}"
                 if warnings is not None:
                     warnings.append(message)
-                self._log("WARNING", "Layer was not normalized at 1 kHz", name=str(name))
+                logger.warning(
+                    "Layer was not normalized at 1 kHz",
+                    extra={"source": "curator", "details": {"name": str(name)}},
+                )
         layer = LayerState(
             curve=copied,
             source_path=Path(source_path),
@@ -442,13 +445,17 @@ class CuratorWidget(QWidget):
         else:
             self._refresh_metadata_source_combo()
         self._apply_auto_export_text()
-        self._log(
-            "INFO",
+        logger.info(
             "Layer added",
-            layer=len(self._state.layers),
-            name=layer.name,
-            kind=layer.curve.kind,
-            hrtf=layer.hrtf.name if layer.hrtf else None,
+            extra={
+                "source": "curator",
+                "details": {
+                    "layer": len(self._state.layers),
+                    "name": layer.name,
+                    "kind": layer.curve.kind,
+                    "hrtf": layer.hrtf.name if layer.hrtf else None,
+                },
+            },
         )
         return layer
 
@@ -461,11 +468,15 @@ class CuratorWidget(QWidget):
         layer.vertical_offset_db += offset
         self._sync_ui()
         self._redraw()
-        self._log(
-            "INFO",
+        logger.info(
             "Transferred layer offset to 0 dB at 1 kHz",
-            layer=self._layer_number(layer),
-            offset_db=layer.vertical_offset_db,
+            extra={
+                "source": "curator",
+                "details": {
+                    "layer": self._layer_number(layer),
+                    "offset_db": layer.vertical_offset_db,
+                },
+            },
         )
 
     def import_files(
@@ -509,9 +520,15 @@ class CuratorWidget(QWidget):
         else:
             self._show_status(f"Imported {loaded} file(s).")
         if failures:
-            self._log("WARNING", "Some Curator imports failed", failures=failures)
+            logger.warning(
+                "Some Curator imports failed",
+                extra={"source": "curator", "details": {"failures": failures}},
+            )
         if warnings:
-            self._log("WARNING", "Curator import warnings", warnings=warnings)
+            logger.warning(
+                "Curator import warnings",
+                extra={"source": "curator", "details": {"warnings": warnings}},
+            )
         return loaded, failures
 
     def layer_at(self, number: int) -> LayerState:
@@ -557,7 +574,10 @@ class CuratorWidget(QWidget):
         layer.color = QColor(color).name()
         self._sync_ui()
         self._redraw()
-        self._log("INFO", "Layer color changed", layer=number, color=layer.color)
+        logger.info(
+            "Layer color changed",
+            extra={"source": "curator", "details": {"layer": number, "color": layer.color}},
+        )
 
     def set_layer_number_hrtf(self, number: int, name: str) -> None:
         layer = self.layer_at(number)
@@ -595,7 +615,10 @@ class CuratorWidget(QWidget):
         self._state.background = QColor(color).name()
         self._custom_background = True
         self._redraw()
-        self._log("INFO", "Graph background changed", color=self._state.background)
+        logger.info(
+            "Graph background changed",
+            extra={"source": "curator", "details": {"color": self._state.background}},
+        )
 
     def set_export_text(self, field: str, value: str) -> None:
         widgets = {
@@ -621,7 +644,10 @@ class CuratorWidget(QWidget):
         self._set_export_field_state(field)
         self._update_metadata_status()
         self._graph_stage.refresh_preview()
-        self._log("INFO", "Export text changed", field=field, value=value)
+        logger.info(
+            "Export text changed",
+            extra={"source": "curator", "details": {"field": field, "value": value}},
+        )
 
     def clear_layers(self) -> None:
         self._clear_layers()
@@ -639,17 +665,16 @@ class CuratorWidget(QWidget):
         if self._brand_mode:
             warnings = brand_export_warnings(self._state)
             if warnings:
-                self._log(
-                    "WARNING",
+                logger.warning(
                     "BRAND export text is below the preferred readable size",
-                    warnings=warnings,
+                    extra={"source": "curator", "details": {"warnings": warnings}},
                 )
                 self._show_status("BRAND export has a text-size warning.")
             export_graph_image(self._state, output, size=(3840, 2160), brand_mode=True)
         else:
             export_graph_image(self._state, output, size=(1920, 1080), theme=self._theme)
         self._show_status(f"Exported Curator PNG: {output}")
-        self._log("INFO", "PNG exported", path=str(output))
+        logger.info("PNG exported", extra={"source": "curator", "details": {"path": str(output)}})
         return output
 
     def set_y_limits(self, y_min: float, y_max: float) -> None:
@@ -664,7 +689,13 @@ class CuratorWidget(QWidget):
         self._y_min_spin.blockSignals(False)
         self._y_max_spin.blockSignals(False)
         self._redraw()
-        self._log("INFO", "Graph limits changed", y_min=self._state.y_min, y_max=self._state.y_max)
+        logger.info(
+            "Graph limits changed",
+            extra={
+                "source": "curator",
+                "details": {"y_min": self._state.y_min, "y_max": self._state.y_max},
+            },
+        )
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -1149,7 +1180,10 @@ class CuratorWidget(QWidget):
             self._state.bounds.enabled = False
         except Exception as exc:
             self._state.bounds = PreferenceBounds(enabled=False)
-            self._log("ERROR", "Preference bounds could not load", error=str(exc))
+            logger.error(
+                "Preference bounds could not load",
+                extra={"source": "curator", "details": {"error": str(exc)}},
+            )
             self._show_status(f"Preference bounds could not load: {exc}")
 
     def _redraw(self) -> None:
@@ -1220,7 +1254,10 @@ class CuratorWidget(QWidget):
         self._sync_ui()
         self._apply_auto_export_text()
         self._redraw_with_wipe(exiting_layers=exiting or None)
-        self._log("INFO", "Layers removed", layers=numbers, names=names)
+        logger.info(
+            "Layers removed",
+            extra={"source": "curator", "details": {"layers": numbers, "names": names}},
+        )
 
     def _refresh_stale_flags(self) -> bool:
         """Flag combined layers whose sources changed; True when a flag moved."""
@@ -1254,7 +1291,10 @@ class CuratorWidget(QWidget):
         self._sync_ui()
         self._apply_auto_export_text()
         self._redraw()
-        self._log("INFO", "Layer order changed", name=layer.name, position=target + 1)
+        logger.info(
+            "Layer order changed",
+            extra={"source": "curator", "details": {"name": layer.name, "position": target + 1}},
+        )
 
     def _move_selected_layer(self, delta: int) -> None:
         layer = self._selected_layer()
@@ -1277,7 +1317,7 @@ class CuratorWidget(QWidget):
         self._sync_ui()
         self._apply_auto_export_text()
         self._redraw_with_wipe(exiting_layers=exiting_layers)
-        self._log("INFO", "All layers cleared", count=count)
+        logger.info("All layers cleared", extra={"source": "curator", "details": {"count": count}})
 
     def _set_layer_visible(self, layer_id: str, visible: bool) -> None:
         layer = next((item for item in self._state.layers if item.id == layer_id), None)
@@ -1291,11 +1331,12 @@ class CuratorWidget(QWidget):
             self._redraw_with_wipe(entering_layer_ids={layer_id})
         else:
             self._redraw_with_wipe(exiting_layers=[exiting] if exiting is not None else None)
-        self._log(
-            "INFO",
+        logger.info(
             "Layer visibility changed",
-            layer=self._layer_number(layer),
-            visible=visible,
+            extra={
+                "source": "curator",
+                "details": {"layer": self._layer_number(layer), "visible": visible},
+            },
         )
 
     def _selected_layers(self) -> list[LayerState]:
@@ -1321,7 +1362,10 @@ class CuratorWidget(QWidget):
         try:
             self._combine_layers(selected)
         except Exception as exc:
-            self._log("ERROR", "Combined variation failed", error=str(exc))
+            logger.error(
+                "Combined variation failed",
+                extra={"source": "curator", "details": {"error": str(exc)}},
+            )
             QMessageBox.warning(self, "Cannot Combine", str(exc))
         return
 
@@ -1360,11 +1404,15 @@ class CuratorWidget(QWidget):
             item = self._layer_list.item(index)
             item.setSelected(item.data(256) == combined.id)
         self._redraw_with_wipe(entering_layer_ids={combined.id}, exiting_layers=exiting_layers)
-        self._log(
-            "INFO",
+        logger.info(
             "Combined variation created",
-            layer=len(self._state.layers),
-            sources=[self._layer_number(layer) for layer in selected],
+            extra={
+                "source": "curator",
+                "details": {
+                    "layer": len(self._state.layers),
+                    "sources": [self._layer_number(layer) for layer in selected],
+                },
+            },
         )
         return combined
 
@@ -1396,11 +1444,12 @@ class CuratorWidget(QWidget):
         layer.color = hex_color
         self._sync_ui()
         self._redraw()
-        self._log(
-            "INFO",
+        logger.info(
             "Layer color changed",
-            layer=self._layer_number(layer),
-            color=layer.color,
+            extra={
+                "source": "curator",
+                "details": {"layer": self._layer_number(layer), "color": layer.color},
+            },
         )
 
     def _set_layer_name(self, layer_id: str, value: str, editor: QLineEdit | None = None) -> None:
@@ -1416,7 +1465,13 @@ class CuratorWidget(QWidget):
             return
         layer.name = name
         self._redraw()
-        self._log("INFO", "Layer renamed", layer=self._layer_number(layer), name=name)
+        logger.info(
+            "Layer renamed",
+            extra={
+                "source": "curator",
+                "details": {"layer": self._layer_number(layer), "name": name},
+            },
+        )
 
     def _set_layer_offset(self, layer_id: str, value: float) -> None:
         layer = self._layer_by_id(layer_id)
@@ -1424,11 +1479,15 @@ class CuratorWidget(QWidget):
             return
         layer.vertical_offset_db = float(value)
         self._redraw()
-        self._log(
-            "INFO",
+        logger.info(
             "Layer offset changed",
-            layer=self._layer_number(layer),
-            offset_db=layer.vertical_offset_db,
+            extra={
+                "source": "curator",
+                "details": {
+                    "layer": self._layer_number(layer),
+                    "offset_db": layer.vertical_offset_db,
+                },
+            },
         )
 
     def _set_layer_hrtf(self, layer_id: str, path: str) -> None:
@@ -1441,21 +1500,23 @@ class CuratorWidget(QWidget):
             layer.hrtf = None
             self._apply_auto_export_text()
             self._redraw()
-            self._log(
-                "INFO",
+            logger.info(
                 "Layer HRTF changed",
-                layer=self._layer_number(layer),
-                hrtf=None,
+                extra={
+                    "source": "curator",
+                    "details": {"layer": self._layer_number(layer), "hrtf": None},
+                },
             )
             return
         try:
             layer.hrtf = HRTFCurve(str(path))
         except Exception as exc:
-            self._log(
-                "ERROR",
+            logger.error(
                 "Layer HRTF failed",
-                layer=self._layer_number(layer),
-                error=str(exc),
+                extra={
+                    "source": "curator",
+                    "details": {"layer": self._layer_number(layer), "error": str(exc)},
+                },
             )
             QMessageBox.warning(self, "HRTF Error", str(exc))
             layer.hrtf = None
@@ -1464,11 +1525,12 @@ class CuratorWidget(QWidget):
         self._sync_ui()
         self._apply_auto_export_text()
         self._redraw()
-        self._log(
-            "INFO",
+        logger.info(
             "Layer HRTF changed",
-            layer=self._layer_number(layer),
-            hrtf=layer.hrtf.name,
+            extra={
+                "source": "curator",
+                "details": {"layer": self._layer_number(layer), "hrtf": layer.hrtf.name},
+            },
         )
 
     def _layer_by_id(self, layer_id: str) -> LayerState | None:
@@ -1495,7 +1557,10 @@ class CuratorWidget(QWidget):
         self._state.background = color.name()
         self._custom_background = True
         self._redraw()
-        self._log("INFO", "Graph background changed", color=self._state.background)
+        logger.info(
+            "Graph background changed",
+            extra={"source": "curator", "details": {"color": self._state.background}},
+        )
 
     def _set_theme_standard_swatches(self) -> None:
         for index, color in enumerate(_DEFAULT_STANDARD_SWATCHES):
@@ -1527,28 +1592,43 @@ class CuratorWidget(QWidget):
         self._sync_bounds_controls()
         self._apply_auto_export_text()
         self._redraw_with_wipe(entering_bounds=enabling, exiting_bounds=exiting_bounds)
-        self._log("INFO", "Preference bounds changed", enabled=enabling)
+        logger.info(
+            "Preference bounds changed",
+            extra={"source": "curator", "details": {"enabled": enabling}},
+        )
 
     def _on_aspect_lock_changed(self, _state: int) -> None:
         self._state.aspect_locked_25db = self._aspect_lock_enabled.isChecked()
         self._redraw()
-        self._log("INFO", "25 dB/decade aspect changed", enabled=self._state.aspect_locked_25db)
+        logger.info(
+            "25 dB/decade aspect changed",
+            extra={"source": "curator", "details": {"enabled": self._state.aspect_locked_25db}},
+        )
 
     def _on_smoothing_changed(self, _index: int) -> None:
         self._state.smoothing_fraction = int(self._smoothing_combo.currentData() or 48)
         self._redraw()
-        self._log("INFO", "Curator smoothing changed", fraction=self._state.smoothing_fraction)
+        logger.info(
+            "Curator smoothing changed",
+            extra={"source": "curator", "details": {"fraction": self._state.smoothing_fraction}},
+        )
 
     def _on_show_names_changed(self, _state: int) -> None:
         self._state.show_layer_names = self._show_names_enabled.isChecked()
         self._redraw()
-        self._log("INFO", "Layer names changed", visible=self._state.show_layer_names)
+        logger.info(
+            "Layer names changed",
+            extra={"source": "curator", "details": {"visible": self._state.show_layer_names}},
+        )
 
     def _on_brand_clean_slate_changed(self, _state: int) -> None:
         self._state.brand_clean_slate = self._brand_clean_slate_enabled.isChecked()
         self._sync_brand_text_controls()
         self._redraw()
-        self._log("INFO", "BRAND clean slate changed", enabled=self._state.brand_clean_slate)
+        logger.info(
+            "BRAND clean slate changed",
+            extra={"source": "curator", "details": {"enabled": self._state.brand_clean_slate}},
+        )
 
     def _sync_brand_text_controls(self) -> None:
         enabled = not self._state.brand_clean_slate
@@ -1565,7 +1645,7 @@ class CuratorWidget(QWidget):
         self.reset_background_to_theme()
         self._sync_aspect_lock_controls()
         self._sync_ui()
-        self._log("INFO", "View reset")
+        logger.info("View reset", extra={"source": "curator"})
 
     def dragEnterEvent(self, event) -> None:
         mime = event.mimeData()
@@ -1646,7 +1726,10 @@ class CuratorWidget(QWidget):
         try:
             self.export_png(path)
         except Exception as exc:
-            self._log("ERROR", "PNG export failed", path=path, error=str(exc))
+            logger.error(
+                "PNG export failed",
+                extra={"source": "curator", "details": {"path": path, "error": str(exc)}},
+            )
             QMessageBox.warning(self, "Export Error", str(exc))
             return
         self._show_status(f"Exported Curator PNG: {path}")

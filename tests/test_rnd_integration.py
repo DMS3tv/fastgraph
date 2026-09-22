@@ -924,10 +924,8 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     recovery_calls: list[bool] = []
     monkeypatch.setattr(window.rnd._recovery, "schedule", lambda: recovery_calls.append(True))
     log_calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr(
-        window,
-        "_log_event",
-        lambda _severity, _source, message, **details: log_calls.append((message, details)),
+    window._console_events.event_added.connect(
+        lambda event: event.source == "rnd" and log_calls.append((event.message, event.details))
     )
 
     window.rnd.send_measure_to_rnd()

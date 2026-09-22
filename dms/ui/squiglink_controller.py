@@ -10,6 +10,7 @@ owns that thread and joins it in :meth:`shutdown`.
 from __future__ import annotations
 
 import contextlib
+import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import replace
@@ -37,6 +38,8 @@ from dms.squiglink import (
 from dms.ui.measure_dialogs import SquiglinkAuthDialog, SquiglinkUploadMetadataDialog
 from dms.ui.squiglink_worker import SquiglinkUploadWorker
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
 
@@ -60,12 +63,7 @@ class SquiglinkController(QObject):
 
     def _log_exception(self, source: str, message: str, exc: BaseException, **details) -> None:
         details.update(exception_diagnostics(exc))
-        self._window._log_event("ERROR", source, message, **details)
-
-    def _log_sftp_diagnostic(self, stage: str, details: dict) -> None:
-        severity = "WARNING" if stage.endswith("failed") else "DEBUG"
-        message = stage.replace("_", " ").capitalize()
-        self._window._log_event(severity, "squiglink", message, stage=stage, **details)
+        logger.error(message, extra={"source": source, "details": details})
 
     def endpoint(self) -> tuple[str, int]:
         host = str(self._window._settings.get("squiglink_host") or "").strip()
@@ -94,8 +92,9 @@ class SquiglinkController(QObject):
             )
             return
 
-        self._window._log_event(
-            "INFO", "upload", "Squiglink upload requested", host=host, port=port
+        logger.info(
+            "Squiglink upload requested",
+            extra={"source": "upload", "details": {"host": host, "port": port}},
         )
 
         saved = decrypt_credentials(self._window._settings.get("squiglink_credentials_encrypted"))
@@ -215,7 +214,6 @@ class SquiglinkController(QObject):
             phone_book_stem=phone_book_stem,
             host_keys=host_keys,
             sync_phone_book=self.sync_remote_phone_book,
-            diagnostic=self._log_sftp_diagnostic,
         )
         thread = QThread(self)
         worker.moveToThread(thread)
@@ -271,14 +269,17 @@ class SquiglinkController(QObject):
         """Ask the user to trust an unknown SSH host key (GUI thread)."""
         context = self._squiglink_upload_context
         worker = context.get("worker") if context else None
-        self._window._log_event(
-            "WARNING",
-            "squiglink",
+        logger.warning(
             "Unknown SSH host key offered",
-            host=host,
-            port=int(port),
-            key_type=key_type,
-            fingerprint=fingerprint,
+            extra={
+                "source": "squiglink",
+                "details": {
+                    "host": host,
+                    "port": int(port),
+                    "key_type": key_type,
+                    "fingerprint": fingerprint,
+                },
+            },
         )
         accepted = (
             QMessageBox.question(
@@ -301,12 +302,12 @@ class SquiglinkController(QObject):
         host_keys = self._squiglink_host_keys()
         host_keys[identifier] = fingerprint
         self._window._settings.set("squiglink_host_keys", host_keys)
-        self._window._log_event(
-            "INFO",
-            "squiglink",
+        logger.info(
             "SSH host key trusted and stored",
-            endpoint=identifier,
-            fingerprint=fingerprint,
+            extra={
+                "source": "squiglink",
+                "details": {"endpoint": identifier, "fingerprint": fingerprint},
+            },
         )
 
     def _on_squiglink_phone_book_fallback(self, detail_message: str) -> None:
@@ -340,7 +341,10 @@ class SquiglinkController(QObject):
             )
         self._finish_squiglink_upload()
         self._window._statusbar.showMessage("Upload to Squiglink completed successfully.")
-        self._window._log_event("INFO", "upload", "Squiglink upload completed", filename=filename)
+        logger.info(
+            "Squiglink upload completed",
+            extra={"source": "upload", "details": {"filename": filename}},
+        )
         QMessageBox.information(
             self._window,
             "Upload Complete",
@@ -351,10 +355,12 @@ class SquiglinkController(QObject):
         self._finish_squiglink_upload()
         if message.strip().lower().startswith("upload canceled"):
             self._window._statusbar.showMessage("Upload to Squiglink canceled.")
-            self._window._log_event("INFO", "upload", "Squiglink upload canceled")
+            logger.info("Squiglink upload canceled", extra={"source": "upload"})
             return
         self._window._statusbar.showMessage(f"Upload to Squiglink failed: {message}")
-        self._window._log_event("ERROR", "upload", "Squiglink upload failed", error=message)
+        logger.error(
+            "Squiglink upload failed", extra={"source": "upload", "details": {"error": message}}
+        )
         QMessageBox.warning(
             self._window, "Upload Failed", f"Upload to Squiglink failed.\n\n{message}"
         )
@@ -432,18 +438,18 @@ class SquiglinkController(QObject):
             port=port,
             username=username,
             password=password,
-            diagnostic=self._log_sftp_diagnostic,
             host_keys=host_keys,
             confirm_host_key=confirm_host_key,
             connect_timeout=connect_timeout,
         )
         try:
             try:
-                self._window._log_event(
-                    "DEBUG",
-                    "squiglink",
+                logger.debug(
                     "Phone book read start",
-                    remote_path=PHONE_BOOK_REMOTE_PATH,
+                    extra={
+                        "source": "squiglink",
+                        "details": {"remote_path": PHONE_BOOK_REMOTE_PATH},
+                    },
                 )
                 try:
                     phone_book = read_remote_phone_book(sftp, PHONE_BOOK_REMOTE_PATH)
@@ -459,12 +465,15 @@ class SquiglinkController(QObject):
 
                 merge_phone_book_entry(phone_book, self._window._session, phone_book_stem)
                 write_remote_phone_book(sftp, phone_book, PHONE_BOOK_REMOTE_PATH)
-                self._window._log_event(
-                    "DEBUG",
-                    "squiglink",
+                logger.debug(
                     "Phone book update complete",
-                    remote_path=PHONE_BOOK_REMOTE_PATH,
-                    entries=len(phone_book),
+                    extra={
+                        "source": "squiglink",
+                        "details": {
+                            "remote_path": PHONE_BOOK_REMOTE_PATH,
+                            "entries": len(phone_book),
+                        },
+                    },
                 )
                 return "Phone book updated successfully."
             finally:

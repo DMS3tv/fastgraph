@@ -20,6 +20,7 @@ Responsibilities:
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import warnings
 from pathlib import Path
@@ -109,6 +110,17 @@ def _flush_qt_deletes(request: pytest.FixtureRequest):
             pytest.PytestWarning,
             stacklevel=1,
         )
+
+
+@pytest.fixture
+def console_events(qapp):
+    """A ``ConsoleEventStore`` fed by the ``dms`` loggers for one test."""
+    from dms.console import ConsoleEventStore, install_console_handler
+
+    store = ConsoleEventStore()
+    handler = install_console_handler(store)
+    yield store
+    logging.getLogger("dms").removeHandler(handler)
 
 
 @pytest.fixture

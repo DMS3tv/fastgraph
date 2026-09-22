@@ -8,6 +8,7 @@ up-to-date check just keeps the button hidden.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, Qt, QThread, QUrl
@@ -16,6 +17,8 @@ from PyQt6.QtGui import QDesktopServices
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.update_checker import UpdateCheckWorker, is_allowed_feed_url, is_allowed_release_url
 from dms.version import __version__
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dms.ui.main_window import MainWindow
@@ -41,11 +44,9 @@ class UpdateCheck(QObject):
         if not enabled or not feed_url:
             return
         if not is_allowed_feed_url(feed_url):
-            self._window._log_event(
-                "WARNING",
-                "update",
+            logger.warning(
                 "Update check skipped: feed URL must use https://",
-                url=feed_url,
+                extra={"source": "update", "details": {"url": feed_url}},
             )
             return
 
@@ -80,20 +81,25 @@ class UpdateCheck(QObject):
         self._window._statusbar.showMessage(
             f"Update available: v{latest_version}. Click 'Update' to open release notes."
         )
-        self._window._log_event("INFO", "update", "Update available", version=latest_version)
+        logger.info(
+            "Update available", extra={"source": "update", "details": {"version": latest_version}}
+        )
 
     def _on_update_up_to_date(self, _latest_version: str) -> None:
         self._pending_update_url = None
         self._update_button.setVisible(False)
-        self._window._log_event(
-            "DEBUG", "update", "Application is up to date", version=_latest_version
+        logger.debug(
+            "Application is up to date",
+            extra={"source": "update", "details": {"version": _latest_version}},
         )
 
     def _on_update_check_failed(self, _error: str) -> None:
         # Keep this fully non-intrusive by silently failing.
         self._pending_update_url = None
         self._update_button.setVisible(False)
-        self._window._log_event("WARNING", "update", "Update check failed", error=_error)
+        logger.warning(
+            "Update check failed", extra={"source": "update", "details": {"error": _error}}
+        )
 
     def _open_update_url(self) -> None:
         if not self._pending_update_url:
@@ -101,11 +107,9 @@ class UpdateCheck(QObject):
         # Second gate: the feed was validated at parse time, but the URL is
         # about to be handed to the OS browser, so re-check it here too.
         if not is_allowed_release_url(self._pending_update_url):
-            self._window._log_event(
-                "WARNING",
-                "update",
+            logger.warning(
                 "Blocked update link outside the project release org",
-                url=self._pending_update_url,
+                extra={"source": "update", "details": {"url": self._pending_update_url}},
             )
             self._pending_update_url = None
             self._update_button.setVisible(False)

@@ -20,7 +20,7 @@ from dms.rnd.photos import RnDPhotoStore, attachment_directory, session_photos
 _MANAGED_JPEG = re.compile(r"^[0-9a-f]{32}\.jpg$", re.IGNORECASE)
 RND_SESSION_EXTENSION = ".fastgraph-rnd.json"
 
-_LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def session_snapshot(
@@ -59,7 +59,7 @@ def save_rnd_session(
     if cleanup_stale_photos and not cleanup:
         stale = _stale_attachments(path, snapshot)
         if stale:
-            _LOG.warning(
+            logger.warning(
                 "Left %d unreferenced photo file(s) in %s: this save went to a "
                 "different location than the loaded session, so they were kept.",
                 len(stale),

@@ -87,7 +87,7 @@ ROLE_ID = Qt.ItemDataRole.UserRole + 1
 KIND_GROUP = "group"
 KIND_MEASUREMENT = "measurement"
 
-_LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 #: Trailing " (3)" count suffix that group rows show after their name.
 _GROUP_COUNT_SUFFIX = re.compile(r"\s\(\d+\)$")
@@ -1815,7 +1815,7 @@ class RnDWidget(QWidget):
                 collected.append(child.data(0, ROLE_ID))
             elif kind == KIND_GROUP:
                 rescued = self._collect_child_measurement_ids(child)
-                _LOG.warning(
+                logger.warning(
                     "R&D tree contained a nested group (%s); moved %d measurement(s) "
                     "back to the parent level.",
                     child.data(0, ROLE_ID),

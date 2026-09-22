@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
     from dms.hrtf import HRTFCurve
 
 CurveKind = Literal["fr", "variation"]
+
+_PERCENTILE_BANDS = ("p10_db", "p25_db", "median_db", "p75_db", "p90_db")
 
 
 @dataclass(frozen=True)
@@ -28,16 +31,24 @@ class CurveData:
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
+    def map_bands(self, fn: Callable[[np.ndarray], np.ndarray]) -> CurveData:
+        """Return a copy with ``fn`` applied to every band array that is set."""
+        changes = {}
+        for name in ("mag_db", *_PERCENTILE_BANDS):
+            values = getattr(self, name)
+            if values is not None:
+                changes[name] = fn(values)
+        return replace(self, **changes)
+
+    def bands(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """p10, p25, median, p75 and p90; raises unless all five are present."""
+        values = tuple(getattr(self, name) for name in _PERCENTILE_BANDS)
+        if any(item is None for item in values):
+            raise ValueError("This curve has no complete variation band.")
+        return values
+
     def shifted(self, amount_db: float) -> CurveData:
-        return replace(
-            self,
-            mag_db=_shift_optional(self.mag_db, amount_db),
-            p10_db=_shift_optional(self.p10_db, amount_db),
-            p25_db=_shift_optional(self.p25_db, amount_db),
-            median_db=_shift_optional(self.median_db, amount_db),
-            p75_db=_shift_optional(self.p75_db, amount_db),
-            p90_db=_shift_optional(self.p90_db, amount_db),
-        )
+        return self.map_bands(lambda values: values + float(amount_db))
 
 
 @dataclass
@@ -91,9 +102,3 @@ class GraphState:
     show_layer_names: bool = True
     brand_clean_slate: bool = False
     export_text: ExportText = field(default_factory=ExportText)
-
-
-def _shift_optional(values: np.ndarray | None, amount_db: float) -> np.ndarray | None:
-    if values is None:
-        return None
-    return values + float(amount_db)

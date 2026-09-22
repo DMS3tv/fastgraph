@@ -415,3 +415,64 @@ def test_combine_sigma_matches_the_former_band_sigma_up_to_z_precision() -> None
         (np.abs(p90 - p10) / (2.0 * 1.2816) + np.abs(p75 - p25) / (2.0 * 0.6745)) / 2.0, 1e-9
     )
     np.testing.assert_allclose(sigma_from_percentiles(p10, p25, p75, p90), former, rtol=4e-5)
+
+
+_BAND_NAMES = ("mag_db", "p10_db", "p25_db", "median_db", "p75_db", "p90_db")
+
+
+def _former_map(curve: CurveData, fn) -> CurveData:
+    """The field-by-field ``replace`` that shifted/smooth/mono-HRTF each spelled out."""
+    from dataclasses import replace
+
+    return replace(
+        curve,
+        **{
+            name: None if getattr(curve, name) is None else fn(getattr(curve, name))
+            for name in _BAND_NAMES
+        },
+    )
+
+
+def _assert_same_curve(left: CurveData, right: CurveData) -> None:
+    assert left.kind == right.kind
+    assert np.array_equal(left.freqs, right.freqs)
+    for name in _BAND_NAMES:
+        a, b = getattr(left, name), getattr(right, name)
+        assert (a is None) == (b is None), name
+        if a is not None:
+            assert np.array_equal(a, b), name
+
+
+def test_map_bands_matches_the_former_per_field_code() -> None:
+    from dms.curator.transforms import smooth_curve
+    from dms.processing import smooth_fractional_octave
+
+    rng = np.random.default_rng(4)
+    freqs = np.geomspace(20.0, 20000.0, 400)
+    median = rng.normal(0.0, 2.0, freqs.size)
+    variation = CurveData(
+        kind="variation",
+        freqs=freqs,
+        p10_db=median - 3.0,
+        p25_db=median - 1.0,
+        median_db=median,
+        p75_db=median + 1.0,
+        p90_db=median + 3.0,
+    )
+    fr = CurveData(kind="fr", freqs=freqs, mag_db=median)
+    correction = rng.normal(0.0, 1.0, freqs.size)
+
+    for curve in (variation, fr):
+        _assert_same_curve(curve.shifted(-2.5), _former_map(curve, lambda v: v + -2.5))
+        _assert_same_curve(
+            smooth_curve(curve, 6),
+            _former_map(curve, lambda v: smooth_fractional_octave(freqs, v, fraction=6)[1]),
+        )
+        _assert_same_curve(
+            curve.map_bands(lambda v: v - correction),
+            _former_map(curve, lambda v: v - correction),
+        )
+    for got, name in zip(variation.bands(), _BAND_NAMES[1:], strict=True):
+        assert got is getattr(variation, name)
+    with pytest.raises(ValueError):
+        fr.bands()

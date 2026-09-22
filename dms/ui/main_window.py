@@ -4218,8 +4218,7 @@ class MainWindow(QMainWindow):
         *,
         hrtf: HRTFCurve | None,
     ) -> VariationBand | None:
-        return MainWindow._variation_from_curves(
-            self,
+        return self._variation_from_curves(
             self._kept_curves,
             self._average,
             hrtf=hrtf,
@@ -4247,11 +4246,7 @@ class MainWindow(QMainWindow):
         self,
         hrtf: HRTFCurve | None,
     ) -> tuple[np.ndarray, np.ndarray] | None:
-        source = (
-            self._active_two_channel_average()
-            if getattr(self, "_two_channel_enabled", False)
-            else self._average
-        )
+        source = self._active_two_channel_average() if self._two_channel_enabled else self._average
         if source is None:
             return None
         freqs, mag_db = source
@@ -4484,7 +4479,7 @@ class MainWindow(QMainWindow):
             return None
         sensitivity = self._calibrated_sensitivity()
         if sensitivity is None:
-            if not getattr(self, "_spl_uncalibrated_warned", False):
+            if not self._spl_uncalibrated_warned:
                 self._spl_uncalibrated_warned = True
                 self._statusbar.showMessage(
                     "dB SPL needs a calibrated input device; showing 1 kHz "
@@ -6368,23 +6363,18 @@ class MainWindow(QMainWindow):
         self._upload_to_squiglink()
 
     def _brand_mode_active(self) -> bool:
-        controller = getattr(self, "_theme_controller", None)
-        return bool(controller is not None and controller.brand_mode)
+        return bool(self._theme_controller.brand_mode)
 
     def _export_all_unavailable_reason(self) -> str:
         if self._state != QueueState.IDLE:
             return "Export All is available while Measure is idle."
         active_average = (
-            self._active_two_channel_average()
-            if getattr(self, "_two_channel_enabled", False)
-            else self._average
+            self._active_two_channel_average() if self._two_channel_enabled else self._average
         )
         if active_average is None:
             return "Keep at least one measurement to create the average."
         active_count = (
-            self._active_measure_count()
-            if getattr(self, "_two_channel_enabled", False)
-            else len(self._kept_curves)
+            self._active_measure_count() if self._two_channel_enabled else len(self._kept_curves)
         )
         if active_count < 2:
             return "Keep at least two measurements to create variation files."
@@ -6445,16 +6435,12 @@ class MainWindow(QMainWindow):
         raw_average = self._average_curve_with_hrtf(None)
         comp_average = self._average_curve_with_hrtf(hrtf)
         active_average_raw = (
-            self._active_two_channel_average()
-            if getattr(self, "_two_channel_enabled", False)
-            else self._average
+            self._active_two_channel_average() if self._two_channel_enabled else self._average
         )
         active_curves = (
-            self._active_measure_curves()
-            if getattr(self, "_two_channel_enabled", False)
-            else list(self._kept_curves)
+            self._active_measure_curves() if self._two_channel_enabled else list(self._kept_curves)
         )
-        if getattr(self, "_two_channel_enabled", False):
+        if self._two_channel_enabled:
             raw_variation = self._variation_from_curves(
                 active_curves, active_average_raw, hrtf=None
             )
@@ -6478,18 +6464,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        channel_label = (
-            self._active_measure_label() if getattr(self, "_two_channel_enabled", False) else ""
-        )
+        channel_label = self._active_measure_label() if self._two_channel_enabled else ""
         active_count = (
-            self._active_measure_count()
-            if getattr(self, "_two_channel_enabled", False)
-            else len(self._kept_curves)
+            self._active_measure_count() if self._two_channel_enabled else len(self._kept_curves)
         )
         export_session = (
-            self._active_measure_session()
-            if getattr(self, "_two_channel_enabled", False)
-            else self._session
+            self._active_measure_session() if self._two_channel_enabled else self._session
         )
         filenames = [
             build_filename(self._session, compensated=False, channel_label=channel_label),
@@ -6596,8 +6576,8 @@ class MainWindow(QMainWindow):
 
     def _sync_export_button(self) -> None:
         idle = self._state == QueueState.IDLE
-        two_channel = bool(getattr(self, "_two_channel_enabled", False))
-        frequency_mode = not MainWindow._channel_balance_mode_active(self)
+        two_channel = self._two_channel_enabled
+        frequency_mode = not self._channel_balance_mode_active()
         active_average = self._active_two_channel_average() if two_channel else self._average
         active_variation = self._active_measure_variation() if two_channel else self._variation
         if self._bottom_view_mode() == "variation":
@@ -6611,20 +6591,16 @@ class MainWindow(QMainWindow):
             self._export_btn.setToolTip("Export averaged FR as a REW-style TXT file.")
             export_enabled = idle and frequency_mode and active_average is not None
         self._export_btn.setEnabled(export_enabled)
-        if hasattr(self, "_send_to_curator_btn"):
-            self._send_to_curator_btn.setEnabled(export_enabled)
-        if hasattr(self, "_send_to_rnd_btn"):
-            unavailable = self._measure_to_rnd_unavailable_reason()
-            self._send_to_rnd_btn.setEnabled(not unavailable)
-            self._send_to_rnd_btn.setToolTip(
-                unavailable or "Send the current average or all kept Var measurements to R&D."
-            )
-        if MainWindow._brand_mode_active(self):
+        self._send_to_curator_btn.setEnabled(export_enabled)
+        unavailable = self._measure_to_rnd_unavailable_reason()
+        self._send_to_rnd_btn.setEnabled(not unavailable)
+        self._send_to_rnd_btn.setToolTip(
+            unavailable or "Send the current average or all kept Var measurements to R&D."
+        )
+        if self._brand_mode_active():
             self._upload_btn.setText("Export All…")
-            if hasattr(self._upload_btn, "setObjectName"):
-                self._upload_btn.setObjectName("btn_export")
-            if hasattr(self._upload_btn, "setRole"):
-                self._upload_btn.setRole("primary")
+            self._upload_btn.setObjectName("btn_export")
+            self._upload_btn.setRole("primary")
             unavailable = self._export_all_unavailable_reason()
             self._upload_btn.setEnabled(not unavailable)
             self._upload_btn.setToolTip(
@@ -6632,23 +6608,19 @@ class MainWindow(QMainWindow):
             )
         else:
             self._upload_btn.setText("Upload to Squiglink")
-            if hasattr(self._upload_btn, "setObjectName"):
-                self._upload_btn.setObjectName("btn_upload")
-            if hasattr(self._upload_btn, "setRole"):
-                self._upload_btn.setRole("positive")
+            self._upload_btn.setObjectName("btn_upload")
+            self._upload_btn.setRole("positive")
             self._upload_btn.setEnabled(idle and frequency_mode and active_average is not None)
             self._upload_btn.setToolTip("Upload the current average to Squiglink.")
-        if hasattr(self, "_undo_btn"):
-            self._undo_btn.setEnabled(idle and self._active_measure_count() > 0)
-        if hasattr(self, "_clear_btn"):
-            self._clear_btn.setEnabled(
-                idle
-                and (
-                    bool(self._two_channel_pairs) or self._pending_pair is not None
-                    if self._two_channel_enabled
-                    else bool(self._kept_curves) or self._pending_curve is not None
-                )
+        self._undo_btn.setEnabled(idle and self._active_measure_count() > 0)
+        self._clear_btn.setEnabled(
+            idle
+            and (
+                bool(self._two_channel_pairs) or self._pending_pair is not None
+                if self._two_channel_enabled
+                else bool(self._kept_curves) or self._pending_curve is not None
             )
+        )
 
     def _squiglink_endpoint(self) -> tuple[str, int]:
         host = str(self._settings.get("squiglink_host") or "").strip()

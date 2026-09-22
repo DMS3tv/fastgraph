@@ -50,73 +50,25 @@ def compute_frequency_response(
     fs: int,
     f_low: float = 20.0,
     f_high: float = 20000.0,
-    *,
-    window: bool = True,
     **window_kwargs,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the magnitude frequency response from the recorded sweep and the
     known excitation sweep.
 
-    ``window=True`` (default) deconvolves the recording into a circular impulse
-    response, windows the linear part of that response — which discards the
-    harmonic distortion packets that sit at negative time, and the noise that
-    sits between the direct sound and the end of the buffer — and takes the
-    spectrum of the window. ``window=False`` keeps the historical behaviour:
-    plain regularized spectral division of the whole recording, bit-exact.
+    The recording is deconvolved into a circular impulse response, the linear
+    part of that response is windowed — which discards the harmonic distortion
+    packets that sit at negative time, and the noise that sits between the
+    direct sound and the end of the buffer — and the spectrum of the window is
+    returned.
 
     Extra keyword arguments are forwarded to :func:`window_impulse_response`.
 
     Returns (freqs_hz, magnitude_db) — full resolution.
     """
-    if window:
-        deconv = deconvolve_sweep(recording, sweep, fs)
-        ir_window = window_impulse_response(deconv, f_low=f_low, f_high=f_high, **window_kwargs)
-        return frequency_response_from_ir(ir_window, fs, f_low=f_low, f_high=f_high)
-    if window_kwargs:
-        raise TypeError(
-            "compute_frequency_response() got unexpected keyword arguments "
-            f"{sorted(window_kwargs)} with window=False"
-        )
-    return _legacy_frequency_response(recording, sweep, fs, f_low, f_high)
-
-
-def _legacy_frequency_response(
-    recording: np.ndarray,
-    sweep: np.ndarray,
-    fs: int,
-    f_low: float = 20.0,
-    f_high: float = 20000.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Regularized spectral division over the whole recording (legacy path).
-
-    This keeps the displayed curve raw while avoiding the alignment/windowing
-    errors that can come from taking an FFT of a loosely sliced deconvolved IR.
-    Returns (freqs_hz, magnitude_db) — full resolution.
-    """
-    sweep64 = sweep.astype(np.float64)
-    rec64 = recording.astype(np.float64)
-
-    nfft = int(2 ** np.ceil(np.log2(max(len(sweep64), len(rec64)))))
-
-    SWEEP = np.fft.rfft(sweep64, n=nfft)
-    REC = np.fft.rfft(rec64, n=nfft)
-
-    # Estimate the transfer function directly:
-    # H = Y * conj(X) / (|X|^2 + eps)
-    sweep_power = np.abs(SWEEP) ** 2
-    eps = max(float(np.max(sweep_power)) * 1e-12, 1e-18)
-    H_fr = REC * np.conj(SWEEP) / (sweep_power + eps)
-    freqs = np.fft.rfftfreq(nfft, d=1.0 / fs)
-
-    mag = np.abs(H_fr)
-    # Avoid log(0)
-    mag = np.clip(mag, 1e-12, None)
-    mag_db = 20.0 * np.log10(mag)
-
-    # Restrict to measurement band
-    mask = (freqs >= f_low) & (freqs <= f_high)
-    return freqs[mask], mag_db[mask]
+    deconv = deconvolve_sweep(recording, sweep, fs)
+    ir_window = window_impulse_response(deconv, f_low=f_low, f_high=f_high, **window_kwargs)
+    return frequency_response_from_ir(ir_window, fs, f_low=f_low, f_high=f_high)
 
 
 # ---------------------------------------------------------------------------
@@ -687,41 +639,23 @@ def downsample_to_log_points(
     n_points: int = 600,
     f_ref: float = 1000.0,
     normalize_ref: bool = True,
-    band_average: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Resample to ~n_points log-spaced frequencies.
     Guarantees f_ref (1 kHz) is one of the output points.
     Optionally re-normalizes so f_ref = 0 dB exactly.
 
-    ``band_average=True`` averages the power of every source bin inside each
-    log cell instead of point-sampling it; cells too sparse to average fall
-    back to the linear interpolation used by ``band_average=False``.
+    Averages the power of every source bin inside each log cell instead of
+    point-sampling it; cells too sparse to average fall back to linear
+    interpolation.
     """
-    if band_average:
-        return resample_log_band_average(
-            freqs,
-            mag_db,
-            n_points=n_points,
-            f_ref=f_ref,
-            normalize_ref=normalize_ref,
-        )
-
-    f_min = freqs[0]
-    f_max = freqs[-1]
-
-    target = _log_target_grid(f_min, f_max, n_points, f_ref)
-
-    interp = interp1d(
-        freqs, mag_db, kind="linear", bounds_error=False, fill_value=(mag_db[0], mag_db[-1])
+    return resample_log_band_average(
+        freqs,
+        mag_db,
+        n_points=n_points,
+        f_ref=f_ref,
+        normalize_ref=normalize_ref,
     )
-    out_mag = interp(target)
-
-    if normalize_ref:
-        idx_ref_out = int(np.argmin(np.abs(target - f_ref)))
-        out_mag -= out_mag[idx_ref_out]
-
-    return target, out_mag
 
 
 # ---------------------------------------------------------------------------

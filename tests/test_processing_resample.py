@@ -6,6 +6,11 @@ import pytest
 from dms.processing import downsample_to_log_points, resample_log_band_average
 
 
+def _interpolated(freqs: np.ndarray, mag_db: np.ndarray, **kwargs):
+    """Point-sampled resampling: every cell too sparse, so all interpolate."""
+    return resample_log_band_average(freqs, mag_db, min_bins=freqs.size + 1, **kwargs)
+
+
 def _dense_grid(step_hz: float = 0.5) -> np.ndarray:
     return np.arange(20.0, 20000.0 + step_hz, step_hz)
 
@@ -15,7 +20,7 @@ def test_band_average_matches_interpolation_for_smooth_curve() -> None:
     mag_db = 6.0 * np.log10(freqs / 1000.0) - 2.0 * np.sin(np.log(freqs))
 
     _, averaged = resample_log_band_average(freqs, mag_db, normalize_ref=False)
-    _, sampled = downsample_to_log_points(freqs, mag_db, normalize_ref=False, band_average=False)
+    _, sampled = _interpolated(freqs, mag_db, normalize_ref=False)
 
     # A cell is ~1.2 % wide, so a smooth curve cannot move inside it.
     assert np.max(np.abs(averaged - sampled)) < 0.05
@@ -31,7 +36,7 @@ def test_band_average_suppresses_single_noisy_bin() -> None:
     mag_db[spike_bin] = 40.0
 
     _, averaged = resample_log_band_average(freqs, mag_db, normalize_ref=False)
-    _, sampled = downsample_to_log_points(freqs, mag_db, normalize_ref=False, band_average=False)
+    _, sampled = _interpolated(freqs, mag_db, normalize_ref=False)
 
     # Point sampling lands on the bad bin and reports it at full height.
     assert np.max(sampled) > 30.0
@@ -45,9 +50,7 @@ def test_band_average_falls_back_when_cell_has_one_bin() -> None:
     mag_db = np.array([2.0, 4.0, 6.0])
 
     target_avg, averaged = downsample_to_log_points(freqs, mag_db, normalize_ref=False)
-    target_int, sampled = downsample_to_log_points(
-        freqs, mag_db, normalize_ref=False, band_average=False
-    )
+    target_int, sampled = _interpolated(freqs, mag_db, normalize_ref=False)
 
     # Every cell of a three-point curve is too sparse to average, so the
     # historical interpolation is used verbatim.
@@ -67,7 +70,7 @@ def test_grid_keeps_600_points_and_exact_1khz() -> None:
     idx_ref = int(np.argmin(np.abs(target - 1000.0)))
     assert out[idx_ref] == pytest.approx(0.0, abs=1e-12)
 
-    legacy_target, _ = downsample_to_log_points(freqs, mag_db, band_average=False)
+    legacy_target, _ = _interpolated(freqs, mag_db)
     np.testing.assert_array_equal(target, legacy_target)
 
 

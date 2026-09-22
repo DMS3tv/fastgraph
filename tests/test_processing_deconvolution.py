@@ -49,9 +49,35 @@ def _record(sweep: np.ndarray, tail_s: float = 0.5) -> np.ndarray:
     return signal.sosfilt(_system(), _excitation(sweep, tail_s))
 
 
-def _curve(recording: np.ndarray, sweep: np.ndarray, **kwargs):
+def _spectral_division(
+    recording: np.ndarray,
+    sweep: np.ndarray,
+    fs: int,
+    f_low: float = 20.0,
+    f_high: float = 20000.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Regularized spectral division over the whole recording.
+
+    The unwindowed response the application used before IR windowing, kept
+    here as the reference the windowed path is checked against.
+    """
+    sweep64 = sweep.astype(np.float64)
+    rec64 = recording.astype(np.float64)
+    nfft = int(2 ** np.ceil(np.log2(max(len(sweep64), len(rec64)))))
+    SWEEP = np.fft.rfft(sweep64, n=nfft)
+    REC = np.fft.rfft(rec64, n=nfft)
+    sweep_power = np.abs(SWEEP) ** 2
+    eps = max(float(np.max(sweep_power)) * 1e-12, 1e-18)
+    H_fr = REC * np.conj(SWEEP) / (sweep_power + eps)
+    freqs = np.fft.rfftfreq(nfft, d=1.0 / fs)
+    mag_db = 20.0 * np.log10(np.clip(np.abs(H_fr), 1e-12, None))
+    mask = (freqs >= f_low) & (freqs <= f_high)
+    return freqs[mask], mag_db[mask]
+
+
+def _curve(recording: np.ndarray, sweep: np.ndarray, response=compute_frequency_response):
     """The 600-point normalized curve the application would plot."""
-    freqs, mag_db = compute_frequency_response(recording, sweep, FS, F_LOW, F_HIGH, **kwargs)
+    freqs, mag_db = response(recording, sweep, FS, F_LOW, F_HIGH)
     # A fixed grid so the windowed and legacy paths — whose first FFT bin
     # inside the band differs — land on exactly the same frequencies.
     return resample_log_band_average(
@@ -83,8 +109,8 @@ def test_deconvolved_ir_matches_legacy_response_within_0_1_db() -> None:
     sweep = _sweep()
     recording = _record(sweep)
 
-    freqs_win, mag_win = _curve(recording, sweep, window=True)
-    freqs_legacy, mag_legacy = _curve(recording, sweep, window=False)
+    freqs_win, mag_win = _curve(recording, sweep)
+    freqs_legacy, mag_legacy = _curve(recording, sweep, response=_spectral_division)
 
     np.testing.assert_allclose(freqs_win, freqs_legacy)
     band = (freqs_win >= 20.0) & (freqs_win <= 20000.0)
@@ -199,8 +225,8 @@ def test_windowing_rejects_harmonic_energy() -> None:
     band = (freqs >= 20.0) & (freqs <= 15000.0)
     assert np.max(np.abs(distorted_db[band] - clean_db[band])) < 0.1
 
-    _, clean_raw = _curve(clean, sweep, window=False)
-    _, distorted_raw = _curve(distorted, sweep, window=False)
+    _, clean_raw = _curve(clean, sweep, response=_spectral_division)
+    _, distorted_raw = _curve(distorted, sweep, response=_spectral_division)
     # Without the window the same distortion visibly bends the curve.
     assert np.max(np.abs(distorted_raw[band] - clean_raw[band])) > 0.2
 

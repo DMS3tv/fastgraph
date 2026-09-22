@@ -215,3 +215,61 @@ def test_group_variation_requires_two_measurements_and_returns_percentiles() -> 
     assert p75.shape == freqs.shape
     assert p90.shape == freqs.shape
     assert median.shape == freqs.shape
+
+
+def _former_measurement_session_data(measurement: RnDMeasurement) -> SessionData:
+    """The hand-listed reader ``rnd.models.measurement_session_data`` used."""
+    metadata = dict(measurement.metadata)
+    metadata.setdefault("rig", measurement.rig)
+    return SessionData(
+        rig=str(metadata.get("rig") or measurement.rig or "Unknown Rig"),
+        brand=str(metadata.get("brand") or "Unknown"),
+        model=str(metadata.get("model") or "Unknown"),
+        model_number=str(metadata.get("model_number") or ""),
+        asset_tag=str(metadata.get("asset_tag") or ""),
+        firmware=str(metadata.get("firmware") or ""),
+        eq_applied=bool(metadata.get("eq_applied", False)),
+        anc_mode=bool(metadata.get("anc_mode", False)),
+        transparency_mode=bool(metadata.get("transparency_mode", False)),
+        form_factor=str(metadata.get("form_factor") or "over-ear"),
+        in_ear_fitment=str(metadata.get("in_ear_fitment") or ""),
+        open_back=bool(metadata.get("open_back", True)),
+        pads_notes=str(metadata.get("pads_notes") or ""),
+        connection=str(metadata.get("connection") or "wired analog"),
+        channel_side=str(metadata.get("channel_side") or ""),
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            **SessionData(
+                rig="Rig A",
+                brand="DMS",
+                model="Demo",
+                model_number="D-1",
+                asset_tag="A7",
+                firmware="1.2",
+                eq_applied=True,
+                anc_mode=True,
+                form_factor="in-ear",
+                in_ear_fitment="M tips",
+                open_back=False,
+                pads_notes="new pads",
+                connection="bluetooth",
+                channel_side="L",
+            ).to_dict(),
+            "measure_channel": "L",
+        },
+        {**SessionData("Unknown Rig", "Unknown", "Unknown").to_dict(), "measure_channel": "1"},
+        {"brand": "DMS", "model": "Demo"},
+    ],
+)
+def test_session_data_from_measurement_metadata_matches_the_former_reader(metadata) -> None:
+    measurement = _measurement("m1", "One")
+    measurement.metadata = metadata
+
+    rebuilt = SessionData.from_dict({"rig": measurement.rig, **measurement.metadata})
+
+    assert rebuilt == _former_measurement_session_data(measurement)

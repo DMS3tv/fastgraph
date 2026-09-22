@@ -144,8 +144,6 @@ from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
     generate_measurement_name,
-    measurement_session_data,
-    session_snapshot,
 )
 from dms.rnd.models import (
     group_variation as rnd_group_variation,
@@ -4910,7 +4908,7 @@ class MainWindow(QMainWindow):
             ),
             freqs=np.array(freqs, dtype=float, copy=True),
             mag_db=np.array(mag_db, dtype=float, copy=True),
-            metadata=session_snapshot(self._session),
+            metadata=self._session.to_dict(),
             rig=self._session.rig,
             input_device_label=self._current_input_device_label(),
             input_channel_index=self._current_input_channel(),
@@ -5844,7 +5842,7 @@ class MainWindow(QMainWindow):
         active_hrtf = self._hrtf if self._is_hrtf_active() else None
         correction = None
         curve: CurveData
-        curator_metadata = session_snapshot(self._session)
+        curator_metadata = self._session.to_dict()
         curator_metadata.update(
             {
                 "hrtf_name": active_hrtf.name if active_hrtf is not None else "",
@@ -5974,7 +5972,7 @@ class MainWindow(QMainWindow):
         active_hrtf = self._hrtf if self._is_hrtf_active() else None
         hrtf_path = str(active_hrtf.path) if active_hrtf is not None else ""
         hrtf_name = active_hrtf.name if active_hrtf is not None else ""
-        metadata = session_snapshot(self._session)
+        metadata = self._session.to_dict()
         input_label = self._current_input_device_label()
         output_label = self._current_output_device_label()
         active_label = self._active_measure_label()
@@ -6203,7 +6201,7 @@ class MainWindow(QMainWindow):
     def _export_rnd_measurement(
         self, measurement: RnDMeasurement, requested_path: str | None = None
     ) -> None:
-        session = measurement_session_data(measurement)
+        session = SessionData.from_dict({"rig": measurement.rig, **measurement.metadata})
         hrtf_path = self._rnd_widget.resolve_hrtf_path(measurement.hrtf_path, measurement.hrtf_name)
         if not self._ensure_rnd_hrtfs_available([measurement]):
             return
@@ -6256,7 +6254,7 @@ class MainWindow(QMainWindow):
             return
         freqs, p10, p25, p75, p90, median = variation
         hrtf = None
-        session = measurement_session_data(measurements[0])
+        session = SessionData.from_dict({"rig": measurements[0].rig, **measurements[0].metadata})
         export_variation(
             freqs=freqs,
             p10_db=p10,

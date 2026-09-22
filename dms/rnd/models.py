@@ -302,32 +302,6 @@ class RnDSession:
         return not self.measurements and not self.groups
 
 
-def session_snapshot(session: SessionData) -> dict[str, Any]:
-    return session.to_dict()
-
-
-def measurement_session_data(measurement: RnDMeasurement) -> SessionData:
-    metadata = dict(measurement.metadata)
-    metadata.setdefault("rig", measurement.rig)
-    return SessionData(
-        rig=str(metadata.get("rig") or measurement.rig or "Unknown Rig"),
-        brand=str(metadata.get("brand") or "Unknown"),
-        model=str(metadata.get("model") or "Unknown"),
-        model_number=str(metadata.get("model_number") or ""),
-        asset_tag=str(metadata.get("asset_tag") or ""),
-        firmware=str(metadata.get("firmware") or ""),
-        eq_applied=bool(metadata.get("eq_applied", False)),
-        anc_mode=bool(metadata.get("anc_mode", False)),
-        transparency_mode=bool(metadata.get("transparency_mode", False)),
-        form_factor=str(metadata.get("form_factor") or "over-ear"),
-        in_ear_fitment=str(metadata.get("in_ear_fitment") or ""),
-        open_back=bool(metadata.get("open_back", True)),
-        pads_notes=str(metadata.get("pads_notes") or ""),
-        connection=str(metadata.get("connection") or "wired analog"),
-        channel_side=str(metadata.get("channel_side") or ""),
-    )
-
-
 def generate_measurement_name(
     session: SessionData,
     input_label: str,

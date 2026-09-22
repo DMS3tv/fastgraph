@@ -74,8 +74,6 @@ __all__ = [
     "UnsupportedMeasureSessionVersion",
     "diagnostics_to_dict",
     "distortion_summary",
-    "session_data_from_dict",
-    "session_data_to_dict",
 ]
 
 
@@ -182,37 +180,6 @@ def distortion_summary(value: Any) -> dict[str, float] | None:
         "thd_percent_max": round(float(valid_thd[peak]), ARRAY_DECIMALS),
         "thd_max_hz": round(float(valid_freqs[peak]), ARRAY_DECIMALS),
     }
-
-
-def session_data_to_dict(session: SessionData) -> dict[str, Any]:
-    """Serialize :class:`~dms.session.SessionData`.
-
-    ``SessionData`` already offers ``to_dict``; the matching reader lives here
-    because ``dms/session.py`` has no ``from_dict``.
-    """
-    return session.to_dict()
-
-
-def session_data_from_dict(data: Any) -> SessionData:
-    """Rebuild :class:`~dms.session.SessionData` from a saved dictionary.
-
-    Unknown keys are ignored and missing keys fall back to the dataclass's own
-    defaults, so a metadata block written by an older Fastgraph still loads.
-    """
-    payload = dict(data or {})
-    kwargs: dict[str, Any] = {}
-    for spec in dataclasses.fields(SessionData):
-        if spec.name not in payload:
-            continue
-        value = payload[spec.name]
-        if isinstance(spec.default, bool):
-            kwargs[spec.name] = bool(value)
-        else:
-            kwargs[spec.name] = "" if value is None else str(value)
-    kwargs.setdefault("rig", "")
-    kwargs.setdefault("brand", "")
-    kwargs.setdefault("model", "")
-    return SessionData(**kwargs)
 
 
 def _timing_quality(value: Any) -> TimingQuality | None:
@@ -370,7 +337,7 @@ class MeasureSession:
             "schema_version": int(self.schema_version),
             "saved_app_version": self.saved_app_version,
             "created_at": self.created_at,
-            "metadata": session_data_to_dict(self.metadata),
+            "metadata": self.metadata.to_dict(),
             "two_channel": self.two_channel,
             "bottom_mode": self.bottom_mode,
             "level_mode": self.level_mode,
@@ -395,7 +362,7 @@ class MeasureSession:
         # version's defaults, so the session is upgraded in memory and a
         # re-save writes the current schema.
         return cls(
-            metadata=session_data_from_dict(payload.get("metadata")),
+            metadata=SessionData.from_dict(payload.get("metadata")),
             two_channel=bool(payload.get("two_channel", False)),
             bottom_mode=str(payload.get("bottom_mode") or "combined"),
             level_mode=str(payload.get("level_mode") or "ref_1khz"),

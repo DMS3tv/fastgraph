@@ -1,4 +1,6 @@
+import dataclasses
 from dataclasses import asdict, dataclass
+from typing import Any
 
 
 @dataclass
@@ -26,6 +28,26 @@ class SessionData:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "SessionData":
+        """Rebuild a session from :meth:`to_dict` output.
+
+        Unknown keys are ignored and missing keys fall back to the dataclass's
+        own defaults, so a metadata block written by an older Fastgraph still
+        loads.
+        """
+        payload = dict(payload or {})
+        kwargs: dict[str, Any] = {"rig": "", "brand": "", "model": ""}
+        for spec in dataclasses.fields(cls):
+            if spec.name not in payload:
+                continue
+            value = payload[spec.name]
+            if isinstance(spec.default, bool):
+                kwargs[spec.name] = bool(value)
+            else:
+                kwargs[spec.name] = "" if value is None else str(value)
+        return cls(**kwargs)
 
     def to_rew_header(self) -> str:
         lines = [

@@ -12,7 +12,6 @@ from dms.measure_session import (
     UnsupportedMeasureSessionVersion,
     diagnostics_to_dict,
     distortion_summary,
-    session_data_from_dict,
 )
 from dms.measurement_alignment import MeasurementDiagnostics
 from dms.processing import HarmonicAnalysis
@@ -299,14 +298,14 @@ def test_non_finite_diagnostics_values_serialize_as_null() -> None:
 
 
 def test_session_data_from_dict_ignores_unknown_and_missing_keys() -> None:
-    metadata = session_data_from_dict(
+    metadata = SessionData.from_dict(
         {"rig": "Rig", "brand": "DMS", "model": "Demo", "unexpected": 1}
     )
 
     assert metadata.rig == "Rig"
     assert metadata.form_factor == "over-ear"
     assert metadata.eq_applied is False
-    assert session_data_from_dict({}).rig == ""
+    assert SessionData.from_dict({}).rig == ""
 
 
 def test_source_path_is_runtime_only() -> None:

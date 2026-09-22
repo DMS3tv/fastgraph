@@ -4,6 +4,7 @@ Thread-safe; all callbacks communicate via Qt signals.
 """
 
 import contextlib
+import logging
 import os
 import threading
 import time
@@ -21,6 +22,8 @@ from dms.measurement_alignment import (
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
 from dms.recording_dump import save_failed_recording
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Device helpers
@@ -49,6 +52,8 @@ def refresh_audio_backend() -> bool:
         initialize()
         return True
     except Exception:
+        # _terminate/_initialize are private sounddevice API with no documented errors.
+        logger.warning("Audio backend refresh failed", exc_info=True)
         return False
 
 
@@ -58,7 +63,8 @@ def _hostapi_names() -> dict[int, str]:
             idx: str(api.get("name") or f"Host API {idx}")
             for idx, api in enumerate(sd.query_hostapis())
         }
-    except Exception:
+    except sd.PortAudioError:
+        logger.warning("Could not list audio host APIs", exc_info=True)
         return {}
 
 
@@ -91,7 +97,8 @@ def _devices_for_kind(kind: str) -> list[dict[str, Any]]:
             for idx, d in enumerate(sd.query_devices())
             if int(d.get(key, 0) or 0) > 0
         ]
-    except Exception:
+    except (sd.PortAudioError, ValueError):
+        logger.warning("Could not list %s devices", kind, exc_info=True)
         return []
 
 
@@ -262,8 +269,8 @@ def device_by_index(index: int, kind: str | None = None) -> dict | None:
         for device in devices:
             if int(device["index"]) == int(index):
                 return device
-    except Exception:
-        pass
+    except (sd.PortAudioError, ValueError):
+        logger.warning("Could not look up audio device %s", index, exc_info=True)
     return None
 
 
@@ -378,6 +385,7 @@ class LevelMonitor(QObject):
             self._stream.start()
             self._start_emit_timer()
         except Exception as e:
+            logger.warning("Level monitor failed to start", exc_info=True)
             with self._lock:
                 self._running = False
             self._stop_emit_timer()
@@ -394,8 +402,8 @@ class LevelMonitor(QObject):
             try:
                 stream.stop(ignore_errors=True)
                 stream.close(ignore_errors=True)
-            except Exception:
-                pass
+            except sd.PortAudioError:
+                logger.warning("Level monitor stream did not close cleanly", exc_info=True)
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         with self._lock:
@@ -466,6 +474,7 @@ class DualLevelMonitor(QObject):
             self._stream.start()
             self._start_emit_timer()
         except Exception as exc:
+            logger.warning("Two-channel level monitor failed to start", exc_info=True)
             self._running = False
             self._stream = None
             self._stop_emit_timer()
@@ -482,8 +491,8 @@ class DualLevelMonitor(QObject):
             try:
                 stream.stop(ignore_errors=True)
                 stream.close(ignore_errors=True)
-            except Exception:
-                pass
+            except sd.PortAudioError:
+                logger.warning("Level monitor stream did not close cleanly", exc_info=True)
 
     def _callback(self, indata: np.ndarray, _frames: int, _time_info, _status) -> None:
         if not self._running or indata.shape[1] < 2:
@@ -514,7 +523,8 @@ def _device_identity(devices: list[dict]) -> list[tuple[int, str, int]]:
                     int(device.get("hostapi", -1)),
                 )
             )
-        except Exception:
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Skipping malformed device descriptor %r", device)
             continue
     return identity
 
@@ -559,6 +569,8 @@ class _DevicePollWorker(QObject):
             outputs = get_output_devices()
             inputs = get_input_devices()
         except Exception:
+            # Last guard on the poll thread: an escaped exception would abort the app.
+            logger.warning("Device poll failed", exc_info=True)
             return
         identity = (_device_identity(outputs), _device_identity(inputs))
         if identity == self._last:
@@ -644,7 +656,9 @@ class DevicePoller(QObject):
             thread.quit()
             if not thread.wait(5000):
                 self._orphaned_threads.append(thread)
-        except Exception:
+        except RuntimeError:
+            # The QThread's C++ object is already gone.
+            logger.warning("Device poll thread could not be stopped", exc_info=True)
             self._orphaned_threads.append(thread)
 
     def _on_devices_changed(self, outputs: list, inputs: list) -> None:
@@ -725,6 +739,7 @@ class SweepWorker(QObject):
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
         except Exception as e:
+            logger.warning("Sweep failed", exc_info=True)
             self.error.emit(f"Sweep error: {e}")
 
     def _run_inner(

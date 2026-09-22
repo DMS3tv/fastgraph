@@ -1,7 +1,9 @@
-import contextlib
+import logging
 
 from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.settings_manager import _config_dir
+
+logger = logging.getLogger(__name__)
 
 
 class CalibrationStore:
@@ -54,6 +56,10 @@ class CalibrationStore:
                 continue
         self._data = clean
 
-    def _save(self) -> None:
-        with contextlib.suppress(Exception):
+    def _save(self) -> bool:
+        try:
             atomic_write_json(self._path, self._data, mode=0o600)
+        except Exception:
+            logger.error("Calibration could not be saved to %s", self._path, exc_info=True)
+            return False
+        return True

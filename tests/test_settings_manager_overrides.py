@@ -174,3 +174,19 @@ def test_removed_variation_combination_key_is_dropped(monkeypatch, tmp_path: Pat
     settings.set("theme", "dark")
     saved = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
     assert "hrtf_variation_combination" not in saved
+
+
+def test_settings_write_failure_is_logged(monkeypatch, caplog) -> None:
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(settings_module, "atomic_write_json", fail)
+    settings = SettingsManager()
+
+    settings.set("buffer_size", 2048)
+
+    assert settings._save() is False
+    assert any(
+        record.levelname == "ERROR" and "could not be saved" in record.getMessage()
+        for record in caplog.records
+    )

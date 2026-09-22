@@ -68,3 +68,21 @@ def test_calibration_rejects_invalid_channel_and_restores_controls(
     assert dialog._start_btn.isEnabled() is True
     assert dialog._accept_btn.isEnabled() is False
     assert "is not available" in dialog._status.text()
+
+
+def test_calibration_write_failure_is_logged(monkeypatch, caplog) -> None:
+    import dms.calibration as calibration_module
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(calibration_module, "atomic_write_json", fail)
+    store = calibration_module.CalibrationStore()
+
+    store.set_sensitivity("Mic", 1.5)
+
+    assert store._save() is False
+    assert any(
+        record.levelname == "ERROR" and "could not be saved" in record.getMessage()
+        for record in caplog.records
+    )

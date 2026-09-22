@@ -1,10 +1,12 @@
-import contextlib
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
+
+logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict[str, Any] = {
     "settings_schema_version": 3,
@@ -291,12 +293,16 @@ class SettingsManager:
         self._data.pop("hrtf_variation_combination", None)
         self._data["settings_schema_version"] = 3
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
         # settings.json holds the encrypted Squiglink credentials, so it is
         # written owner-only and swapped in atomically: a crash mid-write can
         # no longer truncate the user's saved folders, shortcuts and login.
-        with contextlib.suppress(Exception):
+        try:
             atomic_write_json(self._path, self._data, mode=0o600)
+        except Exception:
+            logger.error("Settings could not be saved to %s", self._path, exc_info=True)
+            return False
+        return True
 
 
 def _config_dir() -> Path:

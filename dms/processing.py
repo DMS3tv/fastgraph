@@ -540,11 +540,30 @@ def normalize_at_1khz(
     Normalize so that 1 kHz = 0 dB.
     Uses linear interpolation to find the exact value at 1 kHz.
     """
-    if f_ref < freqs[0] or f_ref > freqs[-1]:
-        raise ValueError(f"Reference frequency {f_ref} Hz out of data range.")
-    interp = interp1d(freqs, mag_db, kind="linear", bounds_error=True)
-    ref_val = float(interp(f_ref))
-    return mag_db - ref_val
+    return mag_db - value_at(freqs, mag_db, f_ref)
+
+
+def value_at(
+    freqs: np.ndarray,
+    values: np.ndarray,
+    f: float,
+    *,
+    log_x: bool = False,
+) -> float:
+    """Linearly interpolated value at ``f`` (in log-frequency with ``log_x``).
+
+    Raises ``ValueError`` when ``f`` lies outside ``freqs`` instead of holding
+    the nearest edge.
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if freqs.size < 2 or freqs.size != values.size:
+        raise ValueError("Response data is incomplete.")
+    if f < freqs[0] or f > freqs[-1]:
+        raise ValueError(f"Reference frequency {f:g} Hz out of data range.")
+    if log_x:
+        return float(np.interp(np.log10(f), np.log10(freqs), values))
+    return float(np.interp(f, freqs, values))
 
 
 # ---------------------------------------------------------------------------

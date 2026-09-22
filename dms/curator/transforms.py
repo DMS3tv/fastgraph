@@ -6,7 +6,7 @@ import numpy as np
 from scipy.special import erf
 
 from dms.curator.models import CurveData, LayerState
-from dms.processing import F_REF, log_grid, smooth_fractional_octave
+from dms.processing import F_REF, log_grid, smooth_fractional_octave, value_at
 
 # Standard normal quantiles used to turn a percentile band into a sigma.
 Z_P90 = 1.2816
@@ -42,7 +42,7 @@ def normalization_offset_at_1khz_with_warning(
             "1 kHz is outside this curve's frequency range "
             f"({low:g}-{high:g} Hz); it was left un-normalized."
         )
-    return -float(np.interp(F_REF, freqs, values)), None
+    return -value_at(freqs, values, F_REF), None
 
 
 def apply_layer_transform(layer: LayerState) -> CurveData:

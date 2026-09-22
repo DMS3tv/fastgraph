@@ -42,6 +42,7 @@ from dms.processing import (
     compute_rms_average,
     log_grid,
     smooth_fractional_octave,
+    value_at,
 )
 
 # ---------------------------------------------------------------------------
@@ -102,11 +103,6 @@ def resample_to_common(freqs: Any, mag_db: Any) -> np.ndarray:
     return np.interp(_LOG_COMMON_GRID, np.log10(f), v)
 
 
-def _value_at(freqs: np.ndarray, values: np.ndarray, f_hz: float) -> float:
-    """Interpolated value at ``f_hz``, holding the edges."""
-    return float(np.interp(np.log10(f_hz), np.log10(freqs), values))
-
-
 def _rms(values: np.ndarray) -> float:
     values = np.asarray(values, dtype=np.float64)
     if values.size == 0:
@@ -156,7 +152,9 @@ def load_target_curve(path: str | Path) -> tuple[np.ndarray, np.ndarray, list[st
             f"{Path(path).name}: covers {freqs[0]:.0f}-{freqs[-1]:.0f} Hz, so the "
             "1 kHz normalization used the nearest end of the file."
         )
-    return freqs, mag_db - _value_at(freqs, mag_db, F_REF), warnings
+    # Deliberately clamped: a partial file is anchored on its nearest end.
+    anchor = min(max(F_REF, float(freqs[0])), float(freqs[-1]))
+    return freqs, mag_db - value_at(freqs, mag_db, anchor, log_x=True), warnings
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +223,7 @@ def delta_curve(
         delta = np.asarray(delta, dtype=np.float64)
 
     if offset_mode == "1khz":
-        offset = _value_at(np.asarray(COMMON_GRID, dtype=float), delta, F_REF)
+        offset = value_at(COMMON_GRID, delta, F_REF, log_x=True)
     elif offset_mode == "mean_200_2k":
         mask = _band_mask(COMMON_GRID, *OFFSET_BAND)
         offset = float(np.mean(delta[mask])) if np.any(mask) else 0.0
@@ -694,7 +692,7 @@ class ReferenceLayer:
 
 
 def _normalized_at_ref(freqs: np.ndarray, mag_db: np.ndarray) -> np.ndarray:
-    return mag_db - _value_at(freqs, mag_db, F_REF)
+    return mag_db - value_at(freqs, mag_db, F_REF, log_x=True)
 
 
 def load_reference_from_txt(

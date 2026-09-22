@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from scipy.interpolate import interp1d
 
-from dms.processing import F_REF, GRID_POINTS, compute_rms_average
+from dms.processing import F_REF, GRID_POINTS, compute_rms_average, value_at
 
 Curve = tuple[np.ndarray, np.ndarray]
 Variation = tuple[
@@ -41,8 +40,8 @@ def shared_normalize_pair_at_1khz(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Apply one power-mean reference offset to both channel magnitudes."""
 
-    first_ref = _value_at(first_freqs, first_mag_db, f_ref)
-    second_ref = _value_at(second_freqs, second_mag_db, f_ref)
+    first_ref = value_at(first_freqs, first_mag_db, f_ref)
+    second_ref = value_at(second_freqs, second_mag_db, f_ref)
     reference_power = (10.0 ** (first_ref / 10.0) + 10.0 ** (second_ref / 10.0)) / 2.0
     reference_db = 10.0 * np.log10(max(reference_power, 1e-30))
     return (
@@ -82,13 +81,3 @@ def curve_label_for_selection(selection: str) -> str:
     if normalized == "channel_2":
         return "R"
     return "BOTH"
-
-
-def _value_at(freqs: np.ndarray, values: np.ndarray, frequency: float) -> float:
-    source_freqs = np.asarray(freqs, dtype=float)
-    source_values = np.asarray(values, dtype=float)
-    if len(source_freqs) < 2 or len(source_freqs) != len(source_values):
-        raise ValueError("Channel response data is incomplete.")
-    if frequency < source_freqs[0] or frequency > source_freqs[-1]:
-        raise ValueError(f"Reference frequency {frequency:g} Hz is outside the response data.")
-    return float(interp1d(source_freqs, source_values, kind="linear")(frequency))

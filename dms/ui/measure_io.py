@@ -313,7 +313,7 @@ class MeasureIO(QObject):
         wanted = "dbspl" if str(level_mode) == "dbspl" else "ref_1khz"
         if wanted == window._level_mode():
             return
-        if wanted == "dbspl" and window._calibrated_sensitivity() is None:
+        if wanted == "dbspl" and window.devices.calibrated_sensitivity() is None:
             QMessageBox.warning(
                 window,
                 "Not Calibrated",

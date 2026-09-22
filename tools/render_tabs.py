@@ -32,12 +32,13 @@ from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager
 from dms.theme import ThemeController
+from dms.ui.device_controller import DeviceController
 from dms.ui.main_window import MainWindow
 from dms.ui.measure_io import MeasureIO
 from dms.ui.update_check import UpdateCheck
 
-MainWindow._refresh_devices = lambda self: None
-MainWindow._start_level_monitor = lambda self: None
+DeviceController.refresh_devices = lambda self: None
+DeviceController.start_level_monitor = lambda self: None
 UpdateCheck.start = lambda self: None
 MeasureIO.confirm_close = lambda self: True
 

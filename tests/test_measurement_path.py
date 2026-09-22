@@ -121,7 +121,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
 ) -> None:
     window = _sweep_ready_window(make_main_window, monkeypatch, {"measure_level_mode": "dbspl"})
     window._cal_store.set_sensitivity("Mic", 0.5)
-    window._current_input_device_info = lambda: {"name": "Mic"}
+    window.devices.current_input_device_info = lambda: {"name": "Mic"}
     offset = absolute_spl_offset_db(
         sensitivity_pa_per_fs=0.5,
         output_level_db=float(window._queue_level_spin.value()),
@@ -138,7 +138,7 @@ def test_dbspl_mode_adds_the_calibrated_offset_and_skips_the_rezero(
 
     # Uncalibrated input: falls back to the 1 kHz reference path.
     fallback = _sweep_ready_window(make_main_window, monkeypatch, {"measure_level_mode": "dbspl"})
-    fallback._current_input_device_info = lambda: {"name": "Uncalibrated"}
+    fallback.devices.current_input_device_info = lambda: {"name": "Uncalibrated"}
     fallback._on_sweep_finished(np.zeros(8), np.zeros(8))
     reference = downsample_to_log_points(_FREQS, normalize_at_1khz(_FREQS, _KNOWN), n_points=600)
     np.testing.assert_allclose(fallback._pending_curve[1], reference[1], rtol=0, atol=1e-9)

@@ -125,6 +125,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     from dms.session import SessionData
     from dms.settings_manager import SettingsManager
     from dms.theme import ThemeController
+    from dms.ui.device_controller import DeviceController
     from dms.ui.main_window import MainWindow
     from dms.ui.update_check import UpdateCheck
 
@@ -143,9 +144,9 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         theme_controller: ThemeController | None = None,
     ) -> Any:
         if stub_devices:
-            monkeypatch.setattr(MainWindow, "_refresh_devices", lambda self: None)
+            monkeypatch.setattr(DeviceController, "refresh_devices", lambda self: None)
         if stub_level_monitor:
-            monkeypatch.setattr(MainWindow, "_start_level_monitor", lambda self: None)
+            monkeypatch.setattr(DeviceController, "start_level_monitor", lambda self: None)
         if stub_update_check:
             monkeypatch.setattr(UpdateCheck, "start", lambda self: None)
         manager = settings_manager or SettingsManager()

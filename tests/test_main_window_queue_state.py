@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import dms.ui.device_controller as device_controller_module
 import dms.ui.main_window as main_window_module
 import dms.ui.measure_io as measure_io_module
 from dms.measure_queue import MeasurementQueue, QueueState
@@ -190,7 +191,7 @@ def test_starting_a_sweep_stops_the_channel_balance_generator(
     # generator stop is unconditional on any sweep start path.
     window._queue_target = 1
     window._queue_index = 0
-    monkeypatch.setattr(window, "_current_output_device", lambda: None)
+    monkeypatch.setattr(window.devices, "current_output_device", lambda: None)
     calls = _silence_dialogs(monkeypatch)
     window._start_next_sweep()
 
@@ -203,49 +204,51 @@ def test_device_poll_is_deferred_while_the_queue_runs(make_main_window, monkeypa
     """B3: a hotplug between the two halves of a pair must not re-select devices."""
     window = make_main_window()
     refreshed = []
-    monkeypatch.setattr(window, "_refresh_devices", lambda: refreshed.append(True))
+    monkeypatch.setattr(window.devices, "refresh_devices", lambda: refreshed.append(True))
     monkeypatch.setattr(
-        main_window_module,
+        device_controller_module,
         "get_output_devices",
         lambda: [{"index": 1, "name": "Out", "hostapi": 0}],
     )
     monkeypatch.setattr(
-        main_window_module, "get_input_devices", lambda: [{"index": 2, "name": "In", "hostapi": 0}]
+        device_controller_module,
+        "get_input_devices",
+        lambda: [{"index": 2, "name": "In", "hostapi": 0}],
     )
-    monkeypatch.setattr(window, "_current_output_device", lambda: 1)
-    monkeypatch.setattr(window, "_current_input_device", lambda: 2)
-    window._last_output_devices = []
-    window._last_input_devices = []
+    monkeypatch.setattr(window.devices, "current_output_device", lambda: 1)
+    monkeypatch.setattr(window.devices, "current_input_device", lambda: 2)
+    window.devices._last_output_devices = []
+    window.devices._last_input_devices = []
     window._queue_target = 2
     window._state = QueueState.QUEUE_RUNNING
 
-    window._check_devices()
+    window.devices.check_devices()
 
     assert refreshed == []
-    assert window._devices_dirty is True
+    assert window.devices.dirty is True
 
     window._queue.reset()
     window._state = QueueState.IDLE
     window._apply_state_ui()
 
     assert refreshed == [True]
-    assert window._devices_dirty is False
+    assert window.devices.dirty is False
 
 
 def test_vanished_device_aborts_even_during_review(make_main_window, monkeypatch) -> None:
     window = make_main_window()
-    monkeypatch.setattr(window, "_refresh_devices", lambda: None)
-    monkeypatch.setattr(main_window_module, "get_output_devices", lambda: [])
-    monkeypatch.setattr(main_window_module, "get_input_devices", lambda: [])
-    monkeypatch.setattr(window, "_current_output_device", lambda: 1)
-    monkeypatch.setattr(window, "_current_input_device", lambda: 2)
-    window._last_output_devices = [(1, "Out", 0)]
-    window._last_input_devices = [(2, "In", 0)]
+    monkeypatch.setattr(window.devices, "refresh_devices", lambda: None)
+    monkeypatch.setattr(device_controller_module, "get_output_devices", lambda: [])
+    monkeypatch.setattr(device_controller_module, "get_input_devices", lambda: [])
+    monkeypatch.setattr(window.devices, "current_output_device", lambda: 1)
+    monkeypatch.setattr(window.devices, "current_input_device", lambda: 2)
+    window.devices._last_output_devices = [(1, "Out", 0)]
+    window.devices._last_input_devices = [(2, "In", 0)]
     window._queue_target = 2
     window._pending_curve = _curve()
     window._state = QueueState.PASS_FAIL
 
-    window._check_devices()
+    window.devices.check_devices()
 
     assert window._state == QueueState.IDLE
     assert window._queue_active() is False

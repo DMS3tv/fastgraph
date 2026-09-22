@@ -123,10 +123,10 @@ def test_manual_automation_switches_input_device_and_channel(
 ) -> None:
     window = _automation_window(make_main_window, tmp_path)
     window._state = QueueState.IDLE
-    window._input_devices_by_index = {
+    window.devices._input_devices_by_index = {
         5: {"index": 5, "name": "Input A", "hostapi": 0, "max_input_channels": 2}
     }
-    window._input_device_labels_by_index = {5: "Input A"}
+    window.devices._input_device_labels_by_index = {5: "Input A"}
     window._in_dev_combo.addItem("Input A", 5)
     window._ch_combo.addItem("Ch 1", 0)
     window._ch_combo.addItem("Ch 2", 1)
@@ -140,8 +140,8 @@ def test_manual_automation_switches_input_device_and_channel(
 
     window._run_automation(automation)
 
-    assert window._current_input_device() == 5
-    assert window._current_input_channel() == 1
+    assert window.devices.current_input_device() == 5
+    assert window.devices.current_input_channel() == 1
 
 
 def test_automation_unavailable_channel_logs_failure(

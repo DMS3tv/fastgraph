@@ -88,7 +88,7 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> Non
     window._ch_combo.addItem("Ch 2", 1)
     window._rnd_widget.set_input_channels([("Ch 1", 0), ("Ch 2", 1)], 0)
     window._rnd_widget._input_channel_combo.setCurrentIndex(1)
-    assert window._current_input_channel() == 1
+    assert window.devices.current_input_channel() == 1
     window._ch_combo.setCurrentIndex(0)
     assert window._rnd_widget._input_channel_combo.currentData() == 0
 
@@ -123,8 +123,8 @@ def test_rnd_keep_review_creates_snapshot_measurement(make_main_window) -> None:
     window = make_main_window()
     window._state = QueueState.PASS_FAIL
     window._pending_curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
-    window._input_device_labels_by_index = {1: "Input A"}
-    window._output_device_labels_by_index = {2: "Output A"}
+    window.devices._input_device_labels_by_index = {1: "Input A"}
+    window.devices._output_device_labels_by_index = {2: "Output A"}
     window._in_dev_combo.addItem("Input A", 1)
     window._out_dev_combo.addItem("Output A", 2)
     window._ch_combo.clear()
@@ -914,9 +914,9 @@ def test_measure_average_sends_one_raw_ungrouped_curve_to_rnd(
     window._hrtf_toggle.setChecked(False)
     window._rnd_widget.session.hrtf_path = "rnd-default.txt"
     window._rnd_widget.session.hrtf_name = "R&D Default"
-    window._current_input_device_label = lambda: "Input A"
-    window._current_output_device_label = lambda: "Output B"
-    window._current_input_channel = lambda: 1
+    window.devices.current_input_device_label = lambda: "Input A"
+    window.devices.current_output_device_label = lambda: "Output B"
+    window.devices.current_input_channel = lambda: 1
     window._ch_combo.clear()
     window._ch_combo.addItem("Channel 2", 1)
     recovery_calls: list[bool] = []

@@ -13,7 +13,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -50,22 +49,8 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.audio_engine import (
-    DevicePoller,
-    DualLevelMonitor,
-    LevelMonitor,
     SweepWorker,
-    device_channel_count,
-    device_label,
-    device_setting,
-    duplicate_device_names,
-    filter_devices_by_hostapi,
-    get_input_devices,
-    get_output_devices,
-    is_compatible_device_pair,
     is_windows_audio_host,
-    preferred_windows_hostapi,
-    refresh_audio_backend,
-    resolve_device_selection,
 )
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
@@ -94,8 +79,6 @@ from dms.measurement_alignment import (
 from dms.measurement_profiles import (
     BLUETOOTH_PROFILE_DEFAULTS,
     PROFILE_SNAPSHOT_SETTING,
-    restore_standard_profile_updates,
-    snapshot_measurement_profile,
 )
 from dms.processing import (
     HarmonicAnalysis,
@@ -140,9 +123,9 @@ from dms.two_channel import (
     shared_normalize_pair_at_1khz,
 )
 from dms.ui.automation_widget import AutomationWidget
-from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
+from dms.ui.device_controller import DeviceController
 from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.measure_compare import MeasureCompare
 from dms.ui.measure_controls import _MeasureSubmodeControl, _ResponsiveQueueBar
@@ -150,7 +133,6 @@ from dms.ui.measure_dialogs import (
     PassFailDialog,
     RnDRecoveryDialog,
     RnDReviewDialog,
-    TestLevelDialog,
 )
 from dms.ui.measure_io import MeasureIO
 from dms.ui.measure_workspace import MeasureWorkspace
@@ -175,7 +157,6 @@ _MEASUREMENT_F_MIN = 20.0
 _MEASUREMENT_F_MAX = 20000.0
 _DISPLAY_AVG_POINTS = 1200
 _DISPLAY_AVG_SMOOTHING = 48
-_METER_UPDATE_MS = 140
 #: Harmonic analysis needs a clean recording; below this SNR the distortion
 #: packets are indistinguishable from the noise floor, so nothing is computed.
 _DISTORTION_MIN_SNR_DB = 20.0
@@ -422,7 +403,6 @@ class MainWindow(QMainWindow):
 
         self._sweep_runner = SweepRunner(self)
         self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
-        self._devices_dirty = False
         # Harmonic analysis of the most recently kept sweep. The queue's own
         # last_distortion is cleared by the reset that follows Keep, so the
         # overlay would otherwise vanish the moment a sweep is accepted.
@@ -431,14 +411,6 @@ class MainWindow(QMainWindow):
         self._rnd_review_dialog: RnDReviewDialog | None = None
         self._rnd_sweep_active = False
 
-        self._last_level_dbfs = -120.0
-        self._displayed_level_dbfs = -60.0
-        self._last_input_devices: list[tuple[int, str, int]] = []
-        self._last_output_devices: list[tuple[int, str, int]] = []
-        self._input_devices_by_index: dict[int, dict] = {}
-        self._output_devices_by_index: dict[int, dict] = {}
-        self._input_device_labels_by_index: dict[int, str] = {}
-        self._output_device_labels_by_index: dict[int, str] = {}
         self._last_timing_quality: tuple[float, float, float, float] | None = None
         self._last_measurement_diagnostics: object | None = None
         self._hrtf_options: list[tuple[str, str]] = []
@@ -454,14 +426,7 @@ class MainWindow(QMainWindow):
         self._restored_recovery_candidate: RecoveryCandidate | None = None
         self.measure_io = MeasureIO(self)
         self.measure_compare = MeasureCompare(self)
-
-        self._level_monitor = LevelMonitor()
-        self._level_monitor.level_updated.connect(self._on_level_update)
-        self._level_monitor.error_occurred.connect(self._on_level_error)
-        self._dual_level_monitor = DualLevelMonitor()
-        self._dual_level_monitor.levels_updated.connect(self._on_dual_level_update)
-        self._dual_level_monitor.error_occurred.connect(self._on_level_error)
-        self._last_dual_levels = (-120.0, -120.0)
+        self.devices = DeviceController(self)
 
         self._refresh_window_title()
         self.setMinimumSize(1280, 700)
@@ -480,14 +445,14 @@ class MainWindow(QMainWindow):
         self._configure_keyboard_shortcuts()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if bool(self._settings.get("bluetooth_headphone_mode")):
-            self._apply_bluetooth_headphone_mode_settings(
+            self.devices.apply_bluetooth_headphone_mode_settings(
                 notify=False,
                 preserve_standard=False,
             )
         self._restore_hrtf_state()
         self.measure_compare.restore()
-        self._refresh_devices()
-        self._start_level_monitor()
+        self.devices.refresh_devices()
+        self.devices.start_level_monitor()
         self._apply_state_ui()
         self.update_check.start()
         self._log_event(
@@ -502,20 +467,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._initialize_rnd_recovery)
         QTimer.singleShot(0, self.measure_io.initialize_recovery)
 
-        self._meter_ui_timer = QTimer(self)
-        self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
-        self._meter_ui_timer.start(_METER_UPDATE_MS)
-
         self._balance_ui_timer = QTimer(self)
         self._balance_ui_timer.setInterval(33)
         self._balance_ui_timer.timeout.connect(self._refresh_balance_scope)
 
-        # Device enumeration is four PortAudio calls; it runs on the poller's
-        # own thread and only reports back when the device set changed.
-        self._device_poller = DevicePoller(parent=self)
-        self._device_poller.devices_changed.connect(self._check_devices)
-        self._sync_device_poller()
-        self._device_poller.start()
+        self.devices.start()
 
     def _build_ui(self) -> None:
         self._tabs = QTabWidget()
@@ -559,7 +515,7 @@ class MainWindow(QMainWindow):
         self._rnd_widget.send_to_curator_requested.connect(self._send_rnd_to_curator)
         self._rnd_widget.save_requested.connect(self._save_rnd_session)
         self._rnd_widget.load_requested.connect(self._load_rnd_session)
-        self._rnd_widget.input_channel_changed.connect(self._on_rnd_input_channel_changed)
+        self._rnd_widget.input_channel_changed.connect(self.devices.on_rnd_input_channel_changed)
         self._rnd_widget.notes_expanded_changed.connect(
             lambda expanded: self._settings.set("rnd_notes_expanded", bool(expanded))
         )
@@ -589,8 +545,8 @@ class MainWindow(QMainWindow):
 
         self._settings_widget = SettingsWidget(self._settings, self)
         self._settings_widget.settings_changed.connect(self._on_settings_tab_changed)
-        self._settings_widget.calibration_requested.connect(self._open_calibration)
-        self._settings_widget.test_level_requested.connect(self._open_test_level)
+        self._settings_widget.calibration_requested.connect(self.devices.open_calibration)
+        self._settings_widget.test_level_requested.connect(self.devices.open_test_level)
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
         settings_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -651,7 +607,7 @@ class MainWindow(QMainWindow):
         self._ch_combo.setEnabled(not enabled)
         self._update_queue_progress()
         self._update_plots()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._apply_state_ui()
         mode = "Two Channel" if enabled else "Single Channel"
         self._statusbar.showMessage(f"Measure mode: {mode}.")
@@ -683,10 +639,9 @@ class MainWindow(QMainWindow):
         self._plots.two.set_generator_level(float(self._queue_level_spin.value()))
         self._plots.two.set_frequency_limit(frequency_limit(int(self._settings.get("sample_rate"))))
         if balance:
-            self._level_monitor.stop()
-            self._dual_level_monitor.stop()
+            self.devices.stop_level_monitor()
         else:
-            self._start_level_monitor()
+            self.devices.start_level_monitor()
             self._update_plots()
         self._apply_state_ui()
 
@@ -702,36 +657,24 @@ class MainWindow(QMainWindow):
             self._two_channel_selection = selection
         self.measure_io.sync_export_button()
 
-    def _two_channel_devices_ready(self) -> bool:
-        input_info = self._current_input_device_info()
-        output_info = self._current_output_device_info()
-        return bool(
-            input_info is not None
-            and output_info is not None
-            and int(input_info.get("max_input_channels", 0) or 0) >= 2
-            and int(output_info.get("max_output_channels", 0) or 0) >= 2
-            and self._selected_audio_pair_is_compatible()
-        )
-
     def _start_channel_balance(self) -> None:
         if self._channel_balance_active:
             return
         if self._state != QueueState.IDLE or not self._channel_balance_mode_active():
             return
-        if not self._two_channel_devices_ready():
+        if not self.devices.two_channel_devices_ready():
             QMessageBox.warning(
                 self,
                 "Two Channels Required",
                 "Channel Balance needs an input device and an output device with at least two channels.",
             )
             return
-        input_device = self._current_input_device()
-        output_device = self._current_output_device()
+        input_device = self.devices.current_input_device()
+        output_device = self.devices.current_output_device()
         if input_device is None or output_device is None:
             return
 
-        self._level_monitor.stop()
-        self._dual_level_monitor.stop()
+        self.devices.stop_level_monitor()
         self._balance_level_db = float(self._queue_level_spin.value())
         engine = ChannelBalanceEngine()
         engine.set_parameters(
@@ -746,7 +689,7 @@ class MainWindow(QMainWindow):
             output_device=output_device,
             sample_rate=int(self._settings.get("sample_rate")),
             block_size=int(self._settings.get("buffer_size")),
-            latency=self._sweep_latency_mode(),
+            latency=self.devices.sweep_latency_mode(),
         )
         thread.finished.connect(self._on_balance_thread_finished)
         self._balance_engine = engine
@@ -976,7 +919,7 @@ class MainWindow(QMainWindow):
             self._plots.two.set_frequency_limit(
                 frequency_limit(int(self._settings.get("sample_rate")))
             )
-            self._start_level_monitor()
+            self.devices.start_level_monitor()
         if key == "shortcut_bindings":
             self._configure_keyboard_shortcuts()
         if key == "brand_mode":
@@ -1103,7 +1046,7 @@ class MainWindow(QMainWindow):
             "Bluetooth Headphone Mode applies safer timing settings for "
             "Bluetooth latency and jitter paths."
         )
-        self._bluetooth_mode_toggle.stateChanged.connect(self._on_bluetooth_mode_changed)
+        self._bluetooth_mode_toggle.stateChanged.connect(self.devices.on_bluetooth_mode_changed)
         row.addWidget(self._bluetooth_mode_toggle)
         self._refresh_session_labels()
         return header
@@ -1369,9 +1312,9 @@ class MainWindow(QMainWindow):
         if action == "navigate":
             self._automation_navigate(target)
         elif action == "switch_input_device":
-            self._automation_switch_input_device(target or value)
+            self.devices.automation_switch_input_device(target or value)
         elif action == "switch_input_channel":
-            self._automation_switch_input_channel(target or value)
+            self.devices.automation_switch_input_channel(target or value)
         elif action == "console_command":
             self._run_console_command(target or value)
         elif action == "prompt_info":
@@ -1481,31 +1424,6 @@ class MainWindow(QMainWindow):
                 return
         raise ValueError(f"Automation tab target not found: {target}")
 
-    def _automation_switch_input_device(self, requested: str) -> None:
-        if self._state != QueueState.IDLE:
-            raise ValueError("Input device can only be changed while idle.")
-        text = requested.strip()
-        for index in range(self._in_dev_combo.count()):
-            data = self._in_dev_combo.itemData(index)
-            label = self._in_dev_combo.itemText(index)
-            if text == str(data) or text.casefold() in label.casefold():
-                self._in_dev_combo.setCurrentIndex(index)
-                return
-        raise ValueError(f"Input device unavailable: {requested}")
-
-    def _automation_switch_input_channel(self, requested: str) -> None:
-        if self._state != QueueState.IDLE:
-            raise ValueError("Input channel can only be changed while idle.")
-        raw = requested.strip().lower()
-        text = raw.removeprefix("ch").strip()
-        for index in range(self._ch_combo.count()):
-            data = self._ch_combo.itemData(index)
-            label = self._ch_combo.itemText(index).lower()
-            if text == str(data) or text == str(int(data) + 1) or raw == label:
-                self._ch_combo.setCurrentIndex(index)
-                return
-        raise ValueError(f"Input channel unavailable: {requested}")
-
     def _run_console_command(self, command: str) -> None:
         echo = command
         if any(word in command.lower() for word in ("password", "credential", "secret", "token")):
@@ -1528,7 +1446,7 @@ class MainWindow(QMainWindow):
             elif args == ["status"]:
                 self._command_reply(self._console_status())
             elif args == ["devices"]:
-                self._command_reply(self._console_devices())
+                self._command_reply(self.devices.console_devices())
             elif args[0] == "settings":
                 self._run_settings_command(args[1:])
             elif args == ["diagnostics", "system"]:
@@ -1593,27 +1511,12 @@ class MainWindow(QMainWindow):
                 f"Kept curves: {len(self._kept_curves)}",
                 f"Curator layers: {len(self._curator_widget.graph_state.layers)} "
                 f"({sum(layer.visible for layer in self._curator_widget.graph_state.layers)} visible)",
-                f"Output: {self._current_output_device_label() or 'none'}",
-                f"Input: {self._current_input_device_label() or 'none'} / channel {self._current_input_channel() + 1}",
+                f"Output: {self.devices.current_output_device_label() or 'none'}",
+                f"Input: {self.devices.current_input_device_label() or 'none'} / channel {self.devices.current_input_channel() + 1}",
                 f"Bluetooth mode: {bool(self._settings.get('bluetooth_headphone_mode'))}",
                 f"Sweep: {self._settings.get('sweep_duration')} s @ {self._settings.get('sample_rate')} Hz, buffer {self._settings.get('buffer_size')}",
             )
         )
-
-    def _console_devices(self) -> str:
-        output_lines = ["Output devices:"]
-        for index, label in self._output_device_labels_by_index.items():
-            marker = "*" if index == self._current_output_device() else " "
-            output_lines.append(f" {marker} [{index}] {label}")
-        input_lines = ["Input devices:"]
-        for index, label in self._input_device_labels_by_index.items():
-            marker = "*" if index == self._current_input_device() else " "
-            input_lines.append(f" {marker} [{index}] {label}")
-        if len(output_lines) == 1:
-            output_lines.append("   none")
-        if len(input_lines) == 1:
-            input_lines.append("   none")
-        return "\n".join(output_lines + input_lines)
 
     def _run_settings_command(self, args: list[str]) -> None:
         if args == ["list"]:
@@ -1710,7 +1613,7 @@ class MainWindow(QMainWindow):
     def _set_console_setting(self, name: str, value) -> None:
         key = _CONSOLE_SETTING_KEYS.get(name, name)
         if name == "bluetooth_mode":
-            self._set_console_bluetooth_mode(bool(value))
+            self.devices.set_console_bluetooth_mode(bool(value))
             return
         self._settings.set_session(key, value)
         if name == "queue_count":
@@ -1722,31 +1625,7 @@ class MainWindow(QMainWindow):
             self._queue_level_spin.setValue(float(value))
             self._queue_level_spin.blockSignals(False)
         if name in {"sample_rate", "buffer_size"}:
-            self._start_level_monitor()
-        self._settings_widget.refresh_from_settings()
-
-    def _set_console_bluetooth_mode(self, enabled: bool) -> None:
-        current = bool(self._settings.get("bluetooth_headphone_mode"))
-        if enabled == current:
-            self._settings.set_session("bluetooth_headphone_mode", enabled)
-        elif enabled:
-            updates = dict(BLUETOOTH_PROFILE_DEFAULTS)
-            self._console_bt_snapshot = {key: self._settings.get(key) for key in updates}
-            self._settings.set_session("bluetooth_headphone_mode", True)
-            self._settings.set_session(
-                PROFILE_SNAPSHOT_SETTING,
-                snapshot_measurement_profile(self._console_bt_snapshot),
-            )
-            for key, value in updates.items():
-                self._settings.set_session(key, value)
-        else:
-            self._settings.set_session("bluetooth_headphone_mode", False)
-            for key, value in getattr(self, "_console_bt_snapshot", {}).items():
-                self._settings.set_session(key, value)
-            self._settings.set_session(PROFILE_SNAPSHOT_SETTING, None)
-        self._bluetooth_mode_toggle.blockSignals(True)
-        self._bluetooth_mode_toggle.setChecked(enabled)
-        self._bluetooth_mode_toggle.blockSignals(False)
+            self.devices.start_level_monitor()
         self._settings_widget.refresh_from_settings()
 
     def _run_measure_command(self, args: list[str]) -> None:
@@ -2152,17 +2031,17 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(QLabel("Output Device"))
         self._out_dev_combo = QComboBox()
-        self._out_dev_combo.currentIndexChanged.connect(self._on_output_device_changed)
+        self._out_dev_combo.currentIndexChanged.connect(self.devices.on_output_device_changed)
         layout.addWidget(self._out_dev_combo)
 
         layout.addWidget(QLabel("Input Device"))
         self._in_dev_combo = QComboBox()
-        self._in_dev_combo.currentIndexChanged.connect(self._on_input_device_changed)
+        self._in_dev_combo.currentIndexChanged.connect(self.devices.on_input_device_changed)
         layout.addWidget(self._in_dev_combo)
 
         layout.addWidget(QLabel("Input Channel"))
         self._ch_combo = QComboBox()
-        self._ch_combo.currentIndexChanged.connect(self._on_channel_changed)
+        self._ch_combo.currentIndexChanged.connect(self.devices.on_channel_changed)
         layout.addWidget(self._ch_combo)
 
         self._active_ch_label = QLabel("Active input channel: —")
@@ -2175,12 +2054,12 @@ class MainWindow(QMainWindow):
         )
         self._advanced_windows_drivers_toggle.setVisible(is_windows_audio_host())
         self._advanced_windows_drivers_toggle.stateChanged.connect(
-            self._on_advanced_windows_drivers_changed
+            self.devices.on_advanced_windows_drivers_changed
         )
         layout.addWidget(self._advanced_windows_drivers_toggle)
 
         self._refresh_devices_btn = QPushButton("Refresh Devices")
-        self._refresh_devices_btn.clicked.connect(self._manual_refresh_devices)
+        self._refresh_devices_btn.clicked.connect(self.devices.manual_refresh_devices)
         layout.addWidget(self._refresh_devices_btn)
 
         self._inputs_overlay = overlay
@@ -2386,111 +2265,6 @@ class MainWindow(QMainWindow):
         self._queue_primary_layout.addWidget(self._sweep_progress, 1)
         self._queue_progress_widget.setVisible(False)
 
-    def _current_output_device(self) -> int | None:
-        value = self._out_dev_combo.currentData()
-        return int(value) if value is not None else None
-
-    def _current_input_device(self) -> int | None:
-        value = self._in_dev_combo.currentData()
-        return int(value) if value is not None else None
-
-    def _current_output_device_info(self) -> dict | None:
-        index = self._current_output_device()
-        if index is None:
-            return None
-        return self._output_devices_by_index.get(index)
-
-    def _current_input_device_info(self) -> dict | None:
-        index = self._current_input_device()
-        if index is None:
-            return None
-        return self._input_devices_by_index.get(index)
-
-    def _current_output_device_label(self) -> str:
-        index = self._current_output_device()
-        if index is None:
-            return ""
-        return self._output_device_labels_by_index.get(index, str(index))
-
-    def _current_input_device_label(self) -> str:
-        index = self._current_input_device()
-        if index is None:
-            return ""
-        return self._input_device_labels_by_index.get(index, str(index))
-
-    def _current_output_device_setting(self) -> dict | None:
-        device = self._current_output_device_info()
-        return device_setting(device, "output") if device is not None else None
-
-    def _current_input_device_setting(self) -> dict | None:
-        device = self._current_input_device_info()
-        return device_setting(device, "input") if device is not None else None
-
-    def _use_advanced_windows_drivers(self) -> bool:
-        return bool(self._advanced_windows_drivers_toggle.isChecked())
-
-    def _selected_audio_pair_is_compatible(self) -> bool:
-        return is_compatible_device_pair(
-            self._current_input_device_info(),
-            self._current_output_device_info(),
-        )
-
-    def _windows_audio_pair_message(self) -> str:
-        in_label = self._current_input_device_label() or "selected input"
-        out_label = self._current_output_device_label() or "selected output"
-        return (
-            "On Windows, input and output must use the same audio driver backend "
-            f"for stable timing.\n\nInput: {in_label}\nOutput: {out_label}"
-        )
-
-    def _matching_output_for_input(self, input_device: dict | None) -> dict | None:
-        if input_device is None:
-            return None
-        hostapi = int(input_device.get("hostapi", -1))
-        for device in self._output_devices_by_index.values():
-            if int(device.get("hostapi", -1)) == hostapi:
-                return device
-        return None
-
-    def _sync_windows_output_to_input(self, *, show_status: bool = True) -> None:
-        if not is_windows_audio_host():
-            return
-        input_device = self._current_input_device_info()
-        output_device = self._current_output_device_info()
-        if input_device is None:
-            return
-        if is_compatible_device_pair(input_device, output_device):
-            return
-        matched_output = self._matching_output_for_input(input_device)
-        if matched_output is not None:
-            idx = self._out_dev_combo.findData(int(matched_output["index"]))
-            if idx >= 0:
-                self._out_dev_combo.setCurrentIndex(idx)
-                self._settings.set("output_device", self._current_output_device_setting())
-                if show_status:
-                    self._statusbar.showMessage(
-                        "Matched Windows input/output to the same audio driver backend."
-                    )
-                return
-        self._out_dev_combo.setCurrentIndex(-1)
-        self._settings.set("output_device", None)
-        if show_status:
-            self._statusbar.showMessage(
-                "No matching Windows output backend found for the selected input."
-            )
-
-    def _sweep_latency_mode(self) -> str:
-        configured = str(self._settings.get("latency"))
-        if bool(self._settings.get("bluetooth_headphone_mode")):
-            return configured
-        if is_windows_audio_host() and not bool(self._settings.get("latency_user_override")):
-            return "high"
-        return configured
-
-    def _current_input_channel(self) -> int:
-        value = self._ch_combo.currentData()
-        return int(value) if value is not None else 0
-
     def _queue_active(self) -> bool:
         return self._queue_target > 0
 
@@ -2562,241 +2336,6 @@ class MainWindow(QMainWindow):
         self._hrtf_combo.setCurrentIndex(index if index >= 0 else 0)
         self._hrtf_combo.blockSignals(False)
 
-    def _refresh_devices(self) -> None:
-        selected_out = (
-            self._current_output_device_setting()
-            if self._current_output_device() is not None
-            else self._settings.get("output_device")
-        )
-        selected_in = (
-            self._current_input_device_setting()
-            if self._current_input_device() is not None
-            else self._settings.get("input_device")
-        )
-        selected_ch = self._current_input_channel()
-
-        all_out_devices = get_output_devices()
-        all_in_devices = get_input_devices()
-        preferred_hostapi = (
-            preferred_windows_hostapi(all_in_devices, all_out_devices)
-            if is_windows_audio_host() and not self._use_advanced_windows_drivers()
-            else None
-        )
-        out_devices = filter_devices_by_hostapi(all_out_devices, preferred_hostapi)
-        in_devices = filter_devices_by_hostapi(all_in_devices, preferred_hostapi)
-
-        out_signature = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in all_out_devices
-        ]
-        in_signature = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in all_in_devices
-        ]
-        out_duplicates = duplicate_device_names(out_devices)
-        in_duplicates = duplicate_device_names(in_devices)
-
-        self._out_dev_combo.blockSignals(True)
-        self._in_dev_combo.blockSignals(True)
-        self._ch_combo.blockSignals(True)
-
-        self._output_devices_by_index = {int(d["index"]): d for d in out_devices}
-        self._input_devices_by_index = {int(d["index"]): d for d in in_devices}
-        self._output_device_labels_by_index = {
-            int(d["index"]): device_label(d, out_duplicates) for d in out_devices
-        }
-        self._input_device_labels_by_index = {
-            int(d["index"]): device_label(d, in_duplicates) for d in in_devices
-        }
-
-        self._out_dev_combo.clear()
-        for d in out_devices:
-            self._out_dev_combo.addItem(
-                self._output_device_labels_by_index[int(d["index"])],
-                int(d["index"]),
-            )
-
-        self._in_dev_combo.clear()
-        for d in in_devices:
-            self._in_dev_combo.addItem(
-                self._input_device_labels_by_index[int(d["index"])],
-                int(d["index"]),
-            )
-
-        selected_out_device, out_ambiguous = resolve_device_selection(
-            selected_out,
-            "output",
-            out_devices,
-        )
-        selected_in_device, in_ambiguous = resolve_device_selection(
-            selected_in,
-            "input",
-            in_devices,
-        )
-
-        if out_devices:
-            if selected_out_device is not None:
-                self._out_dev_combo.setCurrentIndex(
-                    self._out_dev_combo.findData(int(selected_out_device["index"]))
-                )
-            elif out_ambiguous:
-                self._out_dev_combo.setCurrentIndex(-1)
-            else:
-                self._out_dev_combo.setCurrentIndex(0)
-
-        if in_devices:
-            if selected_in_device is not None:
-                self._in_dev_combo.setCurrentIndex(
-                    self._in_dev_combo.findData(int(selected_in_device["index"]))
-                )
-            elif in_ambiguous:
-                self._in_dev_combo.setCurrentIndex(-1)
-            else:
-                self._in_dev_combo.setCurrentIndex(0)
-
-        self._out_dev_combo.blockSignals(False)
-        self._in_dev_combo.blockSignals(False)
-
-        self._sync_windows_output_to_input(show_status=False)
-
-        self._refresh_channels(selected_ch=selected_ch)
-        self._ch_combo.blockSignals(False)
-
-        self._settings.set("output_device", self._current_output_device_setting())
-        self._settings.set("input_device", self._current_input_device_setting())
-
-        self._last_output_devices = out_signature
-        self._last_input_devices = in_signature
-        self._log_event(
-            "INFO",
-            "devices",
-            "Audio devices refreshed",
-            output_count=len(out_devices),
-            input_count=len(in_devices),
-            selected_output=self._current_output_device_label(),
-            selected_input=self._current_input_device_label(),
-            input_channel=self._current_input_channel() + 1,
-        )
-
-        if out_ambiguous or in_ambiguous:
-            self._statusbar.showMessage(
-                "Saved audio device name is ambiguous. Select the desired host API once."
-            )
-        elif is_windows_audio_host() and preferred_hostapi is not None:
-            self._statusbar.showMessage(
-                "Windows audio set to matched driver backend for stable timing."
-            )
-
-        self._apply_state_ui()
-        self._start_level_monitor()
-        self._refresh_session_labels()
-
-    def _manual_refresh_devices(self) -> None:
-        previous_out = self._current_output_device()
-        previous_in = self._current_input_device()
-        previous_ch = self._current_input_channel()
-
-        self._stop_channel_balance()
-        self._level_monitor.stop()
-        self._dual_level_monitor.stop()
-        refresh_audio_backend()
-        self._refresh_devices()
-
-        current_out = self._current_output_device()
-        current_in = self._current_input_device()
-        current_ch = self._current_input_channel()
-        if previous_out == current_out and previous_in == current_in and previous_ch == current_ch:
-            self._statusbar.showMessage("Audio devices refreshed.")
-        else:
-            self._statusbar.showMessage("Audio devices refreshed; selection changed.")
-
-    def _refresh_channels(self, selected_ch: int | None = None) -> None:
-        input_device = self._current_input_device()
-        count = device_channel_count(input_device, "input") if input_device is not None else 0
-
-        self._ch_combo.clear()
-        for idx in range(count):
-            self._ch_combo.addItem(f"Ch {idx + 1}", idx)
-
-        want_ch = (
-            selected_ch
-            if selected_ch is not None
-            else int(self._settings.get("input_channel") or 0)
-        )
-
-        if count > 0:
-            want_ch = max(0, min(want_ch, count - 1))
-            self._ch_combo.setCurrentIndex(want_ch)
-            self._settings.set("input_channel", want_ch)
-            self._active_ch_label.setText(f"Active input channel: Ch {want_ch + 1}")
-        else:
-            self._active_ch_label.setText("Active input channel: —")
-        self._rnd_widget.set_input_channels(
-            [
-                (self._ch_combo.itemText(index), int(self._ch_combo.itemData(index)))
-                for index in range(self._ch_combo.count())
-            ],
-            self._current_input_channel(),
-        )
-
-    def _sync_device_poller(self) -> None:
-        """Pause polling whenever PortAudio must not be re-enumerated."""
-        poller = getattr(self, "_device_poller", None)
-        if poller is None:
-            return
-        busy = not self._queue.allows_device_reselect() or self._rnd_sweep_active
-        poller.pause(busy)
-
-    def _check_devices(
-        self,
-        output_devices: list[dict] | None = None,
-        input_devices: list[dict] | None = None,
-    ) -> None:
-        """React to a device-set change reported by :class:`DevicePoller`.
-
-        The lists arrive from the poller thread; they are only enumerated here
-        when a caller (a test, or a manual check) passes nothing.
-        """
-        if output_devices is None:
-            output_devices = get_output_devices()
-        if input_devices is None:
-            input_devices = get_input_devices()
-        current_out = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in output_devices
-        ]
-        current_in = [
-            (int(d["index"]), str(d["name"]), int(d.get("hostapi", -1))) for d in input_devices
-        ]
-
-        if current_out == self._last_output_devices and current_in == (self._last_input_devices):
-            return
-
-        self._stop_channel_balance()
-
-        selected_out = self._current_output_device()
-        selected_in = self._current_input_device()
-        selected_vanished = selected_out not in {
-            idx for idx, _name, _hostapi in current_out
-        } or selected_in not in {idx for idx, _name, _hostapi in current_in}
-
-        if selected_vanished and self._state != QueueState.IDLE:
-            # Whether a sweep is running, a pair is between channels, or a
-            # review is open: the device is gone, so the queue is over.
-            self._abort_active_sweep()
-            self._close_pass_fail_dialog()
-            self._queue.reset()
-            self._state = QueueState.IDLE
-            self._update_queue_progress()
-            self._apply_state_ui()
-            self._statusbar.showMessage(
-                "Audio device change detected. Active measurement aborted safely."
-            )
-
-        if self._queue.allows_device_reselect() and not self._rnd_sweep_active:
-            self._refresh_devices()
-        else:
-            # Never re-select devices under a running queue or an open review;
-            # the refresh happens as soon as the window returns to idle.
-            self._devices_dirty = True
-
     def _abort_active_sweep(self) -> None:
         """Stop the running sweep and wait for its thread to end.
 
@@ -2806,139 +2345,30 @@ class MainWindow(QMainWindow):
         with contextlib.suppress(Exception):
             self._sweep_runner.abort()
 
-    def _start_level_monitor(self) -> None:
-        self._level_monitor.stop()
-        self._dual_level_monitor.stop()
-
-        if self._state == QueueState.SWEEPING or self._channel_balance_active:
-            return
-
-        input_device = self._current_input_device()
-        if input_device is None:
-            self._displayed_level_dbfs = -60.0
-            self._level_meter.set_level(-60.0)
-            self._level_status_label.setText("No input")
-            return
-
-        try:
-            if self._two_channel_enabled:
-                if not self._two_channel_devices_ready():
-                    self._level_status_label.setText("Two inputs needed")
-                    self._level_status_label_2.setText("R")
-                    return
-                self._dual_level_monitor.start(
-                    device_index=input_device,
-                    device_label=self._current_input_device_label(),
-                    fs=int(self._settings.get("sample_rate")),
-                    buffer_size=int(self._settings.get("buffer_size")),
-                )
-                self._level_status_label.setText("L")
-                self._level_status_label_2.setText("R")
-                return
-            self._level_monitor.start(
-                device_index=input_device,
-                device_label=self._current_input_device_label(),
-                channel_index=self._current_input_channel(),
-                fs=int(self._settings.get("sample_rate")),
-                buffer_size=int(self._settings.get("buffer_size")),
-            )
-            self._level_status_label.setText("RMS")
-        except Exception as exc:
-            self._statusbar.showMessage(f"Level monitor start failed: {exc}")
-
-    def _on_output_device_changed(self) -> None:
-        self._stop_channel_balance()
-        self._settings.set("output_device", self._current_output_device_setting())
-        self._refresh_session_labels()
-        self._apply_state_ui()
-        if (
-            is_windows_audio_host()
-            and self._current_output_device() is not None
-            and self._current_input_device() is not None
-            and not self._selected_audio_pair_is_compatible()
-        ):
-            self._statusbar.showMessage("Windows input/output driver backends do not match.")
-
-    def _on_input_device_changed(self) -> None:
-        self._stop_channel_balance()
-        self._settings.set("input_device", self._current_input_device_setting())
-        self._sync_windows_output_to_input()
-        self._refresh_channels()
-        self._start_level_monitor()
-        self._apply_state_ui()
-        self._refresh_session_labels()
-
-    def _on_advanced_windows_drivers_changed(self) -> None:
-        enabled = self._use_advanced_windows_drivers()
-        self._settings.set("windows_advanced_audio_drivers", enabled)
-        self._refresh_devices()
-        if enabled:
-            self._statusbar.showMessage(
-                "Advanced Windows drivers visible. Keep input/output on the same backend."
-            )
-        else:
-            self._statusbar.showMessage(
-                "Advanced Windows drivers hidden. Using the preferred matched backend."
-            )
-
-    def _on_channel_changed(self) -> None:
-        self._settings.set("input_channel", self._current_input_channel())
-        self._active_ch_label.setText(
-            f"Active input channel: Ch {self._current_input_channel() + 1}"
-        )
-        self._rnd_widget.set_input_channel(self._current_input_channel())
-        self._start_level_monitor()
-        self._refresh_session_labels()
-
-    def _on_rnd_input_channel_changed(self, channel: int) -> None:
-        index = self._ch_combo.findData(int(channel))
-        if index >= 0 and index != self._ch_combo.currentIndex():
-            self._ch_combo.setCurrentIndex(index)
-
-    def _on_level_update(self, dbfs: float) -> None:
-        self._last_level_dbfs = float(dbfs)
-
-    def _on_dual_level_update(self, left_dbfs: float, right_dbfs: float) -> None:
-        self._last_dual_levels = (float(left_dbfs), float(right_dbfs))
-        self._last_level_dbfs = max(self._last_dual_levels)
-
-    def _refresh_level_meter_display(self) -> None:
-        if self._two_channel_enabled:
-            left_db, right_db = self._last_dual_levels
-            self._level_meter.set_level(max(-60.0, min(0.0, left_db)))
-            self._level_meter_2.set_level(max(-60.0, min(0.0, right_db)))
-            return
-        target_db = max(-60.0, min(0.0, self._last_level_dbfs))
-        self._displayed_level_dbfs = self._displayed_level_dbfs * 0.5 + target_db * 0.5
-        if abs(self._displayed_level_dbfs - target_db) < 0.2:
-            self._displayed_level_dbfs = target_db
-        self._level_meter.set_level(self._displayed_level_dbfs)
-
-    def _on_level_error(self, message: str) -> None:
-        self._statusbar.showMessage(message)
-
     def _apply_state_ui(self) -> None:
         if (
-            self._devices_dirty
+            self.devices.dirty
             and self._queue.allows_device_reselect()
             and not self._rnd_sweep_active
         ):
-            self._devices_dirty = False
-            self._refresh_devices()
-        self._sync_device_poller()
+            self.devices.dirty = False
+            self.devices.refresh_devices()
+        self.devices.sync_device_poller()
         idle = self._state == QueueState.IDLE
         pass_fail = self._state == QueueState.PASS_FAIL
         busy = self._state in {QueueState.SWEEPING, QueueState.QUEUE_RUNNING}
         balance_mode = self._channel_balance_mode_active()
 
         single_device_ok = (
-            self._current_output_device() is not None
-            and self._current_input_device() is not None
+            self.devices.current_output_device() is not None
+            and self.devices.current_input_device() is not None
             and self._ch_combo.count() > 0
-            and self._selected_audio_pair_is_compatible()
+            and self.devices.selected_audio_pair_is_compatible()
         )
         device_ok = (
-            self._two_channel_devices_ready() if self._two_channel_enabled else single_device_ok
+            self.devices.two_channel_devices_ready()
+            if self._two_channel_enabled
+            else single_device_ok
         )
 
         for widget in (
@@ -3005,19 +2435,19 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if self._current_output_device() is None:
+        if self.devices.current_output_device() is None:
             QMessageBox.warning(self, "No Output Device", "Select an output device.")
             return
 
-        if self._current_input_device() is None:
+        if self.devices.current_input_device() is None:
             QMessageBox.warning(self, "No Input Device", "Select an input device.")
             return
 
-        if not self._selected_audio_pair_is_compatible():
+        if not self.devices.selected_audio_pair_is_compatible():
             QMessageBox.warning(
                 self,
                 "Windows Audio Driver Mismatch",
-                self._windows_audio_pair_message(),
+                self.devices.windows_audio_pair_message(),
             )
             self._statusbar.showMessage(
                 "Queue start blocked: Windows input/output driver backends do not match."
@@ -3032,7 +2462,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if self._two_channel_enabled and not self._two_channel_devices_ready():
+        if self._two_channel_enabled and not self.devices.two_channel_devices_ready():
             QMessageBox.warning(
                 self,
                 "Two Channels Required",
@@ -3040,7 +2470,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        ambient_dbfs = float(self._last_level_dbfs)
+        ambient_dbfs = float(self.devices.last_level_dbfs)
         if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
             choice = QMessageBox.question(
                 self,
@@ -3103,12 +2533,12 @@ class MainWindow(QMainWindow):
         self._apply_state_ui()
         self._sweep_progress.setValue(0)
 
-        output_device = self._current_output_device()
-        input_device = self._current_input_device()
+        output_device = self.devices.current_output_device()
+        input_device = self.devices.current_input_device()
         input_channel = (
             self._two_channel_stage - 1
             if self._two_channel_enabled
-            else self._current_input_channel()
+            else self.devices.current_input_channel()
         )
         output_channel = input_channel if self._two_channel_enabled else None
 
@@ -3116,12 +2546,11 @@ class MainWindow(QMainWindow):
             self._on_sweep_error("Selected device is unavailable.")
             return
 
-        if not self._selected_audio_pair_is_compatible():
-            self._on_sweep_error(self._windows_audio_pair_message())
+        if not self.devices.selected_audio_pair_is_compatible():
+            self._on_sweep_error(self.devices.windows_audio_pair_message())
             return
 
-        self._level_monitor.stop()
-        self._dual_level_monitor.stop()
+        self.devices.stop_level_monitor()
         self._last_timing_quality = None
         self._last_measurement_diagnostics = None
 
@@ -3147,15 +2576,15 @@ class MainWindow(QMainWindow):
             sweep=sweep,
             output_device=output_device,
             input_device=input_device,
-            output_device_label=self._current_output_device_label(),
-            input_device_label=self._current_input_device_label(),
+            output_device_label=self.devices.current_output_device_label(),
+            input_device_label=self.devices.current_input_device_label(),
             input_channel=input_channel,
             output_channel=output_channel,
             fs=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
-            latency=self._sweep_latency_mode(),
+            latency=self.devices.sweep_latency_mode(),
             bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
             start_alignment_confidence_min=float(
                 self._settings.get("start_alignment_confidence_min")
@@ -3385,7 +2814,7 @@ class MainWindow(QMainWindow):
                 )
             self._state = QueueState.QUEUE_RUNNING
             self._apply_state_ui()
-            self._start_level_monitor()
+            self.devices.start_level_monitor()
             retry_subject = (
                 "The two-channel pair failed. Both channels will be measured again."
                 if retry_complete_pair
@@ -3431,7 +2860,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._update_queue_progress()
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._statusbar.showMessage(message)
         QMessageBox.warning(self, "Sweep Error", dialog_message)
 
@@ -3441,7 +2870,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._start_second_two_channel_sweep)
             return
         if self._state != QueueState.PASS_FAIL:
-            self._start_level_monitor()
+            self.devices.start_level_monitor()
 
     def _on_keep(self) -> None:
         if self._state != QueueState.PASS_FAIL:
@@ -3547,7 +2976,7 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._statusbar.showMessage("Queue canceled.")
 
     def _finish_queue(self) -> None:
@@ -3555,7 +2984,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         match = self.measure_compare.target_match_message()
         self._statusbar.showMessage(f"Queue complete. {match}" if match else "Queue complete.")
         self._run_automation_trigger("queue_complete")
@@ -3628,17 +3057,17 @@ class MainWindow(QMainWindow):
     def _start_rnd_measurement(self) -> None:
         if self._state != QueueState.IDLE:
             return
-        if self._current_output_device() is None:
+        if self.devices.current_output_device() is None:
             QMessageBox.warning(self, "No Output Device", "Select an output device.")
             return
-        if self._current_input_device() is None:
+        if self.devices.current_input_device() is None:
             QMessageBox.warning(self, "No Input Device", "Select an input device.")
             return
-        if not self._selected_audio_pair_is_compatible():
+        if not self.devices.selected_audio_pair_is_compatible():
             QMessageBox.warning(
                 self,
                 "Windows Audio Driver Mismatch",
-                self._windows_audio_pair_message(),
+                self.devices.windows_audio_pair_message(),
             )
             return
         if self._ch_combo.count() == 0:
@@ -3648,7 +3077,7 @@ class MainWindow(QMainWindow):
                 "Selected input device has no available input channels.",
             )
             return
-        ambient_dbfs = float(self._last_level_dbfs)
+        ambient_dbfs = float(self.devices.last_level_dbfs)
         if ambient_dbfs > _QUEUE_AMBIENT_WARN_DBFS:
             choice = QMessageBox.question(
                 self,
@@ -3676,17 +3105,17 @@ class MainWindow(QMainWindow):
         self._rnd_widget.set_status(f"Sweeping attempt {self._current_sweep_attempts}...")
         self._sweep_progress.setValue(0)
 
-        output_device = self._current_output_device()
-        input_device = self._current_input_device()
-        input_channel = self._current_input_channel()
+        output_device = self.devices.current_output_device()
+        input_device = self.devices.current_input_device()
+        input_channel = self.devices.current_input_channel()
         if output_device is None or input_device is None:
             self._on_rnd_sweep_error("Selected device is unavailable.")
             return
-        if not self._selected_audio_pair_is_compatible():
-            self._on_rnd_sweep_error(self._windows_audio_pair_message())
+        if not self.devices.selected_audio_pair_is_compatible():
+            self._on_rnd_sweep_error(self.devices.windows_audio_pair_message())
             return
 
-        self._level_monitor.stop()
+        self.devices.level_monitor.stop()
         self._last_timing_quality = None
         self._last_measurement_diagnostics = None
 
@@ -3710,14 +3139,14 @@ class MainWindow(QMainWindow):
             sweep=sweep,
             output_device=output_device,
             input_device=input_device,
-            output_device_label=self._current_output_device_label(),
-            input_device_label=self._current_input_device_label(),
+            output_device_label=self.devices.current_output_device_label(),
+            input_device_label=self.devices.current_input_device_label(),
             input_channel=input_channel,
             fs=int(self._settings.get("sample_rate")),
             buffer_size=int(self._settings.get("buffer_size")),
             pre_silence=float(self._settings.get("pre_sweep_silence")),
             post_silence=float(self._settings.get("post_sweep_silence")),
-            latency=self._sweep_latency_mode(),
+            latency=self.devices.sweep_latency_mode(),
             bluetooth_headphone_mode=bool(self._settings.get("bluetooth_headphone_mode")),
             start_alignment_confidence_min=float(
                 self._settings.get("start_alignment_confidence_min")
@@ -3801,7 +3230,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage(message)
         QMessageBox.warning(self, "R&D Sweep Error", message)
@@ -3856,13 +3285,14 @@ class MainWindow(QMainWindow):
             return
         freqs, mag_db = self._pending_curve
         channel_label = (
-            self._ch_combo.currentText().strip() or f"Channel {self._current_input_channel() + 1}"
+            self._ch_combo.currentText().strip()
+            or f"Channel {self.devices.current_input_channel() + 1}"
         )
         existing_names = {item.name for item in self._rnd_widget.session.measurements}
         measurement = RnDMeasurement(
             name=generate_measurement_name(
                 self._session,
-                self._current_input_device_label(),
+                self.devices.current_input_device_label(),
                 channel_label,
                 existing_names,
             ),
@@ -3870,10 +3300,10 @@ class MainWindow(QMainWindow):
             mag_db=np.array(mag_db, dtype=float, copy=True),
             metadata=self._session.to_dict(),
             rig=self._session.rig,
-            input_device_label=self._current_input_device_label(),
-            input_channel_index=self._current_input_channel(),
+            input_device_label=self.devices.current_input_device_label(),
+            input_channel_index=self.devices.current_input_channel(),
             input_channel_label=channel_label,
-            output_device_label=self._current_output_device_label(),
+            output_device_label=self.devices.current_output_device_label(),
             notes=notes,
             change_status=change_status,
             top_visible=True,
@@ -3887,7 +3317,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage(f"R&D measurement kept: {measurement.name}")
         self._log_event(
@@ -3905,7 +3335,7 @@ class MainWindow(QMainWindow):
         self._state = QueueState.IDLE
         self._sweep_progress.setValue(0)
         self._apply_state_ui()
-        self._start_level_monitor()
+        self.devices.start_level_monitor()
         self._rnd_widget.set_status("Ready")
         self._statusbar.showMessage("R&D measurement canceled.")
 
@@ -4248,20 +3678,6 @@ class MainWindow(QMainWindow):
         mode = str(self._settings.get("measure_level_mode") or "ref_1khz")
         return "dbspl" if mode == "dbspl" else "ref_1khz"
 
-    def _calibrated_sensitivity(self) -> float | None:
-        """Pa/FS for the selected input device, or None when uncalibrated.
-
-        ``CalibrationStore`` is keyed by the device's raw name — the same key
-        ``CalibrationDialog`` writes — not by the disambiguated UI label.
-        """
-        info = self._current_input_device_info()
-        if info is None:
-            return None
-        name = str(info.get("name") or "")
-        if not name or not self._cal_store.is_calibrated(name):
-            return None
-        return self._cal_store.get_sensitivity(name)
-
     def _spl_offset_db(self) -> float | None:
         """dB offset to absolute SPL, or None to stay in 1 kHz reference mode.
 
@@ -4270,7 +3686,7 @@ class MainWindow(QMainWindow):
         """
         if self._level_mode() != "dbspl":
             return None
-        sensitivity = self._calibrated_sensitivity()
+        sensitivity = self.devices.calibrated_sensitivity()
         if sensitivity is None:
             if not self._spl_uncalibrated_warned:
                 self._spl_uncalibrated_warned = True
@@ -4333,7 +3749,7 @@ class MainWindow(QMainWindow):
         self._settings.set("measure_level_mode", chosen)
         self._spl_uncalibrated_warned = False
         self._sync_level_mode_combo()
-        if chosen == "dbspl" and self._calibrated_sensitivity() is None:
+        if chosen == "dbspl" and self.devices.calibrated_sensitivity() is None:
             self._statusbar.showMessage(
                 "dB SPL selected, but the input device is not calibrated; "
                 "curves stay at 1 kHz reference until it is."
@@ -4614,132 +4030,6 @@ class MainWindow(QMainWindow):
         if persist:
             self._settings.set("queue_output_level_db", float(self._queue_level_spin.value()))
 
-    def _on_bluetooth_mode_changed(self, _state: int) -> None:
-        enabled = self._bluetooth_mode_toggle.isChecked()
-        self._settings.set("bluetooth_headphone_mode", enabled)
-        if enabled:
-            self._apply_bluetooth_headphone_mode_settings(
-                notify=True,
-                preserve_standard=True,
-            )
-            return
-        used_fallback = self._apply_standard_measurement_mode_settings()
-        if used_fallback:
-            self._statusbar.showMessage(
-                "Bluetooth headphone mode disabled. Restored standard measurement defaults."
-            )
-        else:
-            self._statusbar.showMessage(
-                "Bluetooth headphone mode disabled. Restored standard measurement settings."
-            )
-
-    def _apply_bluetooth_headphone_mode_settings(
-        self,
-        notify: bool,
-        preserve_standard: bool,
-    ) -> None:
-        updates = dict(BLUETOOTH_PROFILE_DEFAULTS)
-        if preserve_standard:
-            current_profile = {key: self._settings.get(key) for key in updates}
-            updates[PROFILE_SNAPSHOT_SETTING] = snapshot_measurement_profile(current_profile)
-        self._settings.update(updates)
-        self._settings_widget.refresh_from_settings()
-        if notify:
-            self._statusbar.showMessage(
-                "Bluetooth mode applied: high latency, 512 buffer, and Bluetooth-safe timing thresholds."
-            )
-
-    def _apply_standard_measurement_mode_settings(self) -> bool:
-        updates, used_fallback = restore_standard_profile_updates(
-            self._settings.get(PROFILE_SNAPSHOT_SETTING)
-        )
-        updates[PROFILE_SNAPSHOT_SETTING] = None
-        self._settings.update(updates)
-        self._settings_widget.refresh_from_settings()
-        return used_fallback
-
-    def _open_calibration(self) -> None:
-        input_device = self._current_input_device()
-        input_info = self._current_input_device_info()
-        if input_device is None or input_info is None:
-            QMessageBox.warning(
-                self,
-                "No Input Device",
-                "Select an input device first.",
-            )
-            return
-
-        dlg = CalibrationDialog(
-            device_index=input_device,
-            device_name=str(input_info["name"]),
-            device_label=self._current_input_device_label(),
-            channel=self._current_input_channel(),
-            fs=int(self._settings.get("sample_rate")),
-            buffer_size=int(self._settings.get("buffer_size")),
-            cal_store=self._cal_store,
-            parent=self,
-        )
-        dlg.calibration_done.connect(self._on_calibration_done)
-        dlg.exec()
-
-    def _on_calibration_done(self, device_name: str, sensitivity: float) -> None:
-        label = self._current_input_device_label() or device_name
-        self._statusbar.showMessage(f"Calibration saved for {label}: {sensitivity:.6f} Pa/FS")
-
-    def _open_test_level(self) -> None:
-        input_device = self._current_input_device()
-        input_info = self._current_input_device_info()
-        if input_device is None or input_info is None:
-            QMessageBox.information(
-                self,
-                "No Input Device",
-                "Select an input device first.",
-            )
-            return
-
-        calibrated = self._cal_store.is_calibrated(str(input_info["name"]))
-        dlg = TestLevelDialog(
-            self._level_snapshot,
-            play_noise_fn=self._play_test_noise,
-            calibrated=calibrated,
-            parent=self,
-        )
-        dlg.exec()
-
-    def _play_test_noise(self) -> str | None:
-        output_device = self._current_output_device()
-        if output_device is None:
-            return "No output device selected."
-        fs = int(self._settings.get("sample_rate"))
-        dur_s = 1.8
-        n = int(round(fs * dur_s))
-        if n <= 0:
-            return "Invalid sample rate for noise ping."
-        noise = np.random.randn(n).astype(np.float32) * 0.04
-        fade_n = min(max(8, int(0.01 * fs)), n // 2)
-        if fade_n > 0:
-            fade = np.linspace(0.0, 1.0, fade_n, dtype=np.float32)
-            noise[:fade_n] *= fade
-            noise[-fade_n:] *= fade[::-1]
-        try:
-            sd.stop()
-            sd.play(noise, samplerate=fs, device=output_device, blocking=False)
-        except Exception as exc:
-            return f"Noise ping failed: {exc}"
-        self._statusbar.showMessage("Played test noise ping on selected output device.")
-        return None
-
-    def _level_snapshot(self) -> tuple[float, float | None, str]:
-        input_info = self._current_input_device_info()
-        input_device_name = str(input_info["name"]) if input_info is not None else ""
-        input_label = self._current_input_device_label()
-        dbfs = self._last_level_dbfs
-        spl = None
-        if input_device_name and self._cal_store.is_calibrated(input_device_name):
-            rms_fs = 10.0 ** (dbfs / 20.0) if dbfs > -120.0 else 0.0
-            spl = self._cal_store.rms_to_dbspl(input_device_name, rms_fs)
-        return dbfs, spl, input_label
-
     def _send_to_curator(self) -> None:
         if self._state != QueueState.IDLE:
             raise ValueError("Measurements can only be sent to Curator while idle.")
@@ -4877,13 +4167,13 @@ class MainWindow(QMainWindow):
         hrtf_path = str(active_hrtf.path) if active_hrtf is not None else ""
         hrtf_name = active_hrtf.name if active_hrtf is not None else ""
         metadata = self._session.to_dict()
-        input_label = self._current_input_device_label()
-        output_label = self._current_output_device_label()
+        input_label = self.devices.current_input_device_label()
+        output_label = self.devices.current_output_device_label()
         active_label = self._active_measure_label()
         input_channel_index = (
             (1 if active_label == "R" else 0)
             if self._two_channel_enabled
-            else self._current_input_channel()
+            else self.devices.current_input_channel()
         )
         channel_label = active_label or (
             self._ch_combo.currentText().strip() or f"Channel {input_channel_index + 1}"
@@ -5470,7 +4760,7 @@ class MainWindow(QMainWindow):
         self._close_pass_fail_dialog()
         self._close_rnd_review_dialog()
         with contextlib.suppress(Exception):
-            self._device_poller.stop()
+            self.devices.device_poller.stop()
 
         # Join the sweep thread before Qt tears the window down; a live
         # PortAudio duplex stream at interpreter exit crashes on some hosts.
@@ -5478,10 +4768,10 @@ class MainWindow(QMainWindow):
             self._sweep_runner.shutdown()
 
         with contextlib.suppress(Exception):
-            self._level_monitor.stop()
+            self.devices.level_monitor.stop()
 
         with contextlib.suppress(Exception):
-            self._dual_level_monitor.stop()
+            self.devices.dual_level_monitor.stop()
 
         with contextlib.suppress(Exception):
             self._stop_channel_balance()
@@ -5531,14 +4821,16 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_inputs_btn"):
             return
         output = (
-            self._current_output_device_label()
+            self.devices.current_output_device_label()
             if hasattr(self, "_out_dev_combo")
             else "Not selected"
         )
         input_name = (
-            self._current_input_device_label() if hasattr(self, "_in_dev_combo") else "Not selected"
+            self.devices.current_input_device_label()
+            if hasattr(self, "_in_dev_combo")
+            else "Not selected"
         )
-        channel = self._current_input_channel() + 1 if hasattr(self, "_ch_combo") else 1
+        channel = self.devices.current_input_channel() + 1 if hasattr(self, "_ch_combo") else 1
         self._inputs_btn.setToolTip(
             f"Output: {output or 'Not selected'}\n"
             f"Input: {input_name or 'Not selected'}\n"

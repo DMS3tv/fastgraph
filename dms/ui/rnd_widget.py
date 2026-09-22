@@ -66,6 +66,7 @@ from dms.theme import (
     theme_colors,
     theme_trace_palette,
 )
+from dms.ui.dual_plot_widget import _configure_plot_widget, _NoWheelPlotWidget
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rnd_photo_dialogs import CameraCaptureDialog, PhotoViewerDialog
@@ -112,35 +113,8 @@ def cached_hrtf_curve(path: str) -> HRTFCurve:
     return curve
 
 
-class _NoWheelPlotWidget(pg.PlotWidget):
-    def wheelEvent(self, event) -> None:
-        event.ignore()
-
-
 def _configure_plot(plot: pg.PlotWidget) -> None:
-    plot.setLogMode(x=True, y=False)
-    plot.showGrid(x=True, y=True, alpha=0.15)
-    plot.getAxis("bottom").setLabel("Frequency", units="Hz")
-    plot.getAxis("bottom").enableAutoSIPrefix(False)
-    plot.getAxis("left").setLabel("Magnitude", units="dB")
-    ticks = [
-        (np.log10(20), "20"),
-        (np.log10(50), "50"),
-        (np.log10(100), "100"),
-        (np.log10(200), "200"),
-        (np.log10(500), "500"),
-        (np.log10(1000), "1k"),
-        (np.log10(2000), "2k"),
-        (np.log10(5000), "5k"),
-        (np.log10(10000), "10k"),
-        (np.log10(20000), "20k"),
-    ]
-    plot.getAxis("bottom").setTicks([ticks])
-    plot.getPlotItem().getViewBox().setAspectLocked(lock=True, ratio=25.0)
-    log_min = np.log10(20.0)
-    log_max = np.log10(20000.0)
-    span = log_max - log_min
-    plot.setXRange(log_min - span * 0.025, log_max + span * 0.025, padding=0)
+    _configure_plot_widget(plot)
     for pos, angle in ((np.log10(1000.0), 90), (0.0, 0)):
         plot.addItem(
             pg.InfiniteLine(

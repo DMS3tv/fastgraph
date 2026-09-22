@@ -10,6 +10,8 @@ from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterP
 from dms.curator.models import CurveData, GraphState
 from dms.curator.transforms import visible_display_layers
 from dms.graph_display import (
+    EXPORT_FREQUENCY_MARKERS,
+    FREQUENCY_TICKS,
     paint_aperiodic_dither_band,
     retro_step_group,
     retro_step_series,
@@ -25,25 +27,6 @@ PLOT_INSET_LEFT = 14.0
 PLOT_INSET_TOP = 14.0
 PLOT_INSET_RIGHT = 36.0
 PLOT_INSET_BOTTOM = 54.0
-FREQUENCY_TICKS = [
-    (20, "20"),
-    (50, "50"),
-    (100, "100"),
-    (200, "200"),
-    (500, "500"),
-    (1000, "1k"),
-    (2000, "2k"),
-    (3000, "3k"),
-    (5000, "5k"),
-    (8000, "8k"),
-    (10000, "10k"),
-    (20000, "20k"),
-]
-FREQUENCY_MARKERS = {
-    1000: (145, 152, 168, 135, 2.2),
-    3000: (145, 152, 168, 92, 1.4),
-    10000: (145, 152, 168, 128, 2.0),
-}
 ASPECT_LOCK_DB_PER_DECADE = 25.0
 DITHER_FOOTER_HEIGHT = 78.0
 DITHER_FOOTER_HORIZONTAL_MARGIN = 40.0
@@ -517,7 +500,7 @@ def _draw_grid(
     labels = label_color or color
     for freq, label in FREQUENCY_TICKS:
         x = _x_for_freq(rect, freq)
-        marker = FREQUENCY_MARKERS.get(freq)
+        marker = EXPORT_FREQUENCY_MARKERS.get(freq)
         if marker is None:
             painter.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 70), 1))
         elif marker_color is not None:

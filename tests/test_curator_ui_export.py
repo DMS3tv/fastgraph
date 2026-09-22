@@ -32,11 +32,9 @@ from dms.curator.export_image import (
     export_graph_image,
     fit_title,
 )
-from dms.curator.export_image import (
-    FREQUENCY_TICKS as EXPORT_FREQUENCY_TICKS,
-)
 from dms.curator.export_brand import brand_display_color
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
+from dms.graph_display import EXPORT_FREQUENCY_MARKERS, FREQUENCY_MARKERS, FREQUENCY_TICKS
 from dms.processing import VariationBand
 from dms.style_tokens import DITHER_TOKENS, BRAND_TOKENS, THEME_DEFINITIONS, tokens_for
 from dms.theme import (
@@ -48,8 +46,6 @@ from dms.theme import (
     ensure_graph_color,
     theme_trace_palette,
 )
-from dms.ui.curator_graph_widget import FREQUENCY_MARKERS
-from dms.ui.curator_graph_widget import FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
 
@@ -794,19 +790,16 @@ def test_export_uses_gold_accent_constant() -> None:
 
 
 def test_frequency_markers_include_1k_3k_8k_and_10k_weights() -> None:
-    graph_ticks = dict(GRAPH_FREQUENCY_TICKS)
-    export_ticks = dict(EXPORT_FREQUENCY_TICKS)
+    ticks = dict(FREQUENCY_TICKS)
 
-    assert graph_ticks[1000] == "1k"
-    assert graph_ticks[3000] == "3k"
-    assert graph_ticks[8000] == "8k"
-    assert graph_ticks[10000] == "10k"
-    assert export_ticks[3000] == "3k"
-    assert export_ticks[8000] == "8k"
-    assert export_ticks[10000] == "10k"
-    assert 8000 not in FREQUENCY_MARKERS
-    assert FREQUENCY_MARKERS[1000][4] > FREQUENCY_MARKERS[3000][4]
-    assert FREQUENCY_MARKERS[10000][4] > FREQUENCY_MARKERS[3000][4]
+    assert ticks[1000] == "1k"
+    assert ticks[3000] == "3k"
+    assert ticks[8000] == "8k"
+    assert ticks[10000] == "10k"
+    for markers in (FREQUENCY_MARKERS, EXPORT_FREQUENCY_MARKERS):
+        assert 8000 not in markers
+        assert markers[1000][4] > markers[3000][4]
+        assert markers[10000][4] > markers[3000][4]
 
 
 def _poster_plot_rect(state: GraphState, size: tuple[int, int]) -> QRectF:

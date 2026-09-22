@@ -14,6 +14,37 @@ from PyQt6.QtWidgets import QGraphicsPixmapItem
 from dms.processing import VariationBand
 from dms.style_tokens import ThemeTokens, tokens_for
 
+#: Frequency axis ticks for the Curator graph and its image export.
+FREQUENCY_TICKS = [
+    (20, "20"),
+    (50, "50"),
+    (100, "100"),
+    (200, "200"),
+    (500, "500"),
+    (1000, "1k"),
+    (2000, "2k"),
+    (3000, "3k"),
+    (5000, "5k"),
+    (8000, "8k"),
+    (10000, "10k"),
+    (20000, "20k"),
+]
+#: The Measure and R&D plots label fewer frequencies.
+MEASURE_FREQUENCY_TICKS = [
+    (freq, label) for freq, label in FREQUENCY_TICKS if freq not in (3000, 8000)
+]
+#: Emphasised grid lines, frequency -> (r, g, b, alpha, width): the on-screen
+#: Curator graph, and the heavier set its image export draws.
+FREQUENCY_MARKERS = {
+    1000: (145, 152, 168, 130, 1.8),
+    3000: (145, 152, 168, 85, 1.15),
+    10000: (145, 152, 168, 125, 1.7),
+}
+EXPORT_FREQUENCY_MARKERS = {
+    1000: (145, 152, 168, 135, 2.2),
+    3000: (145, 152, 168, 92, 1.4),
+    10000: (145, 152, 168, 128, 2.0),
+}
 RETRO_GRAPH_MAX_BINS = 256
 STIPPLE_DASH_PATTERNS: tuple[tuple[float, ...] | None, ...] = (
     None,

@@ -12,6 +12,8 @@ from dms.curator.export_image import aligned_bounds
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
 from dms.curator.transforms import visible_display_layers
 from dms.graph_display import (
+    FREQUENCY_MARKERS,
+    FREQUENCY_TICKS,
     add_bounds_band,
     add_variation_band,
     retro_step_group,
@@ -34,25 +36,6 @@ X_RANGE_LEFT_MARGIN = 0.006
 X_RANGE_RIGHT_MARGIN = 0.035
 Y_RANGE_MARGIN_DB = 0.5
 DATA_WIPE_DURATION_MS = 185
-FREQUENCY_TICKS = [
-    (20, "20"),
-    (50, "50"),
-    (100, "100"),
-    (200, "200"),
-    (500, "500"),
-    (1000, "1k"),
-    (2000, "2k"),
-    (3000, "3k"),
-    (5000, "5k"),
-    (8000, "8k"),
-    (10000, "10k"),
-    (20000, "20k"),
-]
-FREQUENCY_MARKERS = {
-    1000: (145, 152, 168, 130, 1.8),
-    3000: (145, 152, 168, 85, 1.15),
-    10000: (145, 152, 168, 125, 1.7),
-}
 
 
 @dataclass

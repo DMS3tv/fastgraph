@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QFileDialog, QMenu, QVBoxLayout, QWidget
 
 from dms import brand_brand
 from dms.graph_display import (
+    MEASURE_FREQUENCY_TICKS,
     add_variation_band,
     retro_step_band,
     retro_step_series,
@@ -146,20 +147,7 @@ def _configure_plot_widget(pw: pg.PlotWidget) -> None:
         log_max + log_span * _X_RANGE_MARGIN,
         padding=0,
     )
-    # Frequency tick values for log axis
-    ticks = [
-        (np.log10(20), "20"),
-        (np.log10(50), "50"),
-        (np.log10(100), "100"),
-        (np.log10(200), "200"),
-        (np.log10(500), "500"),
-        (np.log10(1000), "1k"),
-        (np.log10(2000), "2k"),
-        (np.log10(5000), "5k"),
-        (np.log10(10000), "10k"),
-        (np.log10(20000), "20k"),
-    ]
-    ax.setTicks([ticks])
+    ax.setTicks([[(np.log10(freq), label) for freq, label in MEASURE_FREQUENCY_TICKS]])
     # Lock to 25 dB per decade (1 decade on x equals 25 dB on y).
     pw.getPlotItem().getViewBox().setAspectLocked(lock=True, ratio=25.0)
 

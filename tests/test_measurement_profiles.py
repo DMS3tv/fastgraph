@@ -2,7 +2,6 @@ from dms.measurement_profiles import (
     BLUETOOTH_PROFILE_DEFAULTS,
     MEASUREMENT_PROFILE_KEYS,
     STANDARD_PROFILE_DEFAULTS,
-    bluetooth_profile_updates,
     restore_standard_profile_updates,
     snapshot_measurement_profile,
 )
@@ -30,10 +29,8 @@ def test_snapshot_measurement_profile_includes_only_profile_keys() -> None:
     assert "squiglink_host" not in snapshot
 
 
-def test_bluetooth_profile_updates_preserve_current_defaults_exactly() -> None:
-    assert bluetooth_profile_updates() == BLUETOOTH_PROFILE_DEFAULTS
-    assert bluetooth_profile_updates() is not BLUETOOTH_PROFILE_DEFAULTS
-    assert bluetooth_profile_updates()["post_sweep_silence"] >= 1.8
+def test_bluetooth_profile_keeps_a_long_post_sweep_silence() -> None:
+    assert BLUETOOTH_PROFILE_DEFAULTS["post_sweep_silence"] >= 1.8
 
 
 def test_restore_standard_profile_uses_custom_snapshot() -> None:

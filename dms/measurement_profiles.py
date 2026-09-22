@@ -54,10 +54,6 @@ def is_complete_measurement_profile(profile: object) -> bool:
     return all(key in profile for key in MEASUREMENT_PROFILE_KEYS)
 
 
-def bluetooth_profile_updates() -> dict[str, Any]:
-    return dict(BLUETOOTH_PROFILE_DEFAULTS)
-
-
 def restore_standard_profile_updates(
     snapshot: object,
 ) -> tuple[dict[str, Any], bool]:

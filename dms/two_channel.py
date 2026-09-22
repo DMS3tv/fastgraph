@@ -51,22 +51,6 @@ def shared_normalize_pair_at_1khz(
     )
 
 
-def combine_curves_power(
-    curves: list[Curve],
-    *,
-    n_points: int = 1200,
-) -> Curve | None:
-    """Return the power mean of the supplied curves without a new offset."""
-
-    if not curves:
-        return None
-    return compute_rms_average(
-        curves,
-        n_points=n_points,
-        normalize_ref=False,
-    )
-
-
 def channel_curves(
     pairs: list[TwoChannelCurvePair],
     channel: int,
@@ -83,15 +67,12 @@ def combined_pair_curves(
     *,
     n_points: int = 1200,
 ) -> list[Curve]:
-    combined: list[Curve] = []
-    for pair in pairs:
-        curve = combine_curves_power(
-            [pair.channel_1, pair.channel_2],
-            n_points=n_points,
+    return [
+        compute_rms_average(
+            [pair.channel_1, pair.channel_2], n_points=n_points, normalize_ref=False
         )
-        if curve is not None:
-            combined.append(curve)
-    return combined
+        for pair in pairs
+    ]
 
 
 def curve_label_for_selection(selection: str) -> str:

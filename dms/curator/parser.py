@@ -6,8 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from dms.curator.metadata import canonicalize_metadata
-from dms.curator.models import CurveData
-from dms.hrtf import HRTFCurve
+from dms.curator.models import CurveData, PreferenceBounds
 
 # A token is a decimal-comma number when the comma separates two digit runs.
 _DECIMAL_COMMA = re.compile(r"^[-+]?\d+,\d+([eE][-+]?\d+)?$")
@@ -72,17 +71,6 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
         metadata=canonicalize_metadata(metadata),
         warnings=tuple(warnings),
     )
-
-
-def parse_fr_txt(path: str | Path, *, label: str = "FR") -> CurveData:
-    curve = parse_measurement_txt(path)
-    if curve.kind != "fr":
-        raise ValueError(f"{label} file '{Path(path).name}' must be a two-column FR file.")
-    return curve
-
-
-def load_hrtf_txt(path: str | Path) -> HRTFCurve:
-    return HRTFCurve(str(path))
 
 
 def read_measurement_text(path: Path) -> str:
@@ -191,3 +179,20 @@ def _positive_sorted(data: np.ndarray, path: Path) -> np.ndarray:
         raise ValueError(f"{path.name} has fewer than 2 positive frequency rows.")
     order = np.argsort(data[:, 0], kind="stable")
     return data[order]
+
+
+def load_preference_bounds(upper_path: str | Path, lower_path: str | Path) -> PreferenceBounds:
+    curves = []
+    for label, path in (("Upper bound", upper_path), ("Lower bound", lower_path)):
+        curve = parse_measurement_txt(path)
+        if curve.kind != "fr":
+            raise ValueError(f"{label} file '{Path(path).name}' must be a two-column FR file.")
+        curves.append(curve)
+    upper, lower = curves
+    return PreferenceBounds(
+        enabled=True,
+        upper=upper,
+        lower=lower,
+        upper_path=Path(upper_path),
+        lower_path=Path(lower_path),
+    )

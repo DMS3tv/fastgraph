@@ -28,7 +28,7 @@ from dms.shortcuts import (
 )
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
-from dms.ui.style_tokens import theme_definition, theme_definitions
+from dms.ui.style_tokens import THEME_DEFINITIONS, theme_definition
 from dms.ui.theme_surface import ThemePreview
 
 
@@ -66,7 +66,7 @@ class SettingsWidget(QWidget):
         theme_rows_layout = QVBoxLayout(self._theme_choice_rows)
         theme_rows_layout.setContentsMargins(0, 0, 0, 0)
         theme_rows_layout.setSpacing(6)
-        for definition in theme_definitions():
+        for definition in THEME_DEFINITIONS:
             row = QHBoxLayout()
             radio = QRadioButton(definition.label)
             radio.setToolTip(f"Use the {definition.label} interface theme.")

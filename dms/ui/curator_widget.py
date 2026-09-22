@@ -30,18 +30,18 @@ from PyQt6.QtWidgets import (
 
 from dms import brand_brand
 from dms.console import ConsoleEventStore
-from dms.curator.bounds import load_preference_bounds
 from dms.curator.export_image import export_graph_image
 from dms.curator.export_brand import draw_brand_poster, brand_export_warnings
 from dms.curator.metadata import automatic_export_values, metadata_has_identity
 from dms.curator.models import CurveData, ExportText, GraphState, LayerState, PreferenceBounds
-from dms.curator.parser import load_hrtf_txt, parse_measurement_txt
+from dms.curator.parser import load_preference_bounds, parse_measurement_txt
 from dms.curator.transforms import (
     apply_layer_transform,
     can_combine_layers,
     combine_variation_layers,
     normalization_offset_at_1khz_with_warning,
 )
+from dms.hrtf import HRTFCurve
 from dms.brand_fonts import brand_font_status
 from dms.theme import (
     DARK,
@@ -59,7 +59,7 @@ from dms.ui.curator_graph_widget import (
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox as QDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
-from dms.ui.style_tokens import theme_definitions
+from dms.ui.style_tokens import THEME_DEFINITIONS
 from dms.ui.theme_surface import DitherSurface
 from dms.ui.toggle_switch import ToggleSwitch
 
@@ -74,7 +74,7 @@ DEFAULT_Y_MAX = 17.5
 SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
 _STANDARD_SWATCH_PREFIX_SIZE = max(
     len(brand_brand.TRACE_PALETTE),
-    *(len(definition.tokens.trace_palette) for definition in theme_definitions()),
+    *(len(definition.tokens.trace_palette) for definition in THEME_DEFINITIONS),
 )
 _DEFAULT_STANDARD_SWATCHES = tuple(
     QColor(QColorDialog.standardColor(index)) for index in range(_STANDARD_SWATCH_PREFIX_SIZE)
@@ -1451,7 +1451,7 @@ class CuratorWidget(QWidget):
             )
             return
         try:
-            layer.hrtf = load_hrtf_txt(path)
+            layer.hrtf = HRTFCurve(str(path))
         except Exception as exc:
             self._log(
                 "ERROR",

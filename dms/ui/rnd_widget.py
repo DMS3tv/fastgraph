@@ -37,8 +37,8 @@ from PyQt6.QtWidgets import (
 )
 
 from dms import brand_brand
-from dms.curator.bounds import load_preference_bounds
 from dms.curator.models import PreferenceBounds
+from dms.curator.parser import load_preference_bounds
 from dms.graph_display import (
     retro_step_group,
     retro_step_series,

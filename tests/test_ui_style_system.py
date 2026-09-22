@@ -31,7 +31,7 @@ from dms.ui.style_tokens import (
     HACKERMAN_95_TOKENS,
     BRAND_TOKENS,
     LIGHT_TOKENS,
-    theme_definitions,
+    THEME_DEFINITIONS,
     tokens_for,
 )
 from dms.ui.theme_surface import (
@@ -77,7 +77,7 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert tokens_for(HACKERMAN_95) is HACKERMAN_95_TOKENS
     assert tokens_for(DITHER) is DITHER_TOKENS
     assert tokens_for(DARK, brand_mode=True) is BRAND_TOKENS
-    assert [definition.label for definition in theme_definitions()] == [
+    assert [definition.label for definition in THEME_DEFINITIONS] == [
         "Default dark",
         "Default light",
         "FastGraph 95",
@@ -88,7 +88,7 @@ def test_theme_surface_tokens_and_brand_values() -> None:
 
 
 def test_dither_is_registered_with_reusable_behavior_flags() -> None:
-    definitions = theme_definitions()
+    definitions = THEME_DEFINITIONS
     by_key = {definition.key: definition for definition in definitions}
 
     assert by_key["dither"].label == "Dither"

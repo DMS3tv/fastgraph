@@ -3,7 +3,6 @@ import numpy as np
 from dms.two_channel import (
     TwoChannelCurvePair,
     channel_curves,
-    combine_curves_power,
     combined_pair_curves,
     shared_normalize_pair_at_1khz,
 )
@@ -26,8 +25,7 @@ def test_shared_normalization_preserves_delta_and_sets_power_mean_reference() ->
 
 
 def test_combined_curves_use_power_mean_without_renormalizing() -> None:
-    combined = combine_curves_power([_curve(0.0), _curve(6.0)], n_points=3)
-    assert combined is not None
+    [combined] = combined_pair_curves([TwoChannelCurvePair(_curve(0.0), _curve(6.0))], n_points=3)
     expected = 10.0 * np.log10((1.0 + 10.0**0.6) / 2.0)
     np.testing.assert_allclose(combined[1], expected)
 

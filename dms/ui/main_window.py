@@ -126,8 +126,8 @@ from dms.measurement_alignment import (
     is_retryable_timing_failure,
 )
 from dms.measurement_profiles import (
+    BLUETOOTH_PROFILE_DEFAULTS,
     PROFILE_SNAPSHOT_SETTING,
-    bluetooth_profile_updates,
     restore_standard_profile_updates,
     snapshot_measurement_profile,
 )
@@ -2576,7 +2576,7 @@ class MainWindow(QMainWindow):
                     bluetooth_keys = [
                         "bluetooth_headphone_mode",
                         PROFILE_SNAPSHOT_SETTING,
-                        *bluetooth_profile_updates().keys(),
+                        *BLUETOOTH_PROFILE_DEFAULTS,
                     ]
                     saved = []
                     for key in bluetooth_keys:
@@ -2643,7 +2643,7 @@ class MainWindow(QMainWindow):
         if enabled == current:
             self._settings.set_session("bluetooth_headphone_mode", enabled)
         elif enabled:
-            updates = bluetooth_profile_updates()
+            updates = dict(BLUETOOTH_PROFILE_DEFAULTS)
             self._console_bt_snapshot = {key: self._settings.get(key) for key in updates}
             self._settings.set_session("bluetooth_headphone_mode", True)
             self._settings.set_session(
@@ -5723,7 +5723,7 @@ class MainWindow(QMainWindow):
         notify: bool,
         preserve_standard: bool,
     ) -> None:
-        updates = bluetooth_profile_updates()
+        updates = dict(BLUETOOTH_PROFILE_DEFAULTS)
         if preserve_standard:
             current_profile = {key: self._settings.get(key) for key in updates}
             updates[PROFILE_SNAPSHOT_SETTING] = snapshot_measurement_profile(current_profile)

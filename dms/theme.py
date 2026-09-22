@@ -11,9 +11,9 @@ from dms.dither_fonts import configure_dither_typography, dither_font_status
 from dms.settings_manager import SettingsManager
 from dms.ui.style_tokens import (
     BRAND_TOKENS,
+    THEME_DEFINITIONS,
     ThemeTokens,
     theme_definition,
-    theme_definitions,
     tokens_for,
 )
 
@@ -23,7 +23,7 @@ FASTGRAPH_95 = "fastgraph95"
 FASTGRAPH_95_DARK = "fastgraph95_dark"
 HACKERMAN_95 = "hackerman95"
 DITHER = "dither"
-VALID_THEMES = {definition.key for definition in theme_definitions()}
+VALID_THEMES = {definition.key for definition in THEME_DEFINITIONS}
 
 
 def normalize_theme(value: object) -> str:

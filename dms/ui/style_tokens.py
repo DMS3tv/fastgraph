@@ -427,11 +427,6 @@ THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
 _THEMES_BY_KEY = {definition.key: definition for definition in THEME_DEFINITIONS}
 
 
-def theme_definitions() -> tuple[ThemeDefinition, ...]:
-    """Return selectable themes in their Settings order."""
-    return THEME_DEFINITIONS
-
-
 def theme_definition(theme: object) -> ThemeDefinition:
     """Return a registered theme, or the default dark theme."""
     key = str(theme or "").strip().lower()

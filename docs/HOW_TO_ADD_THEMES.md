@@ -196,7 +196,7 @@ canvas.
 
 At minimum, add or update tests for:
 
-1. The theme key and label in `theme_definitions()`.
+1. The theme key and label in `THEME_DEFINITIONS`.
 2. `normalize_theme()` and `tokens_for()`.
 3. Important token values and optional flags.
 4. The generated stylesheet when the theme has a style family.

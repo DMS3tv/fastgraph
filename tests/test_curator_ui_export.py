@@ -50,7 +50,7 @@ from dms.ui.curator_graph_widget import FREQUENCY_MARKERS
 from dms.ui.curator_graph_widget import FREQUENCY_TICKS as GRAPH_FREQUENCY_TICKS
 from dms.ui.curator_widget import CuratorWidget
 from dms.ui.dual_plot_widget import DualPlotWidget
-from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, theme_definitions, tokens_for
+from dms.ui.style_tokens import DITHER_TOKENS, BRAND_TOKENS, THEME_DEFINITIONS, tokens_for
 
 
 @pytest.fixture
@@ -665,7 +665,7 @@ def test_fastgraph95_dark_export_uses_classic_frame_and_safe_bottom_margin(
 
 
 def test_existing_export_themes_keep_matching_classic_and_retro_flags() -> None:
-    for definition in theme_definitions():
+    for definition in THEME_DEFINITIONS:
         if definition.key == DITHER:
             continue
         assert definition.tokens.classic_controls is definition.tokens.retro_graph

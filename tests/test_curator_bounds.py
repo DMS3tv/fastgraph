@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dms.curator.bounds import load_preference_bounds
 from dms.curator.export_image import aligned_bounds
+from dms.curator.parser import load_preference_bounds
 
 
 def test_load_preference_bounds_uses_raw_fr_files(tmp_path: Path) -> None:

@@ -18,3 +18,6 @@ known-first-party = ["dms"]
 testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
 filterwarnings = ["default::pytest.PytestWarning"]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/render_tabs.py" = ["E402"]  # environment and config patches must precede the Qt imports

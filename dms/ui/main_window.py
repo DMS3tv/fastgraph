@@ -7349,6 +7349,7 @@ class MainWindow(QMainWindow):
                 hrtf=self._hrtf if compensated else None,
                 n_sweeps=active_count,
                 smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
             )
             self._statusbar.showMessage(f"Exported variation: {path}")
             if hasattr(self, "_log_event"):
@@ -7557,6 +7558,7 @@ class MainWindow(QMainWindow):
                         hrtf=hrtf if compensated else None,
                         n_sweeps=active_count,
                         smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
+                        level_mode=level_mode,
                     )
                 for name, destination in zip(filenames, destinations):
                     os.replace(temp_dir / name, destination)

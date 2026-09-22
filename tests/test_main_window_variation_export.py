@@ -140,9 +140,12 @@ def test_export_variation_uses_current_variation_data(monkeypatch, tmp_path: Pat
     )
     fake._bottom_view_mode = lambda: MainWindow._bottom_view_mode(fake)
     fake._export_variation = lambda: MainWindow._export_variation(fake)
+    fake._level_mode = lambda: MainWindow._level_mode(fake)
+    fake._spl_offset_db = lambda: MainWindow._spl_offset_db(fake)
 
     MainWindow._export(fake)
 
+    assert written["level_mode"] == "ref_1khz"
     assert np.array_equal(written["freqs"], np.array([100.0]))
     assert np.array_equal(written["p10_db"], np.array([-2.0]))
     assert np.array_equal(written["p25_db"], np.array([-1.0]))

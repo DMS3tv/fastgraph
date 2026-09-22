@@ -80,6 +80,7 @@ def test_export_variation_writes_metadata_and_six_columns(tmp_path: Path) -> Non
     assert "* Variation Sweeps: 5" in text
     assert "* HRTF File: fixture_hrtf.txt" in text
     assert "* Smoothing: 1/48 octave" in text
+    assert "* Normalization: 1 kHz reference offset only (shape preserved)" in text
     assert "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)" in text
 
     data_lines = [line for line in text.splitlines() if line and not line.startswith("*")]
@@ -149,3 +150,26 @@ def test_export_curve_writes_offset_header_only_when_nonzero(tmp_path: Path) -> 
     assert "* Offset: 2.5 dB" in texts[0]
     assert "* Offset:" not in texts[1]
     assert "* Offset:" not in texts[2]
+
+
+def test_export_variation_writes_spl_level_header(tmp_path: Path) -> None:
+    session = SessionData(rig="GRAS", brand="DMS", model="Example")
+    output = tmp_path / "variation_spl.txt"
+    band = np.array([84.0, 86.0])
+
+    export_variation(
+        freqs=np.array([100.0, 1000.0]),
+        p10_db=band,
+        p25_db=band,
+        median_db=band,
+        p75_db=band,
+        p90_db=band,
+        session=session,
+        output_path=output,
+        compensated=False,
+        level_mode="dbspl",
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert "* Level: dB SPL (calibrated)" in text
+    assert "* Normalization:" not in text

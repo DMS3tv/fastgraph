@@ -49,6 +49,12 @@ def build_variation_filename(
         return f"{brand} {model} {rig} {suffix}.txt"
 
 
+def _level_line(level_mode: str) -> str:
+    if str(level_mode) == "dbspl":
+        return "* Level: dB SPL (calibrated)"
+    return "* Normalization: 1 kHz reference offset only (shape preserved)"
+
+
 def export_curve(
     freqs: np.ndarray,
     mag_db: np.ndarray,
@@ -86,12 +92,8 @@ def export_curve(
     if offset_db:
         lines.append(f"* Offset: {float(offset_db):g} dB")
 
-    lines.append(
-        "* Level: dB SPL (calibrated)"
-        if str(level_mode) == "dbspl"
-        else "* Normalization: 1 kHz reference offset only (shape preserved)"
-    )
     lines += [
+        _level_line(level_mode),
         "* Points: log-spaced",
         "*",
         "* Frequency(Hz)\tMagnitude(dB)",
@@ -116,6 +118,7 @@ def export_variation(
     hrtf: HRTFCurve | None = None,
     n_sweeps: int | None = None,
     smoothing_fraction: int | None = None,
+    level_mode: str = "ref_1khz",
 ) -> None:
     """Write DMS Fastgraph variation-band TXT file."""
     header = session.to_rew_header()
@@ -136,7 +139,7 @@ def export_variation(
 
     lines += [
         "* Percentiles: p10/p25/median/p75/p90 across kept measurements",
-        "* Normalization: follows displayed bottom viewport data",
+        _level_line(level_mode),
         "* Points: log-spaced",
         "*",
         "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)",

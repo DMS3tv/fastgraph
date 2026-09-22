@@ -13,6 +13,7 @@ from dms.file_io import (
     atomic_write_json,
     atomic_write_text,
     backup_corrupt_file,
+    ensure_extension,
     load_json_with_backup,
 )
 from dms.settings_manager import SettingsManager
@@ -199,3 +200,44 @@ def test_calibration_store_drops_non_numeric_entries(monkeypatch, tmp_path: Path
     assert store.get_sensitivity("Good") == 1.5
     assert store.get_sensitivity("Bad") is None
     assert store.load_error is None
+
+
+def test_atomic_write_text_validate_rejection_keeps_the_original(tmp_path: Path) -> None:
+    target = tmp_path / "session.json"
+    atomic_write_text(target, "good", mode=None)
+    seen: list[str] = []
+
+    def reject(text: str) -> None:
+        seen.append(text)
+        raise ValueError("bad bytes")
+
+    with pytest.raises(ValueError, match="bad bytes"):
+        atomic_write_text(target, "bad", mode=None, validate=reject)
+
+    assert seen == ["bad"]
+    assert target.read_text(encoding="utf-8") == "good"
+    assert [p.name for p in tmp_path.iterdir()] == ["session.json"]
+
+
+@pytest.mark.parametrize("suffix", [".fastgraph-measure.json", ".fastgraph-rnd.json"])
+@pytest.mark.parametrize(
+    ("selected", "expected"),
+    [
+        ("unit", "unit{s}"),
+        ("unit{head}", "unit{s}"),
+        ("unit{HEAD}", "unit{HEAD}.json"),
+        ("unit.json", "unit{s}"),
+        ("unit.JSON", "unit{s}"),
+        ("unit.txt", "unit.txt{s}"),
+        ("unit{S}", "unit{s}"),
+        ("unit{s}.json", "unit{s}{s}"),
+    ],
+)
+def test_ensure_extension_matches_the_former_per_store_helpers(
+    suffix: str, selected: str, expected: str
+) -> None:
+    """Pins the behaviour of the removed ``ensure_*_session_extension`` pair."""
+    head = suffix[: -len(".json")]
+    fields = {"s": suffix, "S": suffix.upper(), "head": head, "HEAD": head.upper()}
+    result = ensure_extension(Path("dir") / selected.format(**fields), suffix)
+    assert result == Path("dir") / expected.format(**fields)

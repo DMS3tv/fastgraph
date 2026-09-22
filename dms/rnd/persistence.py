@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from dms.file_io import atomic_write_text, same_session_file
 from dms.rnd.models import RnDSession
 from dms.rnd.photos import RnDPhotoStore, attachment_directory, session_photos
 
@@ -20,20 +21,6 @@ _MANAGED_JPEG = re.compile(r"^[0-9a-f]{32}\.jpg$", re.IGNORECASE)
 RND_SESSION_EXTENSION = ".fastgraph-rnd.json"
 
 _LOG = logging.getLogger(__name__)
-
-
-def ensure_rnd_session_extension(path: Path) -> Path:
-    """Return a session path with the full canonical R&D extension."""
-    path = Path(path)
-    name = path.name
-    lower_name = name.lower()
-    if lower_name.endswith(RND_SESSION_EXTENSION):
-        return path.with_name(name[: -len(RND_SESSION_EXTENSION)] + RND_SESSION_EXTENSION)
-    if lower_name.endswith(".fastgraph-rnd"):
-        return path.with_name(name + ".json")
-    if lower_name.endswith(".json"):
-        return path.with_name(name[:-5] + RND_SESSION_EXTENSION)
-    return path.with_name(name + RND_SESSION_EXTENSION)
 
 
 def session_snapshot(
@@ -49,23 +36,6 @@ def session_snapshot(
         if source.is_file():
             sources[Path(photo.file_name).name] = source
     return session.to_dict(), sources
-
-
-def same_session_file(left: str | Path | None, right: str | Path | None) -> bool:
-    """Return whether two paths name the same session file on disk."""
-    if not left or not right:
-        return False
-    left_path = Path(left).expanduser()
-    right_path = Path(right).expanduser()
-    try:
-        if left_path.exists() and right_path.exists():
-            return left_path.samefile(right_path)
-    except OSError:
-        pass
-    try:
-        return left_path.resolve(strict=False) == right_path.resolve(strict=False)
-    except OSError:
-        return left_path == right_path
 
 
 def save_rnd_session(
@@ -156,8 +126,11 @@ def save_rnd_snapshot(
             if child.is_file() and child.name not in expected and _MANAGED_JPEG.match(child.name):
                 child.unlink()
 
-    serialized = json.dumps(dict(snapshot), indent=2)
-    _atomic_write_validated_json(path, serialized)
+    atomic_write_text(
+        path,
+        json.dumps(dict(snapshot), indent=2),
+        validate=lambda text: RnDSession.from_dict(json.loads(text)),
+    )
 
 
 def load_rnd_session(
@@ -212,32 +185,3 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     finally:
         with contextlib.suppress(FileNotFoundError):
             temp_path.unlink()
-
-
-def _atomic_write_validated_json(path: Path, serialized: str) -> None:
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(serialized)
-            handle.flush()
-            os.fsync(handle.fileno())
-        RnDSession.from_dict(json.loads(temp_path.read_text(encoding="utf-8")))
-        os.replace(temp_path, path)
-        _fsync_directory(path.parent)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            temp_path.unlink()
-
-
-def _fsync_directory(directory: Path) -> None:
-    try:
-        descriptor = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(descriptor)
-    except OSError:
-        pass
-    finally:
-        os.close(descriptor)

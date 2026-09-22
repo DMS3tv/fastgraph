@@ -105,16 +105,13 @@ from dms.export import (
     export_curve,
     export_variation,
 )
+from dms.file_io import ensure_extension, same_session_file
 from dms.hrtf import HRTFCurve
 from dms.measure_persistence import (
     MEASURE_SESSION_EXTENSION,
     MeasureSessionLoadError,
-    ensure_measure_session_extension,
     load_measure_session,
     save_measure_session,
-)
-from dms.measure_persistence import (
-    same_session_file as same_measure_session_file,
 )
 from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
 from dms.measure_recovery import MeasureRecoveryCandidate, MeasureRecoveryManager
@@ -156,9 +153,7 @@ from dms.rnd.models import (
 )
 from dms.rnd.persistence import (
     RND_SESSION_EXTENSION,
-    ensure_rnd_session_extension,
     load_rnd_session,
-    same_session_file,
     save_rnd_session,
 )
 from dms.rnd.persistence import (
@@ -2705,7 +2700,7 @@ class MainWindow(QMainWindow):
         if args[:1] == ["session"] and len(args) == 3:
             action = args[1].lower()
             if action == "save":
-                path = ensure_measure_session_extension(Path(args[2]).expanduser())
+                path = ensure_extension(Path(args[2]).expanduser(), MEASURE_SESSION_EXTENSION)
                 save_measure_session(self._current_measure_session(), path)
                 self._measure_session_path = path
                 self._clear_measure_dirty()
@@ -6434,7 +6429,7 @@ class MainWindow(QMainWindow):
         )
         if not path_str:
             return False
-        path = ensure_rnd_session_extension(Path(path_str))
+        path = ensure_extension(Path(path_str), RND_SESSION_EXTENSION)
         # The file dialog checked the name the user typed; the canonical
         # extension is added afterwards, so "prototype" can still land on an
         # existing "prototype.fastgraph-rnd.json" without a warning.
@@ -6631,11 +6626,11 @@ class MainWindow(QMainWindow):
             )
             if not path_str:
                 return False
-            path = ensure_measure_session_extension(Path(path_str))
+            path = ensure_extension(Path(path_str), MEASURE_SESSION_EXTENSION)
             # The dialog checked the name the user typed; the canonical
             # extension is added afterwards, so "demo" can still land on an
             # existing "demo.fastgraph-measure.json" without a warning.
-            if path.exists() and not same_measure_session_file(self._measure_session_path, path):
+            if path.exists() and not same_session_file(self._measure_session_path, path):
                 choice = QMessageBox.question(
                     self,
                     "Replace Measure Session?",

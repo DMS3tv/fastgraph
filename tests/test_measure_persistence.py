@@ -10,14 +10,14 @@ import numpy as np
 import pytest
 
 import dms.measure_persistence as persistence
+from dms.file_io import ensure_extension, same_session_file
 from dms.measure_persistence import (
     MeasureSessionLoadError,
-    ensure_measure_session_extension,
     load_measure_session,
-    same_session_file,
     save_measure_session,
 )
 from dms.measure_session import (
+    MEASURE_SESSION_EXTENSION,
     MEASURE_SESSION_SCHEMA_VERSION,
     MeasureSession,
     UnsupportedMeasureSessionVersion,
@@ -59,7 +59,7 @@ def test_measure_session_extension_is_complete(
     selected_name: str,
     expected_name: str,
 ) -> None:
-    assert ensure_measure_session_extension(Path(selected_name)).name == expected_name
+    assert ensure_extension(Path(selected_name), MEASURE_SESSION_EXTENSION).name == expected_name
 
 
 def test_save_normalizes_the_extension_and_records_the_path(tmp_path: Path) -> None:
@@ -104,13 +104,13 @@ def test_atomic_replace_failure_keeps_the_previous_file(
             raise OSError("simulated interruption")
         return real_replace(source, destination)
 
-    monkeypatch.setattr(persistence.os, "replace", fail_target_replace)
+    monkeypatch.setattr(os, "replace", fail_target_replace)
     with pytest.raises(OSError, match="simulated interruption"):
         save_measure_session(_session("Second"), path)
 
-    monkeypatch.setattr(persistence.os, "replace", real_replace)
+    monkeypatch.setattr(os, "replace", real_replace)
     assert load_measure_session(path).metadata.model == "First"
-    assert not list(tmp_path.glob("*.tmp"))
+    assert not list(tmp_path.glob("*.tmp*"))
 
 
 def test_unserializable_state_never_replaces_a_good_file(

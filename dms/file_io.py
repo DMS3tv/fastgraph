@@ -12,9 +12,8 @@ Two problems this module solves:
   returns a human-readable message, so the UI can tell the user where the old
   content went.
 
-``dms/rnd/persistence.py`` keeps its own copy of the atomic-write pattern
-because it validates the serialized session before swapping it in; this module
-is the general-purpose version for the small configuration stores.
+Session stores pass ``validate`` to :func:`atomic_write_text` so the bytes on
+disk are parsed back into a session before anything is swapped in.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,8 +29,10 @@ from typing import Any
 __all__ = [
     "atomic_write_json",
     "atomic_write_text",
-    "load_json_with_backup",
     "backup_corrupt_file",
+    "ensure_extension",
+    "load_json_with_backup",
+    "same_session_file",
 ]
 
 
@@ -65,12 +67,14 @@ def atomic_write_text(
     *,
     mode: int | None = _DEFAULT_MODE,
     encoding: str = "utf-8",
+    validate: Callable[[str], None] | None = None,
 ) -> None:
     """Write ``text`` to ``path`` atomically, creating parent directories.
 
     The content lands in ``<path>.tmp-<pid>`` first. If anything raises before
     the final ``os.replace`` the original file is left completely untouched and
-    the temporary file is removed.
+    the temporary file is removed. ``validate`` receives the text read back
+    from the temporary file; raising from it cancels the swap.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +84,8 @@ def atomic_write_text(
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+        if validate is not None:
+            validate(temp_path.read_text(encoding=encoding))
         _apply_mode(temp_path, mode)
         os.replace(temp_path, target)
         _fsync_directory(target.parent)
@@ -106,6 +112,43 @@ def atomic_write_json(
     """
     serialized = json.dumps(data, indent=indent, ensure_ascii=False)
     atomic_write_text(path, serialized, mode=mode)
+
+
+def ensure_extension(path: Path | str, suffix: str) -> Path:
+    """Return ``path`` ending in the full lowercase ``suffix``.
+
+    For a compound suffix such as ``.fastgraph-rnd.json`` a name ending in the
+    first part gains ``.json``, and a bare ``.json`` is widened to the full
+    suffix; any other name simply has ``suffix`` appended.
+    """
+    path = Path(path)
+    name = path.name
+    lower_name = name.lower()
+    head, _, last = suffix.rpartition(".")
+    if lower_name.endswith(suffix):
+        return path.with_name(name[: -len(suffix)] + suffix)
+    if head and lower_name.endswith(head):
+        return path.with_name(f"{name}.{last}")
+    if lower_name.endswith(f".{last}"):
+        return path.with_name(name[: -len(last) - 1] + suffix)
+    return path.with_name(name + suffix)
+
+
+def same_session_file(left: str | Path | None, right: str | Path | None) -> bool:
+    """Return whether two paths name the same session file on disk."""
+    if not left or not right:
+        return False
+    left_path = Path(left).expanduser()
+    right_path = Path(right).expanduser()
+    try:
+        if left_path.exists() and right_path.exists():
+            return left_path.samefile(right_path)
+    except OSError:
+        pass
+    try:
+        return left_path.resolve(strict=False) == right_path.resolve(strict=False)
+    except OSError:
+        return left_path == right_path
 
 
 def backup_corrupt_file(path: Path | str) -> Path | None:

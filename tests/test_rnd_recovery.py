@@ -9,9 +9,10 @@ from PyQt6.QtTest import QTest
 
 import dms.rnd.persistence as persistence
 import dms.rnd.recovery as recovery_module
+from dms.file_io import ensure_extension
 from dms.rnd.models import RnDGroup, RnDMeasurement, RnDSession
 from dms.rnd.persistence import (
-    ensure_rnd_session_extension,
+    RND_SESSION_EXTENSION,
     load_rnd_session,
     save_rnd_session,
 )
@@ -67,7 +68,7 @@ def test_rnd_session_extension_is_complete(
     selected_name: str,
     expected_name: str,
 ) -> None:
-    assert ensure_rnd_session_extension(Path(selected_name)).name == expected_name
+    assert ensure_extension(Path(selected_name), RND_SESSION_EXTENSION).name == expected_name
 
 
 def test_atomic_session_save_round_trips_state_and_photos(tmp_path: Path) -> None:

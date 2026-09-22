@@ -856,6 +856,22 @@ def brand_theme_colors() -> dict[str, str]:
     )
 
 
+def colors_for(theme: str, *, brand_mode: bool = False) -> dict[str, str]:
+    """The colour set for one application mode; BRAND overrides the theme."""
+    return brand_theme_colors() if brand_mode else theme_colors(theme)
+
+
+def mix_colors(first: QColor, second: QColor, amount: float) -> QColor:
+    """Blend two colours, alpha included; ``amount`` is clamped to 0..1."""
+    amount = max(0.0, min(1.0, float(amount)))
+    return QColor(
+        round(first.red() + (second.red() - first.red()) * amount),
+        round(first.green() + (second.green() - first.green()) * amount),
+        round(first.blue() + (second.blue() - first.blue()) * amount),
+        round(first.alpha() + (second.alpha() - first.alpha()) * amount),
+    )
+
+
 def brand_application_stylesheet() -> str:
     c = brand_theme_colors()
     base = _stylesheet_body(

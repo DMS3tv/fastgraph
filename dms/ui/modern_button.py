@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from dms.dither_fonts import dither_heading_font
 from dms.style_tokens import ThemeTokens, mode_tokens
+from dms.theme import mix_colors
 from dms.ui.theme_surface import paint_dither
 
 _OBJECT_ROLES = {
@@ -45,18 +46,8 @@ _FLAT_LABEL_HORIZONTAL_INSET = 8
 _FLAT_PAINT_RECT_WIDTH_LOSS = 1
 
 
-def _mix(first: QColor, second: QColor, amount: float) -> QColor:
-    amount = max(0.0, min(1.0, float(amount)))
-    return QColor(
-        round(first.red() + (second.red() - first.red()) * amount),
-        round(first.green() + (second.green() - first.green()) * amount),
-        round(first.blue() + (second.blue() - first.blue()) * amount),
-        round(first.alpha() + (second.alpha() - first.alpha()) * amount),
-    )
-
-
 def _shade(color: QColor, amount: float) -> QColor:
-    return _mix(color, QColor("#FFFFFF") if amount >= 0 else QColor("#000000"), abs(amount))
+    return mix_colors(color, QColor("#FFFFFF") if amount >= 0 else QColor("#000000"), abs(amount))
 
 
 class ModernButton(QPushButton):
@@ -169,9 +160,9 @@ class ModernButton(QPushButton):
         control = QColor(tokens.control if light_mode else tokens.viewport)
         text = QColor(tokens.text)
         darkness = 0.18 if light_mode else 0.58
-        base = _mix(control, QColor("#000000"), darkness)
+        base = mix_colors(control, QColor("#000000"), darkness)
         if self.role() == "ghost":
-            base = _mix(base, QColor(tokens.panel), 0.22)
+            base = mix_colors(base, QColor(tokens.panel), 0.22)
             text = QColor(tokens.muted)
         return base, text
 
@@ -351,7 +342,7 @@ class ModernButton(QPushButton):
         accent = self._accent(tokens)
         base, text = self._surface_and_text(tokens)
         if not self.isEnabled():
-            base = _mix(QColor(tokens.alternate), QColor("#000000"), 0.28)
+            base = mix_colors(QColor(tokens.alternate), QColor("#000000"), 0.28)
             text = QColor(tokens.disabled)
 
         outer, well, rect = self._paint_rects()
@@ -405,7 +396,7 @@ class ModernButton(QPushButton):
         painter.setBrush(glow)
         painter.drawRoundedRect(rect, radius, radius)
 
-        inner_border = _mix(QColor("#050607"), accent, 0.13 + 0.22 * progress)
+        inner_border = mix_colors(QColor("#050607"), accent, 0.13 + 0.22 * progress)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(inner_border, 1.0))
         painter.drawRoundedRect(rect, radius, radius)
@@ -422,7 +413,7 @@ class ModernButton(QPushButton):
             painter.setPen(QPen(accent, tokens.geometry.focus_border_px))
             painter.drawRoundedRect(outer.adjusted(1, 1, -1, -1), outer_radius, outer_radius)
 
-        text = _mix(text, accent, 0.30 + 0.16 * progress + 0.12 * flash)
+        text = mix_colors(text, accent, 0.30 + 0.16 * progress + 0.12 * flash)
         option = QStyleOptionButton()
         option.initFrom(self)
         option.text = self.text()
@@ -551,7 +542,7 @@ class ModernButton(QPushButton):
             terminal_edge if terminal_variant else ("#8F8F8F" if dark_variant else "#FFFFFF")
         )
         mid_light = (
-            _mix(terminal_edge, QColor("#000000"), 0.52)
+            mix_colors(terminal_edge, QColor("#000000"), 0.52)
             if terminal_variant
             else QColor("#666666" if dark_variant else "#DFDFDF")
         )

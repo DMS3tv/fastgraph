@@ -31,6 +31,7 @@ from dms.style_tokens import tokens_for
 from dms.theme import (
     FASTGRAPH_95,
     LIGHT,
+    colors_for,
     ensure_graph_color,
     brand_theme_colors,
     normalize_theme,
@@ -271,7 +272,7 @@ class DualPlotWidget(QWidget):
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
         self._brand_mode = bool(brand_mode)
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         foreground = colors["plot_fg"]
         for plot in (self._top_plot, self._bot_plot):
             plot.setBackground(colors["plot_bg"])
@@ -452,7 +453,7 @@ class DualPlotWidget(QWidget):
         if self._delta_mode:
             return
 
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         background = colors["plot_bg"]
         entries: list[tuple[object, str]] = []
 
@@ -531,7 +532,7 @@ class DualPlotWidget(QWidget):
         vb.setVisible(True)
         self._bot_plot.getPlotItem().showAxis("right")
 
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         background = colors["plot_bg"]
         log_freqs = np.log10(np.clip(np.asarray(freqs, dtype=float), 1e-6, None))
         for name, values in series.items():
@@ -785,7 +786,7 @@ class DualPlotWidget(QWidget):
         else:
             outer_color = QColor(*_BAND_OUTER)
             inner_color = QColor(*_BAND_INNER)
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         median_base = (
             QColor(theme_trace_palette(self._theme)[0])
             if not self._brand_mode and tokens_for(self._theme).trace_palette

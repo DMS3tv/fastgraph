@@ -26,7 +26,7 @@ from dms.graph_display import (
 )
 from dms.processing import VariationBand
 from dms.style_tokens import tokens_for
-from dms.theme import ensure_graph_color, brand_theme_colors, normalize_theme, theme_colors
+from dms.theme import colors_for, ensure_graph_color, normalize_theme
 from dms.ui.dual_plot_widget import DualPlotWidget, _configure_plot_widget
 from dms.ui.modern_spinbox import ModernDoubleSpinBox
 from dms.ui.rounded_viewport import RoundedViewportFrame
@@ -72,7 +72,7 @@ class _PlotPane(QWidget):
         self.frame.setStyleSheet(f"border: {width}px solid {color};")
 
     def apply_theme(self, theme: str, brand_mode: bool) -> None:
-        colors = brand_theme_colors() if brand_mode else theme_colors(theme)
+        colors = colors_for(theme, brand_mode=brand_mode)
         self.plot.setBackground(colors["plot_bg"])
         for axis_name in ("left", "bottom"):
             axis = self.plot.getAxis(axis_name)
@@ -91,7 +91,7 @@ class _PlotPane(QWidget):
         accent: str | None = None,
     ) -> None:
         self.clear()
-        colors = brand_theme_colors() if brand_mode else theme_colors(theme)
+        colors = colors_for(theme, brand_mode=brand_mode)
         tokens = tokens_for(theme, brand_mode=brand_mode)
         for index, (freqs, values) in enumerate(curves):
             latest = index == len(curves) - 1
@@ -128,7 +128,7 @@ class _PlotPane(QWidget):
     ) -> None:
         self.clear()
         self.plot.setTitle(title)
-        colors = brand_theme_colors() if brand_mode else theme_colors(theme)
+        colors = colors_for(theme, brand_mode=brand_mode)
         tokens = tokens_for(theme, brand_mode=brand_mode)
         base = accent or (tokens.trace_palette[0] if tokens.trace_palette else "#FCBE11")
         display_color = ensure_graph_color(base, colors["plot_bg"])
@@ -398,7 +398,7 @@ class TwoChannelMeasureWidget(QWidget):
         left = left[-count:]
         right = right[-count:]
         times = 1000.0 * np.arange(count, dtype=float) / float(sample_rate)
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         left_color = ensure_graph_color(BLUE, colors["plot_bg"])
         right_color = ensure_graph_color(RED, colors["plot_bg"])
         delta_color = ensure_graph_color(

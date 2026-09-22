@@ -46,8 +46,8 @@ from dms.brand_fonts import brand_font_status
 from dms.style_tokens import THEME_DEFINITIONS
 from dms.theme import (
     DARK,
+    colors_for,
     ensure_graph_color,
-    brand_theme_colors,
     theme_colors,
     theme_trace_palette,
 )
@@ -1051,9 +1051,7 @@ class CuratorWidget(QWidget):
             item.data(256) for item in self._layer_list.selectedItems() if item.data(256)
         }
         self._refresh_stale_flags()
-        swatch_border = (brand_theme_colors() if self._brand_mode else theme_colors(self._theme))[
-            "border"
-        ]
+        swatch_border = colors_for(self._theme, brand_mode=self._brand_mode)["border"]
         self._layer_list.blockSignals(True)
         self._layer_list.clear()
         selected_row = -1

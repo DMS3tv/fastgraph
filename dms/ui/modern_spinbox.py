@@ -14,16 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.style_tokens import mode_tokens
-
-
-def _mix(first: QColor, second: QColor, amount: float) -> QColor:
-    amount = max(0.0, min(1.0, float(amount)))
-    return QColor(
-        round(first.red() + (second.red() - first.red()) * amount),
-        round(first.green() + (second.green() - first.green()) * amount),
-        round(first.blue() + (second.blue() - first.blue()) * amount),
-        round(first.alpha() + (second.alpha() - first.alpha()) * amount),
-    )
+from dms.theme import mix_colors
 
 
 class _ChevronStepButton(QAbstractButton):
@@ -43,9 +34,9 @@ class _ChevronStepButton(QAbstractButton):
         accent = QColor(tokens.accent)
         base = QColor(tokens.control)
         if self.underMouse():
-            base = _mix(base, accent, 0.18)
+            base = mix_colors(base, accent, 0.18)
         if self.isDown():
-            base = _mix(base, accent, 0.28)
+            base = mix_colors(base, accent, 0.28)
         if not self.isEnabled():
             base = QColor(tokens.alternate)
 

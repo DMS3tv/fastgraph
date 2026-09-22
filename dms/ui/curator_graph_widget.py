@@ -24,10 +24,9 @@ from dms.graph_display import (
 from dms.processing import VariationBand
 from dms.style_tokens import tokens_for
 from dms.theme import (
+    colors_for,
     ensure_graph_color,
-    brand_theme_colors,
     normalize_theme,
-    theme_colors,
 )
 
 FREQ_MIN = 20.0
@@ -127,7 +126,7 @@ class GraphWidget(LockedPlotWidget):
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
         self._brand_mode = bool(brand_mode)
-        colors = brand_theme_colors() if brand_mode else theme_colors(theme)
+        colors = colors_for(theme, brand_mode=brand_mode)
         for name in ("bottom", "left"):
             axis = self.getAxis(name)
             axis.setPen(pg.mkPen(colors["plot_fg"]))

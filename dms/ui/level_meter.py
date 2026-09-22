@@ -14,17 +14,8 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from dms.style_tokens import ThemeTokens, mode_tokens
+from dms.theme import mix_colors
 from dms.ui.theme_surface import paint_dither
-
-
-def _mix(first: QColor, second: QColor, amount: float) -> QColor:
-    amount = max(0.0, min(1.0, float(amount)))
-    return QColor(
-        round(first.red() + (second.red() - first.red()) * amount),
-        round(first.green() + (second.green() - first.green()) * amount),
-        round(first.blue() + (second.blue() - first.blue()) * amount),
-        round(first.alpha() + (second.alpha() - first.alpha()) * amount),
-    )
 
 
 class LevelMeterWidget(QWidget):
@@ -96,9 +87,9 @@ class LevelMeterWidget(QWidget):
             return accent
         if db < cls._WARNING_BLEND_DB:
             amount = cls._smoothstep(cls._ACCENT_BLEND_DB, cls._WARNING_BLEND_DB, db)
-            return _mix(accent, warning, amount)
+            return mix_colors(accent, warning, amount)
         amount = cls._smoothstep(cls._WARNING_BLEND_DB, cls._DANGER_BLEND_DB, db)
-        return _mix(warning, danger, amount)
+        return mix_colors(warning, danger, amount)
 
     def _paint_rects(self) -> tuple[QRectF, QRectF, QRectF]:
         outer = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
@@ -164,8 +155,8 @@ class LevelMeterWidget(QWidget):
         )
 
         surround = QLinearGradient(outer.topLeft(), outer.bottomLeft())
-        surround.setColorAt(0.0, _mix(QColor(tokens.panel), QColor("#FFFFFF"), 0.035))
-        surround.setColorAt(1.0, _mix(QColor(tokens.panel), QColor("#000000"), 0.08))
+        surround.setColorAt(0.0, mix_colors(QColor(tokens.panel), QColor("#FFFFFF"), 0.035))
+        surround.setColorAt(1.0, mix_colors(QColor(tokens.panel), QColor("#000000"), 0.08))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(surround)
         painter.drawRoundedRect(outer, radius + 4.0, radius + 4.0)
@@ -174,7 +165,7 @@ class LevelMeterWidget(QWidget):
         painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
         painter.drawRoundedRect(well, radius + 2.0, radius + 2.0)
 
-        track_base = _mix(QColor(tokens.control), QColor("#000000"), 0.68)
+        track_base = mix_colors(QColor(tokens.control), QColor("#000000"), 0.68)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(track_base)
         painter.drawRoundedRect(track, radius, radius)
@@ -267,7 +258,7 @@ class LevelMeterWidget(QWidget):
             painter.setPen(QPen(clip, 1.0 + danger_amount))
             painter.drawRoundedRect(track.adjusted(1, 1, -1, -1), radius, radius)
 
-        border = _mix(QColor("#050607"), QColor(tokens.border), 0.44)
+        border = mix_colors(QColor("#050607"), QColor(tokens.border), 0.44)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(border, 1.0))
         painter.drawRoundedRect(track, radius, radius)
@@ -346,9 +337,9 @@ class LevelMeterWidget(QWidget):
             else:
                 color = QColor(tokens.accent if terminal_variant else tokens.selected)
             painter.fillRect(block, color)
-            painter.setPen(QPen(_mix(color, highlight, 0.22), 1.0))
+            painter.setPen(QPen(mix_colors(color, highlight, 0.22), 1.0))
             painter.drawLine(block.topLeft(), block.topRight())
             painter.drawLine(block.topLeft(), block.bottomLeft())
-            painter.setPen(QPen(_mix(color, shadow, 0.35), 1.0))
+            painter.setPen(QPen(mix_colors(color, shadow, 0.35), 1.0))
             painter.drawLine(block.bottomLeft(), block.bottomRight())
             painter.drawLine(block.topRight(), block.bottomRight())

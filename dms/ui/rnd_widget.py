@@ -60,10 +60,9 @@ from dms.rnd.models import (
 from dms.rnd.photos import RnDPhotoStore
 from dms.style_tokens import tokens_for
 from dms.theme import (
+    colors_for,
     ensure_graph_color,
-    brand_theme_colors,
     normalize_theme,
-    theme_colors,
     theme_trace_palette,
 )
 from dms.ui.dual_plot_widget import _configure_plot_widget, _NoWheelPlotWidget
@@ -155,7 +154,7 @@ class RnDPlotWidget(QWidget):
     def apply_theme(self, theme: str, brand_mode: bool = False) -> None:
         self._theme = normalize_theme(theme)
         self._brand_mode = bool(brand_mode)
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         for plot in (self.top_plot, self.bottom_plot):
             plot.setBackground(colors["plot_bg"])
             for axis_name in ("left", "bottom"):
@@ -174,7 +173,7 @@ class RnDPlotWidget(QWidget):
         return palette[0] if tokens_for(self._theme).trace_palette else VARIATION_COLOR
 
     def _display_color(self, color: object) -> QColor:
-        colors = brand_theme_colors() if self._brand_mode else theme_colors(self._theme)
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
         return ensure_graph_color(color, colors["plot_bg"])
 
     def _uses_retro_steps(self) -> bool:

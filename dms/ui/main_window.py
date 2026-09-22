@@ -2645,9 +2645,6 @@ class MainWindow(QMainWindow):
         for path in sorted(HRTF_DIR.glob("*.txt")):
             self._hrtf_options.append((path.stem, str(path)))
 
-        if not hasattr(self, "_hrtf_combo"):
-            return
-
         current_path = self._hrtf.path if self._hrtf is not None else ""
         self._hrtf_combo.blockSignals(True)
         self._hrtf_combo.clear()
@@ -4567,7 +4564,7 @@ class MainWindow(QMainWindow):
             self._settings.set("hrtf_path", path)
             self._sync_hrtf_ui()
             self._hrtf_toggle.setChecked(True)
-            if self._hrtf.is_variation and hasattr(self, "_variation_toggle"):
+            if self._hrtf.is_variation:
                 self._variation_toggle.setChecked(True)
             self._update_plots()
             self._mark_measure_dirty()

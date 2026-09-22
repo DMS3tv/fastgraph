@@ -647,6 +647,9 @@ skips it.
 Historical engineering records that are useful when maintaining the app are
 kept with the source tree:
 
+- `docs/MEASUREMENT_DATA_PATH.md` follows one sweep from stimulus to export
+  and names every operation that changes a magnitude, with the test that pins
+  it. Start there when verifying that the app does not alter a measurement.
 - `docs/investigations/2026-07-08-macos-audio-freeze.md` records the evidence
   and follow-up questions from a macOS audio freeze investigation.
 - `docs/reviews/2026-06-20-linux-pr-7-review.md` preserves the review of the

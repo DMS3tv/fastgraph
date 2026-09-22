@@ -4,8 +4,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QLabel,
     QLineEdit,
@@ -15,7 +13,6 @@ from PyQt6.QtWidgets import (
 )
 
 from dms.session import SessionData
-from dms.settings_manager import SettingsManager
 
 
 class SessionEditor(QWidget):
@@ -215,38 +212,3 @@ class SessionEditor(QWidget):
         self._in_ear_fitment.setVisible(is_in_ear)
         if self._fitment_label is not None:
             self._fitment_label.setVisible(is_in_ear)
-
-
-class SessionDialog(QDialog):
-    """Compatibility dialog that uses the shared metadata editor."""
-
-    _RIG_OPTIONS = SessionEditor._RIG_OPTIONS
-
-    def __init__(
-        self,
-        settings: SettingsManager,
-        parent=None,
-        initial_session: SessionData | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Headphone Metadata")
-        self.setMinimumWidth(480)
-        self._settings = settings
-
-        outer = QVBoxLayout(self)
-        self._editor = SessionEditor(self, initial_session=initial_session)
-        outer.addWidget(self._editor, 1)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
-
-    def _validate_and_accept(self) -> None:
-        if self._editor.validate():
-            self.accept()
-
-    def session_data(self) -> SessionData:
-        return self._editor.session_data()

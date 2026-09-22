@@ -1,14 +1,12 @@
 from PyQt6.QtCore import (
     QEasingCurve,
-    QPointF,
     QPropertyAnimation,
     QRectF,
     Qt,
     pyqtProperty,
-    pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen
-from PyQt6.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QWidget
+from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
+from PyQt6.QtWidgets import QApplication, QCheckBox
 
 from dms.ui.style_tokens import mode_tokens
 
@@ -201,109 +199,3 @@ class ToggleSwitch(QCheckBox):
             self.text(),
         )
         painter.end()
-
-
-class _ThemeIcon(QWidget):
-    def __init__(self, kind: str, parent=None) -> None:
-        super().__init__(parent)
-        self._kind = kind
-        self._active = False
-        self.setFixedSize(22, 22)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-    def set_active(self, active: bool) -> None:
-        self._active = bool(active)
-        self.update()
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        inactive = self.palette().color(QPalette.ColorRole.Mid)
-        color = (
-            QColor("#d69b00" if self._kind == "sun" else "#5977b8") if self._active else inactive
-        )
-        painter.setPen(QPen(color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.setBrush(color)
-        center = QPointF(self.width() / 2.0, self.height() / 2.0)
-        if self._kind == "sun":
-            painter.drawEllipse(center, 3.7, 3.7)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            for dx, dy in (
-                (0, -8),
-                (0, 8),
-                (-8, 0),
-                (8, 0),
-                (-5.7, -5.7),
-                (5.7, 5.7),
-                (-5.7, 5.7),
-                (5.7, -5.7),
-            ):
-                length = 2.0
-                scale = (dx * dx + dy * dy) ** 0.5
-                painter.drawLine(
-                    QPointF(
-                        center.x() + dx * (1.0 - length / scale),
-                        center.y() + dy * (1.0 - length / scale),
-                    ),
-                    QPointF(center.x() + dx, center.y() + dy),
-                )
-        else:
-            outer = QPainterPath()
-            outer.addEllipse(QRectF(4.0, 2.5, 14.0, 17.0))
-            cutout = QPainterPath()
-            cutout.addEllipse(QRectF(8.0, 0.8, 13.0, 15.5))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPath(outer.subtracted(cutout))
-        painter.end()
-
-
-class ThemeToggleWidget(QWidget):
-    """Icon-only sun/light and moon/dark switch for the status bar."""
-
-    toggled = pyqtSignal(bool)
-
-    def __init__(self, dark: bool = True, parent=None) -> None:
-        super().__init__(parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 0, 2, 0)
-        layout.setSpacing(3)
-        self._sun = _ThemeIcon("sun", self)
-        self._switch = ToggleSwitch("", self)
-        self._switch.setFixedWidth(54)
-        self._moon = _ThemeIcon("moon", self)
-        layout.addWidget(self._sun)
-        layout.addWidget(self._switch)
-        layout.addWidget(self._moon)
-        self._switch.toggled.connect(self._on_toggled)
-        self.set_dark(dark)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._switch.toggle()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def is_dark(self) -> bool:
-        return self._switch.isChecked()
-
-    def set_dark(self, dark: bool) -> None:
-        self._switch.blockSignals(True)
-        self._switch.setChecked(bool(dark))
-        self._switch.set_offset(1.0 if dark else 0.0)
-        self._switch.blockSignals(False)
-        self._sync_state()
-
-    def _on_toggled(self, dark: bool) -> None:
-        self._sync_state()
-        self.toggled.emit(dark)
-
-    def _sync_state(self) -> None:
-        dark = self.is_dark()
-        self._sun.set_active(not dark)
-        self._moon.set_active(dark)
-        current = "Dark" if dark else "Light"
-        target = "Light" if dark else "Dark"
-        self.setToolTip(f"{current} mode. Switch to {target} mode.")
-        self.setAccessibleName(f"Theme: {current} mode")

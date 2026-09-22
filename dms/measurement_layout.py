@@ -39,24 +39,6 @@ def _validate_fs(fs: int) -> None:
         raise ValueError("Sample rate must be positive.")
 
 
-def build_legacy_chirp_marker(fs: int, *, start_marker: bool = False) -> np.ndarray:
-    """
-    Build the previous short chirp marker for quick rollback/tests.
-    """
-    _validate_fs(fs)
-    dur_s = 0.022 if start_marker else 0.032
-    n = max(8, int(round(dur_s * fs)))
-    t = np.arange(n, dtype=np.float64) / float(fs)
-    f0 = 1200.0 if start_marker else 1400.0
-    f1 = 5600.0 if start_marker else 6800.0
-    k = (f1 - f0) / max(dur_s, 1e-9)
-    phase = 2.0 * np.pi * (f0 * t + 0.5 * k * t * t)
-    marker = np.sin(phase)
-    marker *= np.hanning(n)
-    gain = 0.45 if start_marker else 0.60
-    return (gain * marker).astype(np.float32)
-
-
 def build_coded_timing_marker(fs: int, code_id: str) -> np.ndarray:
     """
     Build a broadband coded marker packet for robust timing correlation.

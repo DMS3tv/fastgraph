@@ -38,7 +38,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
@@ -398,19 +397,6 @@ class _EventStatusBar(QStatusBar):
             else "INFO"
         )
         self._events.publish(severity, "status", message)
-
-
-class _SweepThread(QThread):
-    def __init__(self, worker: SweepWorker, **kwargs) -> None:
-        super().__init__()
-        self._worker = worker
-        self._kwargs = kwargs
-
-    def run(self) -> None:
-        self._worker.run(**self._kwargs)
-
-    def abort(self) -> None:
-        self._worker.abort()
 
 
 class _BalanceThread(QThread):
@@ -1328,10 +1314,6 @@ class MainWindow(QMainWindow):
 
         self._hrtf: HRTFCurve | None = None
 
-        # Kept for compatibility with code that inspects them; the runner owns
-        # the real thread and worker.
-        self._sweep_thread: _SweepThread | None = None
-        self._active_sweep_worker: SweepWorker | None = None
         self._sweep_runner = SweepRunner(self)
         self._sweep_runner.idle.connect(self._on_sweep_thread_finished)
         self._devices_dirty = False
@@ -3366,74 +3348,6 @@ class MainWindow(QMainWindow):
         self._queue_primary_layout.addWidget(self._sweep_progress, 1)
         self._queue_progress_widget.setVisible(False)
 
-    def _make_collapsible_section(
-        self,
-        title: str,
-        content_widget: QWidget,
-        collapsed: bool = False,
-    ) -> QWidget:
-        if isinstance(content_widget, QGroupBox):
-            content_widget.setTitle("")
-        section = QWidget()
-        section.setProperty("layoutRole", "transparent")
-        section_layout = QVBoxLayout(section)
-        section_layout.setContentsMargins(0, 0, 0, 0)
-        section_layout.setSpacing(6)
-
-        toggle = QToolButton()
-        toggle.setObjectName("section_toggle")
-        toggle.setText(title)
-        toggle.setCheckable(True)
-        toggle.setChecked(not collapsed)
-        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        toggle.setArrowType(Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow)
-        toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-
-        container = QWidget()
-        container.setProperty("layoutRole", "transparent")
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(0)
-        container_layout.addWidget(content_widget)
-        full_height = max(1, content_widget.sizeHint().height())
-        container.setMaximumHeight(full_height if not collapsed else 0)
-        container.setVisible(not collapsed)
-
-        anim = QPropertyAnimation(container, b"maximumHeight", section)
-        anim.setDuration(160)
-        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-
-        def on_toggle(checked: bool) -> None:
-            toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
-            anim.stop()
-            target = max(1, content_widget.sizeHint().height())
-            if checked:
-                container.setVisible(True)
-                anim.setStartValue(container.maximumHeight())
-                anim.setEndValue(target)
-            else:
-                anim.setStartValue(container.maximumHeight())
-                anim.setEndValue(0)
-            anim.start()
-
-        toggle.toggled.connect(on_toggle)
-
-        def on_finished() -> None:
-            if toggle.isChecked():
-                container.setMaximumHeight(max(1, content_widget.sizeHint().height()))
-            else:
-                container.setVisible(False)
-
-        anim.finished.connect(on_finished)
-
-        section_layout.addWidget(toggle)
-        section_layout.addWidget(container)
-        return section
-
     def _build_update_indicator(self) -> None:
         self._update_button = QPushButton("Update")
         self._update_button.setObjectName("btn_update")
@@ -3875,11 +3789,6 @@ class MainWindow(QMainWindow):
         """
         with contextlib.suppress(Exception):
             self._sweep_runner.abort()
-
-    def _cleanup_sweep_thread(self) -> None:
-        """Compatibility hook; the runner releases its thread and worker itself."""
-        self._sweep_thread = None
-        self._active_sweep_worker = None
 
     def _start_level_monitor(self) -> None:
         self._level_monitor.stop()
@@ -4495,7 +4404,6 @@ class MainWindow(QMainWindow):
 
     def _on_sweep_error(self, message: str) -> None:
         self._log_event("ERROR", "measurement", message)
-        self._cleanup_sweep_thread()
         self._close_pass_fail_dialog()
         self._pending_curve = None
         self._pending_pair = None
@@ -4586,7 +4494,6 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Sweep Error", dialog_message)
 
     def _on_sweep_thread_finished(self) -> None:
-        self._cleanup_sweep_thread()
         if self._start_second_pair_stage:
             self._start_second_pair_stage = False
             QTimer.singleShot(0, self._start_second_two_channel_sweep)
@@ -4924,7 +4831,6 @@ class MainWindow(QMainWindow):
 
     def _on_rnd_sweep_error(self, message: str) -> None:
         self._log_event("ERROR", "rnd", message)
-        self._cleanup_sweep_thread()
         self._close_rnd_review_dialog()
         self._rnd_widget.set_review_curve(None)
         self._pending_curve = None

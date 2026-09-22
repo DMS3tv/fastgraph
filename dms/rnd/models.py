@@ -279,13 +279,6 @@ class RnDSession:
                 return group.id
         return None
 
-    def all_ordered_measurement_ids(self) -> list[str]:
-        ordered: list[str] = []
-        ordered.extend(self.ungrouped_order)
-        for group in self.groups:
-            ordered.extend(group.measurement_ids)
-        return ordered
-
     def repair_ordering(self) -> None:
         valid_ids = {item.id for item in self.measurements}
         seen: set[str] = set()

@@ -193,11 +193,6 @@ def application_stylesheet(theme: str) -> str:
     return base + style_builder(c) if style_builder is not None else base
 
 
-def fastgraph95_application_stylesheet() -> str:
-    """Return the registered FastGraph 95 theme stylesheet."""
-    return application_stylesheet(FASTGRAPH_95)
-
-
 def _fastgraph95_stylesheet(
     c: dict[str, str],
     *,

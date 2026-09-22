@@ -652,10 +652,6 @@ class RnDWidget(QWidget):
         item = self._tree.currentItem()
         return item.data(0, ROLE_ID) if item is not None else None
 
-    def selected_kind(self) -> str | None:
-        item = self._tree.currentItem()
-        return item.data(0, ROLE_KIND) if item is not None else None
-
     def selected_group_measurements(self) -> list[RnDMeasurement]:
         group = self.selected_group()
         if group is None:
@@ -665,19 +661,6 @@ class RnDWidget(QWidget):
             for measurement_id in group.measurement_ids
             if (measurement := self.session.measurement_by_id(measurement_id)) is not None
         ]
-
-    def selected_group_variation(self):
-        group = self.selected_group()
-        if group is None or not group.variation_enabled:
-            return None
-        measurements = self.selected_group_measurements()
-        return group_variation(
-            [
-                self._with_mag(measurement, self._display_mag(measurement, group))
-                for measurement in measurements
-            ],
-            smoothing_fraction=int(self.session.smoothing_fraction or 48),
-        )
 
     def replace_session(self, session: RnDSession) -> None:
         self.session = session

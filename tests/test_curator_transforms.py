@@ -11,7 +11,6 @@ from dms.curator.transforms import (
     can_combine_layers,
     combine_variation_layers,
     layer_sweep_count,
-    normalization_offset_at_1khz,
     normalization_offset_at_1khz_with_warning,
     visible_display_layers,
 )
@@ -36,7 +35,7 @@ def test_normalization_offset_at_1khz_uses_fr_magnitude() -> None:
         mag_db=np.array([-2.0, 5.0]),
     )
 
-    assert normalization_offset_at_1khz(curve) == -5.0
+    assert normalization_offset_at_1khz_with_warning(curve) == (-5.0, None)
 
 
 def test_normalization_offset_at_1khz_uses_variation_median() -> None:
@@ -50,7 +49,7 @@ def test_normalization_offset_at_1khz_uses_variation_median() -> None:
         p90_db=np.array([1.0, 0.0]),
     )
 
-    assert normalization_offset_at_1khz(curve) == 3.0
+    assert normalization_offset_at_1khz_with_warning(curve) == (3.0, None)
 
 
 def test_hrtf_and_offset_apply_to_fr_in_order() -> None:
@@ -393,7 +392,6 @@ def test_normalization_offset_warns_instead_of_clamping_outside_the_range() -> N
     assert offset == 0.0
     assert warning is not None
     assert "1 kHz" in warning
-    assert normalization_offset_at_1khz(partial) == 0.0
 
 
 def test_normalization_offset_still_anchors_a_curve_that_covers_1khz() -> None:

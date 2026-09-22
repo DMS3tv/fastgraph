@@ -1297,17 +1297,6 @@ def noise_floor_rms(
     return _rms(np.concatenate(noise_parts))
 
 
-def estimate_snr_db(
-    rec_mono: np.ndarray,
-    aligned_recording: np.ndarray,
-    post_noise_start: int,
-    start_idx: int,
-    fs: int,
-) -> float:
-    noise_rms = noise_floor_rms(rec_mono, post_noise_start, start_idx, fs)
-    return _ratio_db(_rms(aligned_recording), noise_rms)
-
-
 def compute_sweep_integrity(
     aligned_recording: np.ndarray,
     noise_rms: float,

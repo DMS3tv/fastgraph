@@ -267,13 +267,6 @@ def device_by_index(index: int, kind: str | None = None) -> dict | None:
     return None
 
 
-def device_by_name(name: str, kind: str | None = None) -> dict | None:
-    device, ambiguous = resolve_device_selection(name, kind or "input")
-    if ambiguous:
-        return None
-    return device
-
-
 def device_channel_count(device: Any, kind: str = "input") -> int:
     if isinstance(device, dict):
         d = device

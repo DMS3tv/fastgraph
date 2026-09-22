@@ -20,11 +20,6 @@ _MIXTURE_GRID_POINTS = 2048
 _MIXTURE_SIGMA_FLOOR = 1e-9
 
 
-def normalization_offset_at_1khz(curve: CurveData) -> float:
-    offset, _warning = normalization_offset_at_1khz_with_warning(curve)
-    return offset
-
-
 def normalization_offset_at_1khz_with_warning(
     curve: CurveData,
 ) -> tuple[float, str | None]:

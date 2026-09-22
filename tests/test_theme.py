@@ -2,8 +2,7 @@ import hashlib
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtTest import QTest
+from PyQt6.QtCore import QPoint
 
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
@@ -27,7 +26,7 @@ from dms.theme import (
 from dms.ui.dual_plot_widget import DualPlotWidget
 from dms.ui.settings_dialog import SettingsWidget
 from dms.ui.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
-from dms.ui.toggle_switch import ThemeToggleWidget, ToggleSwitch
+from dms.ui.toggle_switch import ToggleSwitch
 
 
 def test_theme_defaults_and_validation() -> None:
@@ -183,14 +182,6 @@ def test_brand_stylesheet_has_visible_accent_hierarchy() -> None:
     assert "border-bottom: 3px solid #7A7A7A" in stylesheet
 
 
-def test_theme_toggle_direction(qapp) -> None:
-    toggle = ThemeToggleWidget(dark=True)
-    assert toggle.is_dark() is True
-    toggle.set_dark(False)
-    assert toggle.is_dark() is False
-    assert "Light mode" in toggle.toolTip()
-
-
 def test_custom_switch_uses_full_painted_hitbox(qapp) -> None:
     switch = ToggleSwitch("")
     switch.resize(54, 30)
@@ -202,13 +193,6 @@ def test_custom_switch_reserves_space_for_painted_track(qapp) -> None:
     switch = ToggleSwitch("")
     assert switch.sizeHint().width() >= 54
     assert switch.minimumSizeHint().width() >= 54
-
-
-def test_theme_toggle_container_click_changes_mode(qapp) -> None:
-    toggle = ThemeToggleWidget(dark=True)
-    toggle.resize(toggle.sizeHint())
-    QTest.mouseClick(toggle, Qt.MouseButton.LeftButton, pos=QPoint(5, 11))
-    assert toggle.is_dark() is False
 
 
 def test_plot_theme_change_preserves_curves(qapp) -> None:

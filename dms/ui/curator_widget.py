@@ -1473,15 +1473,6 @@ class CuratorWidget(QWidget):
             hrtf=layer.hrtf.name,
         )
 
-    def _clear_layer_hrtf(self) -> None:
-        layer = self._selected_layer()
-        if layer is None:
-            return
-        layer.hrtf = None
-        self._sync_ui()
-        self._apply_auto_export_text()
-        self._redraw()
-
     def _layer_by_id(self, layer_id: str) -> LayerState | None:
         return next((item for item in self._state.layers if item.id == layer_id), None)
 

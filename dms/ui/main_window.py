@@ -73,16 +73,6 @@ from dms.audio_engine import (
 from dms.automation import AutomationDefinition, AutomationStep, default_automation_directory
 from dms.calibration import CalibrationStore
 from dms.channel_balance import ChannelBalanceEngine, frequency_limit
-from dms.comparison import (
-    OFFSET_MODES,
-    ReferenceLayer,
-    delta_curve,
-    deviation_score,
-    format_deviation_summary,
-    load_reference_from_measure_session,
-    load_reference_from_txt,
-    load_target_curve,
-)
 from dms.console import ConsoleEventStore, runtime_diagnostics
 from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
@@ -149,7 +139,7 @@ from dms.rnd.persistence import (
 from dms.session import SessionData
 from dms.settings_manager import SettingsManager, config_dir
 from dms.shortcuts import SHORTCUT_ACTIONS, shortcut_bindings_from_settings
-from dms.theme import ThemeController, theme_trace_palette
+from dms.theme import ThemeController
 from dms.two_channel import (
     TwoChannelCurvePair,
     channel_curves,
@@ -161,8 +151,8 @@ from dms.ui.automation_widget import AutomationWidget
 from dms.ui.calibration_dialog import CalibrationDialog
 from dms.ui.console_widget import ConsoleWidget
 from dms.ui.curator_widget import CuratorWidget
-from dms.ui.eq_suggestion_dialog import EqSuggestionDialog
 from dms.ui.level_meter import LevelMeterWidget
+from dms.ui.measure_compare import MeasureCompare
 from dms.ui.measure_controls import _MeasureSubmodeControl, _ResponsiveQueueBar
 from dms.ui.measure_dialogs import (
     MeasureRecoveryDialog,
@@ -197,9 +187,6 @@ _METER_UPDATE_MS = 140
 #: Harmonic analysis needs a clean recording; below this SNR the distortion
 #: packets are indistinguishable from the noise floor, so nothing is computed.
 _DISTORTION_MIN_SNR_DB = 20.0
-#: A/B reference layers held alongside the measurement. Three is as many as
-#: the bottom viewport can carry before the average stops being the subject.
-_MAX_REFERENCE_LAYERS = 3
 
 
 _QUEUE_AMBIENT_WARN_DBFS = -45.0
@@ -478,11 +465,7 @@ class MainWindow(QMainWindow):
         self._measure_session_path: Path | None = None
         self._measure_dirty = False
         self._restored_measure_candidate: RecoveryCandidate | None = None
-        # Target comparison. The target survives restarts through settings;
-        # reference layers are deliberately session-only.
-        self._measure_target: tuple[np.ndarray, np.ndarray] | None = None
-        self._measure_target_path: Path | None = None
-        self._measure_reference_layers: list[ReferenceLayer] = []
+        self.measure_compare = MeasureCompare(self)
 
         self._level_monitor = LevelMonitor()
         self._level_monitor.level_updated.connect(self._on_level_update)
@@ -521,7 +504,7 @@ class MainWindow(QMainWindow):
                 preserve_standard=False,
             )
         self._restore_hrtf_state()
-        self._restore_measure_comparison_state()
+        self.measure_compare.restore()
         self._refresh_devices()
         self._start_level_monitor()
         self._apply_state_ui()
@@ -1841,16 +1824,16 @@ class MainWindow(QMainWindow):
             raise ValueError("Usage: measure session save|load <path>")
         if args[:1] == ["target"] and len(args) == 2:
             if args[1].lower() == "clear":
-                self._clear_measure_target()
+                self.measure_compare.clear_target()
                 self._command_reply("Target cleared.")
                 return
-            if not self._load_measure_target(str(Path(args[1]).expanduser())):
+            if not self.measure_compare.load_target(str(Path(args[1]).expanduser())):
                 raise ValueError("The target curve was not loaded.")
             self._command_reply(f"Target loaded: {args[1]}")
             return
         if args[:1] == ["eq"] and len(args) <= 2:
             average = self._bottom_curve_for_display_and_export()
-            if self._measure_target is None:
+            if self.measure_compare._measure_target is None:
                 raise ValueError("Load a target curve first: measure target <path>")
             if average is None:
                 raise ValueError("No averaged measurement is available yet.")
@@ -1859,7 +1842,7 @@ class MainWindow(QMainWindow):
                 raise ValueError("measure eq accepts 1 to 10 filters.")
             from dms.comparison import format_eq_apo, suggest_eq
 
-            delta = self._measure_delta_result(average)
+            delta = self.measure_compare.delta_result(average)
             self._command_reply(format_eq_apo(suggest_eq(delta, max_filters=max_filters)))
             return
         raise ValueError(
@@ -2119,31 +2102,7 @@ class MainWindow(QMainWindow):
         self._level_mode_combo.currentIndexChanged.connect(self._on_level_mode_changed)
         row.addWidget(self._level_mode_combo)
 
-        self._compare_menu_btn = QToolButton()
-        self._compare_menu_btn.setText("Compare ▾")
-        self._compare_menu_btn.setProperty("menuButton", True)
-        self._compare_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._compare_menu_btn.setToolTip(
-            "Compare the average against a target curve or other measurements."
-        )
-        self._compare_menu = QMenu(self._compare_menu_btn)
-        self._load_target_action = self._compare_menu.addAction("Load Target…")
-        self._load_target_action.triggered.connect(lambda: self._load_measure_target())
-        self._clear_target_action = self._compare_menu.addAction("Clear Target")
-        self._clear_target_action.triggered.connect(self._clear_measure_target)
-        self._delta_view_action = self._compare_menu.addAction("Delta View (measurement − target)")
-        self._delta_view_action.setCheckable(True)
-        self._delta_view_action.setChecked(bool(self._settings.get("measure_delta_view")))
-        self._delta_view_action.toggled.connect(self._on_delta_view_toggled)
-        self._compare_menu.addSeparator()
-        self._load_reference_action = self._compare_menu.addAction("Load Reference…")
-        self._load_reference_action.triggered.connect(lambda: self._load_measure_reference())
-        self._clear_references_action = self._compare_menu.addAction("Clear References")
-        self._clear_references_action.triggered.connect(self._clear_measure_references)
-        self._compare_menu.addSeparator()
-        self._eq_suggestion_action = self._compare_menu.addAction("EQ Suggestion…")
-        self._eq_suggestion_action.triggered.connect(self._open_eq_suggestion)
-        self._compare_menu_btn.setMenu(self._compare_menu)
+        self._compare_menu_btn = self.measure_compare.build_menu()
         row.addWidget(self._compare_menu_btn)
 
         self._undo_btn = QPushButton("Undo")
@@ -3583,7 +3542,7 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._update_plots()
         self._mark_measure_dirty()
-        match = self._target_match_message()
+        match = self.measure_compare.target_match_message()
         if match:
             self._statusbar.showMessage(f"Kept {len(self._kept_curves)} measurement(s). {match}")
 
@@ -3632,7 +3591,7 @@ class MainWindow(QMainWindow):
         self._sweep_progress.setValue(100)
         self._apply_state_ui()
         self._start_level_monitor()
-        match = self._target_match_message()
+        match = self.measure_compare.target_match_message()
         self._statusbar.showMessage(f"Queue complete. {match}" if match else "Queue complete.")
         self._run_automation_trigger("queue_complete")
 
@@ -3665,7 +3624,7 @@ class MainWindow(QMainWindow):
             timing_quality=self._last_timing_quality,
             diagnostics=self._last_measurement_diagnostics,
             distortion=self._queue.last_distortion,
-            deviation_summary=self._pending_deviation_summary(),
+            deviation_summary=self.measure_compare.pending_deviation_summary(),
             parent=self,
         )
         dlg.adjustSize()
@@ -4144,8 +4103,8 @@ class MainWindow(QMainWindow):
     def _update_plots(self, *_args, show_pending: bool = False) -> None:
         overlay_freqs, overlay_series = self._distortion_overlay_series()
         self._plots.set_distortion_overlay(overlay_freqs, overlay_series)
-        self._sync_compare_layers()
-        delta_on = self._delta_view_enabled()
+        self.measure_compare.sync_layers()
+        delta_on = self.measure_compare.delta_view_enabled()
         if self._two_channel_enabled:
             active_hrtf = self._hrtf if self._is_hrtf_active() else None
             pairs = list(self._two_channel_pairs)
@@ -4187,7 +4146,7 @@ class MainWindow(QMainWindow):
                 # their own averages, the pane titles still read "Average", and
                 # the target line and reference layers are single-channel only.
                 active_key = self._active_two_channel_key()
-                delta = self._measure_delta_result(
+                delta = self.measure_compare.delta_result(
                     averages.get(active_key)
                     if isinstance(averages.get(active_key), tuple)
                     else None
@@ -4216,7 +4175,7 @@ class MainWindow(QMainWindow):
         if delta_on:
             # The bottom viewport shows measurement - target instead of the
             # average, so the variation band has nothing to describe.
-            delta = self._measure_delta_result(self._bottom_curve_for_display_and_export())
+            delta = self.measure_compare.delta_result(self._bottom_curve_for_display_and_export())
             if delta is not None:
                 avg = (delta.freqs, delta.delta_db)
                 bottom_mode = "average"
@@ -4561,7 +4520,7 @@ class MainWindow(QMainWindow):
             # ``clear_all`` resets the comparison layers too, so the loaded
             # target and references are pushed straight back onto the plot.
             self._plots.clear_all()
-            self._sync_compare_layers()
+            self.measure_compare.sync_layers()
         self._queue.reset()
         self._kept_distortion = None
         self._update_queue_progress()
@@ -5858,241 +5817,6 @@ class MainWindow(QMainWindow):
     def _on_measure_recovery_failed(self, error: str) -> None:
         self._statusbar.showMessage("Measure recovery save failed.")
         self._log_event("ERROR", "measure", "Measure recovery save failed", error=error)
-
-    # ------------------------------------------------------------------
-    # Target comparison
-    # ------------------------------------------------------------------
-
-    def _delta_view_enabled(self) -> bool:
-        action = getattr(self, "_delta_view_action", None)
-        return action is not None and action.isChecked() and self._measure_target is not None
-
-    def _delta_offset_mode(self) -> str:
-        mode = str(self._settings.get("measure_delta_offset_mode") or "1khz")
-        return mode if mode in OFFSET_MODES else "1khz"
-
-    def _restore_measure_comparison_state(self) -> None:
-        """Reload the remembered target, dropping it if the file has gone."""
-        stored = str(self._settings.get("measure_target_path") or "").strip()
-        if stored:
-            path = Path(stored).expanduser()
-            if path.is_file():
-                try:
-                    freqs, mag_db, _warnings = load_target_curve(path)
-                except Exception:
-                    self._settings.set("measure_target_path", "")
-                else:
-                    self._measure_target = (freqs, mag_db)
-                    self._measure_target_path = path
-            else:
-                self._settings.set("measure_target_path", "")
-        self._sync_compare_layers()
-
-    def _load_measure_target(self, requested_path: str | None = None) -> bool:
-        path_str = requested_path
-        if path_str is None:
-            path_str, _ = QFileDialog.getOpenFileName(
-                self,
-                "Load Target Curve",
-                str(self._measure_default_dir()),
-                "Measurement TXT (*.txt);;All Files (*)",
-            )
-            if not path_str:
-                return False
-        try:
-            freqs, mag_db, warnings = load_target_curve(Path(path_str))
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Target Load Failed",
-                f"Could not read the target curve.\n\n{exc}",
-            )
-            return False
-        self._measure_target = (freqs, mag_db)
-        self._measure_target_path = Path(path_str)
-        self._settings.set("measure_target_path", str(path_str))
-        for warning in warnings[:4]:
-            self._log_event("WARNING", "measure", warning)
-        self._sync_compare_layers()
-        self._update_plots()
-        self._statusbar.showMessage(f"Target loaded: {Path(path_str).name}")
-        self._log_event("INFO", "measure", "Target loaded", path=str(path_str))
-        return True
-
-    def _clear_measure_target(self) -> None:
-        self._measure_target = None
-        self._measure_target_path = None
-        self._settings.set("measure_target_path", "")
-        if getattr(self, "_delta_view_action", None) is not None:
-            self._delta_view_action.setChecked(False)
-        self._sync_compare_layers()
-        self._update_plots()
-        self._statusbar.showMessage("Target cleared.")
-
-    def _on_delta_view_toggled(self, checked: bool) -> None:
-        if checked and self._measure_target is None:
-            self._delta_view_action.setChecked(False)
-            QMessageBox.information(
-                self,
-                "No Target",
-                "Load a target curve before switching to delta view.",
-            )
-            return
-        self._settings.set("measure_delta_view", bool(checked))
-        self._sync_compare_layers()
-        self._update_plots()
-        self._statusbar.showMessage("Delta view on." if checked else "Delta view off.")
-
-    def _load_measure_reference(self, requested_path: str | None = None) -> bool:
-        if len(self._measure_reference_layers) >= _MAX_REFERENCE_LAYERS:
-            QMessageBox.information(
-                self,
-                "Reference Limit",
-                f"At most {_MAX_REFERENCE_LAYERS} reference layers can be shown. "
-                "Clear them before loading another.",
-            )
-            return False
-        path_str = requested_path
-        if path_str is None:
-            path_str, _ = QFileDialog.getOpenFileName(
-                self,
-                "Load Reference Curve",
-                str(self._measure_default_dir()),
-                "Reference Curves (*.txt *.fastgraph-measure.json *.json);;All Files (*)",
-            )
-            if not path_str:
-                return False
-        path = Path(path_str)
-        try:
-            if path.name.lower().endswith(".json"):
-                layer = load_reference_from_measure_session(path)
-            else:
-                layer = load_reference_from_txt(path)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Reference Load Failed",
-                f"Could not read the reference curve.\n\n{exc}",
-            )
-            return False
-        self._measure_reference_layers.append(layer)
-        self._sync_compare_layers()
-        self._statusbar.showMessage(f"Reference added: {layer.name}")
-        self._log_event("INFO", "measure", "Reference layer added", path=str(path))
-        return True
-
-    def _clear_measure_references(self) -> None:
-        self._measure_reference_layers.clear()
-        self._sync_compare_layers()
-        self._statusbar.showMessage("Reference layers cleared.")
-
-    def _reference_colors(self) -> list[str]:
-        """Trace colours for reference layers, never the average's own colour."""
-        palette = theme_trace_palette(
-            self._theme_controller.theme,
-            brand_mode=self._theme_controller.brand_mode,
-        )
-        remaining = palette[1:] or palette
-        return [remaining[index % len(remaining)] for index in range(_MAX_REFERENCE_LAYERS)]
-
-    def _sync_compare_actions(self) -> None:
-        has_target = self._measure_target is not None
-        if getattr(self, "_clear_target_action", None) is not None:
-            self._clear_target_action.setEnabled(has_target)
-        if getattr(self, "_delta_view_action", None) is not None:
-            self._delta_view_action.setEnabled(has_target)
-            if not has_target and self._delta_view_action.isChecked():
-                # Signals are blocked: this is bookkeeping after the target
-                # went away, not the user turning delta view off.
-                self._delta_view_action.blockSignals(True)
-                self._delta_view_action.setChecked(False)
-                self._delta_view_action.blockSignals(False)
-        if getattr(self, "_clear_references_action", None) is not None:
-            self._clear_references_action.setEnabled(bool(self._measure_reference_layers))
-        if getattr(self, "_eq_suggestion_action", None) is not None:
-            can_fit = has_target and self._bottom_curve_for_display_and_export() is not None
-            self._eq_suggestion_action.setEnabled(bool(can_fit))
-            self._eq_suggestion_action.setToolTip(
-                "" if can_fit else "Needs a loaded target and at least one kept measurement."
-            )
-
-    def _sync_compare_layers(self) -> None:
-        """Push the target, the reference layers and delta view to the plots."""
-        plots = getattr(self, "_plots", None)
-        if plots is None:
-            return
-        self._sync_compare_actions()
-        single = plots.single
-        delta_on = self._delta_view_enabled()
-        single.set_delta_mode(delta_on)
-        if self._measure_target is not None:
-            single.set_target_curve(*self._measure_target)
-        else:
-            single.set_target_curve(None)
-        colors = self._reference_colors()
-        single.set_reference_layers(
-            [
-                (layer.name, layer.freqs, layer.mag_db, colors[index % len(colors)])
-                for index, layer in enumerate(
-                    self._measure_reference_layers[:_MAX_REFERENCE_LAYERS]
-                )
-            ]
-        )
-
-    def _measure_delta_result(
-        self,
-        curve: tuple[np.ndarray, np.ndarray] | None,
-    ):
-        """``curve - target`` on the shared grid, or ``None`` without either."""
-        if curve is None or self._measure_target is None:
-            return None
-        try:
-            return delta_curve(
-                curve[0],
-                curve[1],
-                self._measure_target[0],
-                self._measure_target[1],
-                offset_mode=self._delta_offset_mode(),
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            self._log_event("ERROR", "measure", "Delta computation failed", error=str(exc))
-            return None
-
-    def _pending_deviation_summary(self) -> str | None:
-        """Band-by-band deviation of the sweep awaiting review, if any."""
-        if self._measure_target is None or self._two_channel_enabled:
-            return None
-        delta = self._measure_delta_result(self._pending_curve)
-        if delta is None:
-            return None
-        return format_deviation_summary(deviation_score(delta))
-
-    def _target_match_message(self) -> str | None:
-        delta = self._measure_delta_result(self._bottom_curve_for_display_and_export())
-        if delta is None:
-            return None
-        return f"Match: {deviation_score(delta).match_percent:.0f} %"
-
-    def _open_eq_suggestion(self) -> None:
-        average = self._bottom_curve_for_display_and_export()
-        if self._measure_target is None:
-            self._statusbar.showMessage("Load a target curve before asking for an EQ suggestion.")
-            return
-        if average is None:
-            self._statusbar.showMessage(
-                "No averaged measurement is available to fit an EQ against."
-            )
-            return
-        dialog = EqSuggestionDialog(
-            average,
-            self._measure_target,
-            offset_mode=self._delta_offset_mode(),
-            parent=self,
-        )
-        dialog.exec()
-        self._settings.set("measure_delta_offset_mode", dialog.offset_mode())
-        dialog.deleteLater()
-        self._update_plots()
 
     @staticmethod
     def _safe_filename(value: str) -> str:

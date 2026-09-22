@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,21 @@ def _level_line(level_mode: str) -> str:
     return "* Normalization: 1 kHz reference offset only (shape preserved)"
 
 
+def _write_rew_file(
+    path: Path,
+    header_lines: list[str],
+    rows: Iterable[Sequence[float]],
+) -> None:
+    """Write ``header_lines`` then one tab-separated line per row.
+
+    The frequency column keeps 4 decimals and every value column 6.
+    """
+    lines = list(header_lines)
+    for frequency, *values in rows:
+        lines.append("\t".join([f"{frequency:.4f}", *(f"{value:.6f}" for value in values)]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def export_curve(
     freqs: np.ndarray,
     mag_db: np.ndarray,
@@ -99,10 +115,7 @@ def export_curve(
         "* Frequency(Hz)\tMagnitude(dB)",
     ]
 
-    for f, m in zip(freqs, mag_db):
-        lines.append(f"{f:.4f}\t{m:.6f}")
-
-    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_rew_file(output_path, lines, zip(freqs, mag_db))
 
 
 def export_variation(
@@ -145,14 +158,4 @@ def export_variation(
         "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)",
     ]
 
-    for f, p10, p25, median, p75, p90 in zip(
-        freqs,
-        p10_db,
-        p25_db,
-        median_db,
-        p75_db,
-        p90_db,
-    ):
-        lines.append(f"{f:.4f}\t{p10:.6f}\t{p25:.6f}\t{median:.6f}\t{p75:.6f}\t{p90:.6f}")
-
-    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_rew_file(output_path, lines, zip(freqs, p10_db, p25_db, median_db, p75_db, p90_db))

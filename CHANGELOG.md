@@ -87,6 +87,20 @@
   session dialog, theme toggle and chirp marker among them), the unwindowed
   frequency-response and point-sampled resampling paths, the `AppState`
   mirror of the measure queue's states, and several one-line wrappers.
+- Duplicated helpers now have one home each: atomic session writes
+  (`file_io`), crash recovery for Measure and R&D (`dms/recovery.py`), the
+  shared log grid and 1 kHz lookup (`processing.log_grid`, `value_at`),
+  TXT parsing including six-column HRTF files (`curator.parser`),
+  `SessionData.from_dict`, and the REW export writer. Interpolation uses
+  `np.interp` instead of scipy's `interp1d`; outputs are unchanged to
+  within 1e-12 dB.
+- A reference layer whose file does not reach 1 kHz is now rejected with a
+  message instead of being anchored on its nearest end (target curves still
+  anchor that way, with the existing warning).
+- Combined Curator variation bands use exact normal quantiles, which moves
+  them by about 0.0001 dB.
+- R&D exports take blank headphone fields as blank instead of writing
+  "Unknown".
 
 ### Added
 

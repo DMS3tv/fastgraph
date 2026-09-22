@@ -1,18 +1,8 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
 from dms.hrtf import _Z_P75, _Z_P90, HRTFCurve, sigma_from_percentiles
-from dms.ui.main_window import MainWindow
-
-
-class _Toggle:
-    def __init__(self, checked: bool) -> None:
-        self._checked = checked
-
-    def isChecked(self) -> bool:
-        return self._checked
 
 
 def _variation_hrtf(tmp_path: Path) -> HRTFCurve:
@@ -25,34 +15,27 @@ def _variation_hrtf(tmp_path: Path) -> HRTFCurve:
 
 
 def test_population_compensation_forces_measure_view_to_variation(
+    make_main_window,
     tmp_path: Path,
 ) -> None:
-    fake = SimpleNamespace(
-        _hrtf=_variation_hrtf(tmp_path),
-        _hrtf_toggle=_Toggle(True),
-        _variation_toggle=_Toggle(False),
-    )
-    fake._is_hrtf_active = lambda: MainWindow._is_hrtf_active(fake)
+    window = make_main_window()
+    window._hrtf = _variation_hrtf(tmp_path)
+    window._hrtf_toggle.setChecked(True)
+    window._variation_toggle.setChecked(False)
 
-    assert MainWindow._bottom_view_mode(fake) == "variation"
+    assert window._bottom_view_mode() == "variation"
 
 
 def test_one_measurement_gets_population_compensation_band(
+    make_main_window,
     tmp_path: Path,
 ) -> None:
     freqs = np.array([100.0, 1000.0])
-    fake = SimpleNamespace(
-        _kept_curves=[(freqs, np.array([10.0, 100.0]))],
-        _average=(freqs, np.array([10.0, 100.0])),
-        _hrtf=_variation_hrtf(tmp_path),
-        _hrtf_toggle=_Toggle(True),
-    )
-    fake._is_hrtf_active = lambda: MainWindow._is_hrtf_active(fake)
+    window = make_main_window()
+    window._kept_curves = [(freqs, np.array([10.0, 100.0]))]
+    window._average = (freqs, np.array([10.0, 100.0]))
 
-    variation = MainWindow._variation_from_kept_curves(
-        fake,
-        hrtf=fake._hrtf,
-    )
+    variation = window._variation_from_kept_curves(hrtf=_variation_hrtf(tmp_path))
 
     assert variation is not None
     p10, p25, median, p75, p90 = (

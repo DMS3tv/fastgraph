@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 import dms.ui.main_window as main_window_module
+import dms.ui.squiglink_controller as squiglink_module
 from dms import audio_engine
 from dms.console import ConsoleEventStore
 from dms.curator.models import CurveData
@@ -254,7 +255,7 @@ class _AcceptedAuth:
         pass
 
     def exec(self):
-        return main_window_module.QDialog.DialogCode.Accepted
+        return squiglink_module.QDialog.DialogCode.Accepted
 
     def username(self):
         return "user"
@@ -278,18 +279,18 @@ def test_squiglink_upload_sends_exactly_the_export(make_main_window, monkeypatch
         session=SessionData(rig="Rig", brand="DMS", model="Demo", channel_side="L")
     )
     window._average = (_FREQS.copy(), _KNOWN - _KNOWN[0])
-    monkeypatch.setattr(main_window_module, "SquiglinkAuthDialog", _AcceptedAuth)
-    window._squiglink_endpoint = lambda: ("sftp.example", 22)
-    window._ensure_upload_metadata = lambda **_kwargs: True
+    monkeypatch.setattr(squiglink_module, "SquiglinkAuthDialog", _AcceptedAuth)
+    window.squiglink.endpoint = lambda: ("sftp.example", 22)
+    window.squiglink.ensure_upload_metadata = lambda **_kwargs: True
     uploaded: dict[str, str] = {}
 
     def _capture(*, local_path, **_kwargs):
         uploaded["text"] = Path(local_path).read_text(encoding="utf-8")
         Path(local_path).unlink()
 
-    window._start_squiglink_upload = _capture
+    window.squiglink.start_upload = _capture
 
-    window._upload_to_squiglink()
+    window.squiglink.upload()
 
     displayed = smooth_fractional_octave(*window._average, fraction=48)
     direct = tmp_path / "direct.txt"

@@ -171,7 +171,7 @@ def test_measure_action_switches_between_squiglink_and_export_all(make_main_wind
     calls: list[str] = []
     window = make_main_window()
     window._theme_controller.set_brand_mode(False, persist=False)
-    window._upload_to_squiglink = lambda: calls.append("squiglink")
+    window.squiglink.upload = lambda: calls.append("squiglink")
     window._export_all_measure_outputs = lambda: calls.append("all")
 
     window._run_measure_upload_action()

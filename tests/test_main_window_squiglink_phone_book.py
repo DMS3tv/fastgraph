@@ -35,30 +35,30 @@ def _fake_connection(**_kwargs):
 
 
 def test_sync_remote_phone_book_missing_create_fresh(make_main_window, monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
+    monkeypatch.setattr("dms.ui.squiglink_controller.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
-        "dms.ui.main_window.read_remote_phone_book",
+        "dms.ui.squiglink_controller.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
     )
     written = {}
     monkeypatch.setattr(
-        "dms.ui.main_window.merge_phone_book_entry",
+        "dms.ui.squiglink_controller.merge_phone_book_entry",
         lambda phone_book, _session, _stem: phone_book.append({"name": "Apple"}),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.write_remote_phone_book",
+        "dms.ui.squiglink_controller.write_remote_phone_book",
         lambda _sftp, phone_book, _path: written.setdefault("phone_book", phone_book),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookMissingError",
+        "dms.ui.squiglink_controller.RemotePhoneBookMissingError",
         FileNotFoundError,
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookInvalidError",
+        "dms.ui.squiglink_controller.RemotePhoneBookInvalidError",
         ValueError,
     )
 
-    result = make_main_window(session=_upload_session())._sync_remote_phone_book(
+    result = make_main_window(session=_upload_session()).squiglink.sync_remote_phone_book(
         host="sftp.squig.link",
         port=2022,
         username="u",
@@ -71,26 +71,26 @@ def test_sync_remote_phone_book_missing_create_fresh(make_main_window, monkeypat
 
 
 def test_sync_remote_phone_book_missing_skip(make_main_window, monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
+    monkeypatch.setattr("dms.ui.squiglink_controller.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
-        "dms.ui.main_window.read_remote_phone_book",
+        "dms.ui.squiglink_controller.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookMissingError",
+        "dms.ui.squiglink_controller.RemotePhoneBookMissingError",
         FileNotFoundError,
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookInvalidError",
+        "dms.ui.squiglink_controller.RemotePhoneBookInvalidError",
         ValueError,
     )
     called = {"write": 0}
     monkeypatch.setattr(
-        "dms.ui.main_window.write_remote_phone_book",
+        "dms.ui.squiglink_controller.write_remote_phone_book",
         lambda *_args, **_kwargs: called.__setitem__("write", called["write"] + 1),
     )
 
-    result = make_main_window(session=_upload_session())._sync_remote_phone_book(
+    result = make_main_window(session=_upload_session()).squiglink.sync_remote_phone_book(
         host="sftp.squig.link",
         port=2022,
         username="u",
@@ -103,22 +103,22 @@ def test_sync_remote_phone_book_missing_skip(make_main_window, monkeypatch) -> N
 
 
 def test_sync_remote_phone_book_invalid_fail(make_main_window, monkeypatch) -> None:
-    monkeypatch.setattr("dms.ui.main_window.open_sftp_connection", _fake_connection)
+    monkeypatch.setattr("dms.ui.squiglink_controller.open_sftp_connection", _fake_connection)
     monkeypatch.setattr(
-        "dms.ui.main_window.read_remote_phone_book",
+        "dms.ui.squiglink_controller.read_remote_phone_book",
         lambda _sftp, _path: (_ for _ in ()).throw(ValueError("bad json")),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookMissingError",
+        "dms.ui.squiglink_controller.RemotePhoneBookMissingError",
         FileNotFoundError,
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.RemotePhoneBookInvalidError",
+        "dms.ui.squiglink_controller.RemotePhoneBookInvalidError",
         ValueError,
     )
 
     try:
-        make_main_window(session=_upload_session())._sync_remote_phone_book(
+        make_main_window(session=_upload_session()).squiglink.sync_remote_phone_book(
             host="sftp.squig.link",
             port=2022,
             username="u",
@@ -133,7 +133,7 @@ def test_sync_remote_phone_book_invalid_fail(make_main_window, monkeypatch) -> N
 
 def test_ensure_upload_metadata_returns_true_when_already_complete(make_main_window) -> None:
     window = make_main_window(session=_upload_session())
-    assert window._ensure_upload_metadata() is True
+    assert window.squiglink.ensure_upload_metadata() is True
 
 
 def test_ensure_upload_metadata_prompts_and_saves_fields(make_main_window, monkeypatch) -> None:
@@ -157,8 +157,10 @@ def test_ensure_upload_metadata_prompts_and_saves_fields(make_main_window, monke
         def channel_side(self) -> str:
             return "R"
 
-    monkeypatch.setattr("dms.ui.main_window.SquiglinkUploadMetadataDialog", _DialogAccepted)
-    assert window._ensure_upload_metadata() is True
+    monkeypatch.setattr(
+        "dms.ui.squiglink_controller.SquiglinkUploadMetadataDialog", _DialogAccepted
+    )
+    assert window.squiglink.ensure_upload_metadata() is True
     assert window._session.brand == "Sennheiser"
     assert window._session.model == "HD 800 S"
     assert window._session.channel_side == "R"
@@ -186,17 +188,17 @@ def _install_worker(monkeypatch, *, upload, sync=None):
         kwargs["sync_phone_book"] = sync or (lambda **_kw: "Phone book updated successfully.")
         return SquiglinkUploadWorker(**kwargs)
 
-    monkeypatch.setattr("dms.ui.main_window.SquiglinkUploadWorker", _factory)
+    monkeypatch.setattr("dms.ui.squiglink_controller.SquiglinkUploadWorker", _factory)
 
 
 def _silence_dialogs(monkeypatch) -> dict:
     shown: dict[str, str] = {}
     monkeypatch.setattr(
-        "dms.ui.main_window.QMessageBox.information",
+        "dms.ui.squiglink_controller.QMessageBox.information",
         lambda *args, **_kw: shown.setdefault("information", args[2]),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.QMessageBox.warning",
+        "dms.ui.squiglink_controller.QMessageBox.warning",
         lambda *args, **_kw: shown.setdefault("warning", args[2]),
     )
     return shown
@@ -215,13 +217,13 @@ def test_successful_upload_saves_credentials_and_pins_the_host_key(
     _install_worker(monkeypatch, upload=_upload)
     shown = _silence_dialogs(monkeypatch)
     monkeypatch.setattr(
-        "dms.ui.main_window.QMessageBox.question",
+        "dms.ui.squiglink_controller.QMessageBox.question",
         lambda *_args, **_kw: QMessageBox.StandardButton.Yes,
     )
 
     local = tmp_path / "Apple AirPods Pro 2 L.txt"
     local.write_text("curve", encoding="utf-8")
-    window._start_squiglink_upload(
+    window.squiglink.start_upload(
         local_path=local,
         host="sftp.squig.link",
         port=2022,
@@ -231,7 +233,7 @@ def test_successful_upload_saves_credentials_and_pins_the_host_key(
         phone_book_stem="Apple AirPods Pro 2",
         remember=True,
     )
-    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+    assert _pump(qapp, lambda: window.squiglink._squiglink_upload_context is None)
 
     assert settings.get("squiglink_host_keys") == {"sftp.squig.link:2022": "sha256:new"}
     assert decrypt_credentials(settings.get("squiglink_credentials_encrypted")) == (
@@ -257,7 +259,7 @@ def test_failed_upload_never_persists_the_credentials(
 
     local = tmp_path / "export.txt"
     local.write_text("curve", encoding="utf-8")
-    window._start_squiglink_upload(
+    window.squiglink.start_upload(
         local_path=local,
         host="sftp.squig.link",
         port=2022,
@@ -267,7 +269,7 @@ def test_failed_upload_never_persists_the_credentials(
         phone_book_stem="Apple AirPods Pro 2",
         remember=True,
     )
-    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+    assert _pump(qapp, lambda: window.squiglink._squiglink_upload_context is None)
 
     assert settings.get("squiglink_credentials_encrypted") is None
     assert settings.get("squiglink_host_keys") == {}
@@ -289,13 +291,13 @@ def test_declined_host_key_prompt_aborts_the_upload(
     _install_worker(monkeypatch, upload=_upload)
     shown = _silence_dialogs(monkeypatch)
     monkeypatch.setattr(
-        "dms.ui.main_window.QMessageBox.question",
+        "dms.ui.squiglink_controller.QMessageBox.question",
         lambda *_args, **_kw: QMessageBox.StandardButton.No,
     )
 
     local = tmp_path / "export.txt"
     local.write_text("curve", encoding="utf-8")
-    window._start_squiglink_upload(
+    window.squiglink.start_upload(
         local_path=local,
         host="sftp.squig.link",
         port=2022,
@@ -305,7 +307,7 @@ def test_declined_host_key_prompt_aborts_the_upload(
         phone_book_stem="Apple AirPods Pro 2",
         remember=True,
     )
-    assert _pump(qapp, lambda: window._squiglink_upload_context is None)
+    assert _pump(qapp, lambda: window.squiglink._squiglink_upload_context is None)
 
     assert window._settings.get("squiglink_host_keys") == {}
     assert window._settings.get("squiglink_credentials_encrypted") is None

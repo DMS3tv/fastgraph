@@ -191,6 +191,8 @@ def test_failed_recording_dump_round_trips_and_replays(tmp_path) -> None:
     assert json_path.with_suffix(".wav").exists()
     payload = json.loads(json_path.read_text())
     assert payload["failure"]["reason"] == exc.value.reason
+    # Reason enums serialise as their plain string codes.
+    assert f'"reason": "{exc.value.reason.value}"' in json_path.read_text()
     assert payload["alignment_settings"]["bluetooth_headphone_mode"] is True
     assert payload["extra"]["input_device"] == "Fixture"
 

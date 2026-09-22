@@ -7,6 +7,7 @@ behavior can be characterized with synthetic Bluetooth-like recordings.
 """
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 
@@ -37,7 +38,7 @@ class AlignmentSettings:
     peak_correlation_min: float = 0.10
 
 
-class MeasurementFailureReason:
+class MeasurementFailureReason(StrEnum):
     LOW_START_CONFIDENCE = "low_start_confidence"
     LOW_END_MARKER_CONFIDENCE = "low_end_marker_confidence"
     TIMING_DRIFT_TOO_LARGE = "timing_drift_too_large"
@@ -49,7 +50,7 @@ class MeasurementFailureReason:
     INVALID_RECORDING = "invalid_recording"
 
 
-class MeasurementWarningReason:
+class MeasurementWarningReason(StrEnum):
     BLUETOOTH_MARGINAL_DRIFT = "bluetooth_marginal_drift"
     BLUETOOTH_SWEEP_FALLBACK = "bluetooth_sweep_fallback"
     LOW_SNR = "low_snr"

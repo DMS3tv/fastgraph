@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from importlib import import_module, metadata
 from pathlib import Path
 from threading import RLock
@@ -29,6 +30,9 @@ def _redact(value: Any, key: str = "") -> Any:
         return {str(k): _redact(v, str(k)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
+    if isinstance(value, StrEnum):
+        # Keep reason codes printing as the plain strings they used to be.
+        return str(value)
     return value
 
 

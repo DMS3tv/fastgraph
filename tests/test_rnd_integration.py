@@ -24,7 +24,6 @@ from dms.rnd.models import RnDGroup, RnDMeasurement
 from dms.rnd.persistence import save_rnd_session
 from dms.rnd.photos import RnDPhotoStore
 from dms.theme import FASTGRAPH_95_DARK, HACKERMAN_95
-from dms.ui.main_window import MainWindow
 from dms.ui.measure_dialogs import RnDReviewDialog
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 
@@ -309,12 +308,13 @@ def test_rnd_close_prompt_paths(
     save_result,
     expected,
 ) -> None:
-    window = make_main_window()
+    window = make_main_window(confirm_rnd_close=False)
     window._rnd_widget.add_measurement(_measurement())
     monkeypatch.setattr(QMessageBox, "exec", lambda self: result)
     window._save_rnd_session = lambda: save_result
 
-    assert MainWindow._confirm_rnd_close(window) is expected
+    assert window._confirm_rnd_close() is expected
+    window._confirm_rnd_close = lambda: True
 
 
 def test_startup_recovery_restores_before_app_start_automation(

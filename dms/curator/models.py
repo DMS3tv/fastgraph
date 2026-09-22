@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 import numpy as np
 
 from dms import brand_brand
-from dms.hrtf import HRTFCurve
+
+if TYPE_CHECKING:
+    from dms.hrtf import HRTFCurve
 
 CurveKind = Literal["fr", "variation"]
 

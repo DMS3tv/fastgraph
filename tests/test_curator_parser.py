@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dms.curator.parser import parse_measurement_txt
+from dms.curator.parser import load_two_column_txt_curve, parse_measurement_txt
 
 
 def test_parse_two_column_fr_sorts_and_skips_headers(tmp_path: Path) -> None:
@@ -252,10 +252,30 @@ def test_wide_file_that_is_not_percentiles_imports_as_response(tmp_path) -> None
 
 
 def test_two_column_loader_shares_the_curator_parser(tmp_path) -> None:
-    from dms.measurement_txt import load_two_column_txt_curve
-
     path = tmp_path / "rew_locale.txt"
     path.write_bytes("20,5; 103,4; -12,0\n1000,0; 94,0; 3,5\n".encode("utf-16"))
     freqs, mags = load_two_column_txt_curve(str(path))
     assert freqs.tolist() == [20.5, 1000.0]
     assert mags.tolist() == [103.4, 94.0]
+
+
+def test_load_two_column_txt_curve_accepts_rew_style(tmp_path: Path) -> None:
+    path = tmp_path / "curve.txt"
+    path.write_text("# header\nfreq mag\n100 1.0\n200,2.0\n* comment\n50 -1.0\n")
+    freqs, mags = load_two_column_txt_curve(str(path), label="Measurement")
+    assert np.allclose(freqs, np.array([50.0, 100.0, 200.0]))
+    assert np.allclose(mags, np.array([-1.0, 1.0, 2.0]))
+
+
+def test_load_two_column_txt_curve_rejects_small_or_invalid(tmp_path: Path) -> None:
+    path = tmp_path / "bad.txt"
+    path.write_text("not data\n1.0 only_one_column\n")
+    with pytest.raises(ValueError, match="fewer than 2 valid data rows"):
+        load_two_column_txt_curve(str(path), label="Measurement")
+
+
+def test_load_two_column_txt_curve_drops_non_positive_frequencies(tmp_path: Path) -> None:
+    path = tmp_path / "nonpositive.txt"
+    path.write_text("0 1\n-10 2\n100 3\n")
+    with pytest.raises(ValueError, match="fewer than 2 positive frequency rows"):
+        load_two_column_txt_curve(str(path), label="Measurement")

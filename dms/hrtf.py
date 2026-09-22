@@ -1,33 +1,10 @@
-import re
 from pathlib import Path
 
 import numpy as np
 from scipy.interpolate import interp1d
 
-from dms.measurement_txt import load_two_column_txt_curve
-
-#: Standard-normal quantiles for the 90th and 75th percentiles. A population
-#: HRTF's percentile columns are converted to a sigma through these, so the
-#: measurement spread and the population spread can be added in quadrature.
-_Z_P90 = 1.2815515655446004
-_Z_P75 = 0.6744897501960817
-
-
-def sigma_from_percentiles(
-    p10: np.ndarray,
-    p25: np.ndarray,
-    p75: np.ndarray,
-    p90: np.ndarray,
-) -> np.ndarray:
-    """Estimate the standard deviation behind a set of percentile columns.
-
-    Both the 10/90 and the 25/75 pairs give an estimate of sigma for a normal
-    distribution; averaging them uses all four columns and is less sensitive to
-    one noisy tail than either alone.
-    """
-    outer = (np.asarray(p90, dtype=float) - np.asarray(p10, dtype=float)) / (2.0 * _Z_P90)
-    inner = (np.asarray(p75, dtype=float) - np.asarray(p25, dtype=float)) / (2.0 * _Z_P75)
-    return 0.5 * (outer + inner)
+from dms.curator.parser import parse_measurement_txt
+from dms.processing import _Z_P75, _Z_P90, sigma_from_percentiles
 
 
 def _edge_held_interp(freqs: np.ndarray, values: np.ndarray) -> interp1d:
@@ -144,29 +121,13 @@ class HRTFCurve:
 
 
 def _load_hrtf_data(path: str) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
-    rows: list[list[float]] = []
-    with open(path, encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or line.startswith("*"):
-                continue
-            parts = [part for part in re.split(r"[\s,]+", line) if part]
-            try:
-                values = [float(part) for part in parts]
-            except ValueError:
-                continue
-            if len(values) >= 2 and all(np.isfinite(value) for value in values):
-                rows.append(values)
-
-    if rows and max(len(row) for row in rows) >= 6:
-        data = np.asarray([row[:6] for row in rows if len(row) >= 6], dtype=float)
-        if data.shape[0] < 2:
-            raise ValueError(f"HRTF file '{path}' has fewer than 2 complete variation rows.")
-        data = data[data[:, 0] > 0.0]
-        if data.shape[0] < 2:
-            raise ValueError(f"HRTF file '{path}' has fewer than 2 positive frequency rows.")
-        data = data[np.argsort(data[:, 0], kind="stable")]
-        return data[:, 0], tuple(data[:, index] for index in range(1, 6))
-
-    freqs, mags = load_two_column_txt_curve(path, label="HRTF")
-    return freqs, (mags,)
+    curve = parse_measurement_txt(path)
+    if curve.kind == "variation":
+        return curve.freqs, (
+            curve.p10_db,
+            curve.p25_db,
+            curve.median_db,
+            curve.p75_db,
+            curve.p90_db,
+        )
+    return curve.freqs, (curve.mag_db,)

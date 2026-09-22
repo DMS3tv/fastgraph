@@ -6,8 +6,13 @@ import numpy as np
 from scipy.special import erf
 
 from dms.curator.models import CurveData, LayerState
-from dms.hrtf import sigma_from_percentiles
-from dms.processing import F_REF, log_grid, smooth_fractional_octave, value_at
+from dms.processing import (
+    F_REF,
+    log_grid,
+    sigma_from_percentiles,
+    smooth_fractional_octave,
+    value_at,
+)
 
 _MIXTURE_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
 _MIXTURE_GRID_POINTS = 2048

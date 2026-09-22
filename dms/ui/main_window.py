@@ -98,7 +98,7 @@ from dms.comparison import (
 from dms.console import ConsoleEventStore, exception_diagnostics, runtime_diagnostics
 from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
-from dms.curator.parser import parse_measurement_txt
+from dms.curator.parser import load_two_column_txt_curve, parse_measurement_txt
 from dms.export import (
     build_filename,
     build_variation_filename,
@@ -127,7 +127,6 @@ from dms.measurement_profiles import (
     restore_standard_profile_updates,
     snapshot_measurement_profile,
 )
-from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import (
     HarmonicAnalysis,
     absolute_spl_offset_db,

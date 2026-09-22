@@ -16,6 +16,30 @@ F_LOW = 20.0
 F_HIGH = 20000.0
 F_REF = 1000.0
 
+#: Standard-normal quantiles for the 90th and 75th percentiles. Percentile
+#: columns are converted to a sigma through these, so independent spreads can
+#: be added in quadrature.
+_Z_P90 = 1.2815515655446004
+_Z_P75 = 0.6744897501960817
+
+
+def sigma_from_percentiles(
+    p10: np.ndarray,
+    p25: np.ndarray,
+    p75: np.ndarray,
+    p90: np.ndarray,
+) -> np.ndarray:
+    """Estimate the standard deviation behind a set of percentile columns.
+
+    Both the 10/90 and the 25/75 pairs give an estimate of sigma for a normal
+    distribution; averaging them uses all four columns and is less sensitive to
+    one noisy tail than either alone.
+    """
+    outer = (np.asarray(p90, dtype=float) - np.asarray(p10, dtype=float)) / (2.0 * _Z_P90)
+    inner = (np.asarray(p75, dtype=float) - np.asarray(p25, dtype=float)) / (2.0 * _Z_P75)
+    return 0.5 * (outer + inner)
+
+
 # ---------------------------------------------------------------------------
 # Log swept-sine generation
 # ---------------------------------------------------------------------------

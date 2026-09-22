@@ -1,8 +1,10 @@
 """HRTF compensation outside the HRTF file's own frequency range."""
 
+import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from dms.hrtf import HRTFCurve
 
@@ -61,3 +63,40 @@ def test_variation_hrtf_band_keeps_its_width_below_the_file_range(
     assert median.tolist() == [0.0, 0.0, 0.0, 0.0]
     # The band must stay 8 dB wide outside the file, not collapse to 0 dB.
     assert (p90 - p10).tolist() == [8.0, 8.0, 8.0, 8.0]
+
+
+def _former_hrtf_rows(path: Path) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    """The regex reader ``hrtf._load_hrtf_data`` used before the shared parser."""
+    rows: list[list[float]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", "*")):
+            continue
+        try:
+            values = [float(part) for part in re.split(r"[\s,]+", line) if part]
+        except ValueError:
+            continue
+        if len(values) >= 2 and all(np.isfinite(value) for value in values):
+            rows.append(values)
+    width = 6 if max(len(row) for row in rows) >= 6 else 2
+    data = np.asarray([row[:width] for row in rows if len(row) >= width], dtype=float)
+    data = data[data[:, 0] > 0.0]
+    data = data[np.argsort(data[:, 0], kind="stable")]
+    return data[:, 0], tuple(data[:, index] for index in range(1, width))
+
+
+_BUNDLED_HRTFS = sorted((Path(__file__).resolve().parents[1] / "HRTFs").glob("*.txt"))
+
+
+@pytest.mark.parametrize("path", _BUNDLED_HRTFS, ids=lambda path: path.stem)
+def test_bundled_hrtfs_load_exactly_as_the_former_reader_did(path: Path) -> None:
+    freqs, columns = _former_hrtf_rows(path)
+    curve = HRTFCurve(str(path))
+
+    assert curve.is_variation == (len(columns) == 5)
+    assert np.array_equal(curve.freqs, freqs)
+    assert np.array_equal(curve.mags, columns[2] if curve.is_variation else columns[0])
+    if curve.is_variation:
+        evaluated = curve.evaluate_variation(freqs)
+        for got, expected in zip(evaluated, columns, strict=True):
+            assert np.array_equal(got, expected)

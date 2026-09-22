@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
 
 from dms import brand_brand
 from dms.curator.models import PreferenceBounds
-from dms.curator.parser import load_preference_bounds
+from dms.curator.parser import load_preference_bounds, load_two_column_txt_curve
 from dms.graph_display import (
     retro_step_group,
     retro_step_series,
@@ -46,7 +46,6 @@ from dms.graph_display import (
     uses_retro_steps,
 )
 from dms.hrtf import HRTFCurve
-from dms.measurement_txt import load_two_column_txt_curve
 from dms.processing import smooth_fractional_octave
 from dms.rnd.models import (
     DEFAULT_COLORS,

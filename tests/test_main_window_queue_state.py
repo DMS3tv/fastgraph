@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import dms.ui.main_window as main_window_module
+import dms.ui.measure_io as measure_io_module
 from dms.measure_queue import MeasurementQueue, QueueState
 from dms.two_channel import TwoChannelCurvePair
 
@@ -256,7 +257,7 @@ def test_close_joins_the_sweep_runner(make_main_window, monkeypatch) -> None:
     window = make_main_window()
     joined = []
     monkeypatch.setattr(window._sweep_runner, "shutdown", lambda: joined.append(True))
-    window._confirm_measure_close = lambda: True
+    window.measure_io.confirm_close = lambda: True
 
     window.close()
 
@@ -268,13 +269,13 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
     from conftest import REAL_CONFIRM_MEASURE_CLOSE
 
     window = make_main_window()
-    confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window)  # noqa: E731
+    confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window.measure_io)  # noqa: E731
     assert confirm() is True
 
     window._kept_curves.append(_curve())
     # The prompt is about *unsaved* work now, so keeping a curve has to mark
     # the Measure session dirty the way ``_on_keep`` does.
-    window._mark_measure_dirty()
+    window.measure_io.mark_dirty()
     answers = []
 
     class _Dialog:
@@ -288,21 +289,21 @@ def test_close_prompts_before_discarding_kept_curves(make_main_window, monkeypat
             return answers.pop()
 
     monkeypatch.setattr(
-        main_window_module,
+        measure_io_module,
         "QMessageBox",
         type(
             "QMessageBoxStub",
             (),
             {
-                "Icon": main_window_module.QMessageBox.Icon,
-                "StandardButton": main_window_module.QMessageBox.StandardButton,
+                "Icon": measure_io_module.QMessageBox.Icon,
+                "StandardButton": measure_io_module.QMessageBox.StandardButton,
                 "__new__": lambda cls, *a, **k: _Dialog(),
             },
         ),
     )
-    answers.append(main_window_module.QMessageBox.StandardButton.Cancel)
+    answers.append(measure_io_module.QMessageBox.StandardButton.Cancel)
     assert confirm() is False
-    answers.append(main_window_module.QMessageBox.StandardButton.Discard)
+    answers.append(measure_io_module.QMessageBox.StandardButton.Discard)
     assert confirm() is True
 
     window._settings.set("confirm_discard_measurements", False)

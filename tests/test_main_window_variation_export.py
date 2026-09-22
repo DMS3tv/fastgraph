@@ -39,7 +39,7 @@ def test_sync_export_button_switches_label_and_keeps_upload_average_based(
     window._average = (np.array([100.0]), np.array([1.0]))
     window._variation = None
 
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
 
     assert window._export_btn.text() == "Export Variation…"
     assert "percentile" in window._export_btn.toolTip().lower()
@@ -47,7 +47,7 @@ def test_sync_export_button_switches_label_and_keeps_upload_average_based(
     assert window._upload_btn.isEnabled() is True
 
     _set_variation_mode(window, False)
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
 
     assert window._export_btn.text() == "Export Average…"
     assert "rew-style" in window._export_btn.toolTip().lower()
@@ -61,7 +61,7 @@ def test_sync_export_button_disables_upload_without_average_even_with_variation(
     window = _window(make_main_window, variation_mode=True)
     window._average = None
 
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
 
     assert window._export_btn.isEnabled() is True
     assert window._upload_btn.isEnabled() is False
@@ -74,11 +74,11 @@ def test_export_variation_uses_current_variation_data(
     save_path = tmp_path / "out.txt"
 
     monkeypatch.setattr(
-        "dms.ui.main_window.QFileDialog.getSaveFileName",
+        "dms.ui.measure_io.QFileDialog.getSaveFileName",
         lambda *_args, **_kwargs: (str(save_path), ""),
     )
     monkeypatch.setattr(
-        "dms.ui.main_window.export_variation",
+        "dms.ui.measure_io.export_variation",
         lambda **kwargs: written.update(kwargs),
     )
 
@@ -89,7 +89,7 @@ def test_export_variation_uses_current_variation_data(
     )
     window._kept_curves = [(np.array([100.0]), np.array([1.0]))]
 
-    window._export()
+    window.measure_io.export()
 
     assert written["level_mode"] == "ref_1khz"
     assert np.array_equal(written["freqs"], np.array([100.0]))
@@ -108,13 +108,13 @@ def test_export_variation_uses_current_variation_data(
 def test_export_variation_empty_state_has_variation_copy(make_main_window, monkeypatch) -> None:
     info_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "dms.ui.main_window.QMessageBox.information",
+        "dms.ui.measure_io.QMessageBox.information",
         lambda _parent, title, message: info_calls.append((title, message)),
     )
 
     window = _window(make_main_window, variation_mode=True)
     window._variation = None
 
-    window._export()
+    window.measure_io.export()
 
     assert info_calls == [("Nothing to Export", "No variation band available yet.")]

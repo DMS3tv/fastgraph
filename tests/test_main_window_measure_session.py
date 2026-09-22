@@ -8,6 +8,7 @@ import pytest
 from PyQt6.QtWidgets import QMessageBox
 
 import dms.ui.main_window as main_window_module
+import dms.ui.measure_io as measure_io_module
 from dms.measure_queue import QueueState
 from dms.measure_session import MeasureSession
 from dms.recovery import RecoveryCandidate
@@ -30,7 +31,7 @@ def _hrtf_name() -> str:
 
 def _save_to(monkeypatch, path: Path) -> None:
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        measure_io_module.QFileDialog,
         "getSaveFileName",
         lambda *args, **kwargs: (str(path), ""),
     )
@@ -38,7 +39,7 @@ def _save_to(monkeypatch, path: Path) -> None:
 
 def _open_from(monkeypatch, path: Path) -> None:
     monkeypatch.setattr(
-        main_window_module.QFileDialog,
+        measure_io_module.QFileDialog,
         "getOpenFileName",
         lambda *args, **kwargs: (str(path), ""),
     )
@@ -50,7 +51,7 @@ def test_session_menu_sits_at_the_start_of_the_export_row(make_main_window) -> N
 
     assert row.itemAt(0).widget() is window._session_menu_btn
     assert window._session_menu_btn.property("menuButton") is True
-    assert [action.text() for action in window._session_menu.actions()] == [
+    assert [action.text() for action in window.measure_io._session_menu.actions()] == [
         "New Session",
         "Save Session",
         "Save Session As…",
@@ -75,19 +76,19 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     window._recompute_average()
     window._hrtf_combo.setCurrentIndex(window._hrtf_combo.findText(hrtf_name))
     window._hrtf_toggle.setChecked(True)
-    window._mark_measure_dirty()
+    window.measure_io.mark_dirty()
 
     path = tmp_path / "demo.fastgraph-measure.json"
     _save_to(monkeypatch, path)
-    assert window._save_measure_session() is True
+    assert window.measure_io.save_session() is True
     assert path.is_file()
-    assert window._measure_dirty is False
-    assert window._measure_session_path == path
+    assert window.measure_io.dirty is False
+    assert window.measure_io.session_path == path
 
     # A fresh window must rebuild the same workspace from that one file.
     other = make_main_window()
     _open_from(monkeypatch, path)
-    assert other._load_measure_session() is True
+    assert other.measure_io.load_session() is True
 
     assert len(other._kept_curves) == 2
     # Arrays serialize rounded to six decimals.
@@ -101,7 +102,7 @@ def test_save_then_load_restores_curves_metadata_hrtf_and_level_mode(
     assert other._level_mode() == "ref_1khz"
     assert other._average is not None
     assert other._kept_sweep_meta[0]["timing_quality"] == (12.0, 11.0, 2.0, 40.0)
-    assert other._measure_dirty is False
+    assert other.measure_io.dirty is False
 
 
 def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main_window) -> None:
@@ -112,11 +113,11 @@ def test_two_channel_pairs_survive_a_round_trip(tmp_path, monkeypatch, make_main
 
     path = tmp_path / "pairs.fastgraph-measure.json"
     _save_to(monkeypatch, path)
-    assert window._save_measure_session() is True
+    assert window.measure_io.save_session() is True
 
     other = make_main_window()
     _open_from(monkeypatch, path)
-    assert other._load_measure_session() is True
+    assert other.measure_io.load_session() is True
 
     assert other._two_channel_enabled is True
     assert len(other._two_channel_pairs) == 1
@@ -127,31 +128,31 @@ def test_dirty_flag_and_window_title_track_the_session(
     tmp_path, monkeypatch, make_main_window
 ) -> None:
     window = make_main_window()
-    assert window._measure_dirty is False
+    assert window.measure_io.dirty is False
     assert "•" not in window.windowTitle()
 
     window._kept_curves.append(_curve())
     window._kept_sweep_meta.append({})
     window._recompute_average()
-    window._mark_measure_dirty()
-    assert window._measure_dirty is True
+    window.measure_io.mark_dirty()
+    assert window.measure_io.dirty is True
     assert window.windowTitle().endswith("*")
 
     path = tmp_path / "tracked.fastgraph-measure.json"
     _save_to(monkeypatch, path)
-    assert window._save_measure_session() is True
-    assert window._measure_dirty is False
+    assert window.measure_io.save_session() is True
+    assert window.measure_io.dirty is False
     assert window.windowTitle().endswith("• tracked")
 
     window._undo_last_measurement()
-    assert window._measure_dirty is True
+    assert window.measure_io.dirty is True
     assert window.windowTitle().endswith("• tracked*")
 
     # New Session offers to save first; the prompt is modal, so answer it here.
-    window._confirm_discard_measure_session = lambda: True
-    window._new_measure_session()
-    assert window._measure_dirty is False
-    assert window._measure_session_path is None
+    window.measure_io._confirm_discard_measure_session = lambda: True
+    window.measure_io.new_session()
+    assert window.measure_io.dirty is False
+    assert window.measure_io.session_path is None
     assert "•" not in window.windowTitle()
 
 
@@ -171,7 +172,7 @@ def test_save_as_asks_before_replacing_another_file(
         lambda *args, **kwargs: QMessageBox.StandardButton.No,
     )
 
-    assert window._save_measure_session() is False
+    assert window.measure_io.save_session() is False
     assert existing.read_text(encoding="utf-8") == "{}"
 
 
@@ -179,7 +180,7 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
     from conftest import REAL_CONFIRM_MEASURE_CLOSE
 
     window = make_main_window()
-    confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window)  # noqa: E731
+    confirm = lambda: REAL_CONFIRM_MEASURE_CLOSE(window.measure_io)  # noqa: E731
     assert confirm() is True
 
     seen: dict[str, object] = {}
@@ -202,14 +203,14 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
             return answers.pop()
 
     monkeypatch.setattr(
-        main_window_module,
+        measure_io_module,
         "QMessageBox",
         type(
             "QMessageBoxStub",
             (),
             {
-                "Icon": main_window_module.QMessageBox.Icon,
-                "StandardButton": main_window_module.QMessageBox.StandardButton,
+                "Icon": measure_io_module.QMessageBox.Icon,
+                "StandardButton": measure_io_module.QMessageBox.StandardButton,
                 "__new__": lambda cls, *a, **k: _Dialog(),
             },
         ),
@@ -217,20 +218,20 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
 
     window._kept_curves.append(_curve())
     window._kept_sweep_meta.append({})
-    window._mark_measure_dirty()
+    window.measure_io.mark_dirty()
 
-    answers.append(main_window_module.QMessageBox.StandardButton.Cancel)
+    answers.append(measure_io_module.QMessageBox.StandardButton.Cancel)
     assert confirm() is False
-    assert seen["buttons"] & main_window_module.QMessageBox.StandardButton.Save
+    assert seen["buttons"] & measure_io_module.QMessageBox.StandardButton.Save
     # No file yet, so the safe default is Cancel rather than a Save dialog.
-    assert seen["default"] == main_window_module.QMessageBox.StandardButton.Cancel
+    assert seen["default"] == measure_io_module.QMessageBox.StandardButton.Cancel
 
-    answers.append(main_window_module.QMessageBox.StandardButton.Discard)
+    answers.append(measure_io_module.QMessageBox.StandardButton.Discard)
     assert confirm() is True
 
     saved: list[bool] = []
-    window._save_measure_session = lambda **_kwargs: saved.append(True) or True
-    answers.append(main_window_module.QMessageBox.StandardButton.Save)
+    window.measure_io.save_session = lambda **_kwargs: saved.append(True) or True
+    answers.append(measure_io_module.QMessageBox.StandardButton.Save)
     assert confirm() is True
     assert saved == [True]
 
@@ -238,7 +239,7 @@ def test_close_prompt_offers_save_only_while_dirty(tmp_path, monkeypatch, make_m
 def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -> None:
     window = make_main_window()
     scheduled: list[dict] = []
-    window._measure_recovery.schedule = lambda snapshot: scheduled.append(snapshot)
+    window.measure_io._measure_recovery.schedule = lambda snapshot: scheduled.append(snapshot)
 
     window._state = QueueState.PASS_FAIL
     window._queue_target = 1
@@ -249,7 +250,7 @@ def test_keeping_a_measurement_schedules_a_recovery_snapshot(make_main_window) -
     assert len(window._kept_curves) == 1
     assert len(window._kept_sweep_meta) == 1
     assert scheduled and scheduled[-1]["sweeps"]
-    assert window._measure_dirty is True
+    assert window.measure_io.dirty is True
 
 
 def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) -> None:
@@ -266,10 +267,10 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
         summary="1 sweeps",
     )
 
-    window._measure_recovery.candidates = lambda: [candidate]
-    window._measure_recovery.restore = lambda _candidate: recovered
+    window.measure_io._measure_recovery.candidates = lambda: [candidate]
+    window.measure_io._measure_recovery.restore = lambda _candidate: recovered
     enabled: list[bool] = []
-    window._measure_recovery.enable = lambda: enabled.append(True)
+    window.measure_io._measure_recovery.enable = lambda: enabled.append(True)
 
     class _Dialog:
         # The window compares against the module-level class, which this stub
@@ -288,15 +289,15 @@ def test_startup_recovery_restores_a_candidate(monkeypatch, make_main_window) ->
         def selected_candidate(self):
             return candidate
 
-    monkeypatch.setattr(main_window_module, "MeasureRecoveryDialog", _Dialog)
-    window._measure_recovery.schedule = lambda _snapshot: None
+    monkeypatch.setattr(measure_io_module, "MeasureRecoveryDialog", _Dialog)
+    window.measure_io._measure_recovery.schedule = lambda _snapshot: None
 
-    window._initialize_measure_recovery()
+    window.measure_io.initialize_recovery()
 
     assert len(window._kept_curves) == 1
     assert window._session.brand == "Recovered"
-    assert window._measure_dirty is True
-    assert window._measure_session_path is None
+    assert window.measure_io.dirty is True
+    assert window.measure_io.session_path is None
     assert enabled == [True]
 
 
@@ -308,7 +309,7 @@ def test_console_session_commands_save_and_load(tmp_path, make_main_window) -> N
 
     window._run_measure_command(["session", "save", str(path)])
     assert path.is_file()
-    assert window._measure_dirty is False
+    assert window.measure_io.dirty is False
 
     window._kept_curves.clear()
     window._kept_sweep_meta.clear()

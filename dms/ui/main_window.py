@@ -9,7 +9,6 @@ import os
 import re
 import shlex
 import sys
-import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -38,7 +37,6 @@ from PyQt6.QtWidgets import (
     QLayout,
     QLineEdit,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -47,7 +45,6 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTabWidget,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -78,8 +75,6 @@ from dms.curator.metadata import shared_metadata
 from dms.curator.models import CurveData
 from dms.curator.parser import load_two_column_txt_curve, parse_measurement_txt
 from dms.export import (
-    build_filename,
-    build_variation_filename,
     export_curve,
     export_variation,
 )
@@ -87,12 +82,9 @@ from dms.file_io import ensure_extension, same_session_file
 from dms.hrtf import HRTFCurve
 from dms.measure_persistence import (
     MEASURE_SESSION_EXTENSION,
-    MeasureSessionLoadError,
-    load_measure_session,
     save_measure_session,
 )
 from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
-from dms.measure_session import MeasureSession, UnsupportedMeasureSessionVersion
 from dms.measurement_alignment import (
     MeasurementWarningReason,
     format_diagnostics_summary,
@@ -119,7 +111,7 @@ from dms.processing import (
     percentile_band,
     smooth_fractional_octave,
 )
-from dms.recovery import RecoveryCandidate, measure_recovery_manager, rnd_recovery_manager
+from dms.recovery import RecoveryCandidate, rnd_recovery_manager
 from dms.rnd.models import (
     RnDGroup,
     RnDMeasurement,
@@ -155,12 +147,12 @@ from dms.ui.level_meter import LevelMeterWidget
 from dms.ui.measure_compare import MeasureCompare
 from dms.ui.measure_controls import _MeasureSubmodeControl, _ResponsiveQueueBar
 from dms.ui.measure_dialogs import (
-    MeasureRecoveryDialog,
     PassFailDialog,
     RnDRecoveryDialog,
     RnDReviewDialog,
     TestLevelDialog,
 )
+from dms.ui.measure_io import MeasureIO
 from dms.ui.measure_workspace import MeasureWorkspace
 from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import (
@@ -460,11 +452,7 @@ class MainWindow(QMainWindow):
         self._keyboard_shortcuts: list[QShortcut] = []
         self._rnd_dirty = False
         self._restored_recovery_candidate: RecoveryCandidate | None = None
-        # Measure session file the workspace currently belongs to, and whether
-        # it holds changes that file does not.
-        self._measure_session_path: Path | None = None
-        self._measure_dirty = False
-        self._restored_measure_candidate: RecoveryCandidate | None = None
+        self.measure_io = MeasureIO(self)
         self.measure_compare = MeasureCompare(self)
 
         self._level_monitor = LevelMonitor()
@@ -486,13 +474,6 @@ class MainWindow(QMainWindow):
         )
         self._rnd_recovery.save_succeeded.connect(self._on_rnd_recovery_saved)
         self._rnd_recovery.save_failed.connect(self._on_rnd_recovery_failed)
-        # The manager appends its own ``measure/`` segment, so both workspaces
-        # share one recovery root without colliding.
-        self._measure_recovery = measure_recovery_manager(
-            config_dir() / "recovery",
-            parent=self,
-        )
-        self._measure_recovery.save_failed.connect(self._on_measure_recovery_failed)
         self._rnd_widget.state_changed.connect(self._on_rnd_state_changed)
         self._rnd_widget.selection_changed.connect(self._on_rnd_selection_changed)
         self._rnd_widget.view_state_changed.connect(self._on_rnd_selection_changed)
@@ -519,7 +500,7 @@ class MainWindow(QMainWindow):
         )
         self._log_event("DEBUG", "diagnostics", "Runtime environment", **runtime_diagnostics())
         QTimer.singleShot(0, self._initialize_rnd_recovery)
-        QTimer.singleShot(0, self._initialize_measure_recovery)
+        QTimer.singleShot(0, self.measure_io.initialize_recovery)
 
         self._meter_ui_timer = QTimer(self)
         self._meter_ui_timer.timeout.connect(self._refresh_level_meter_display)
@@ -719,7 +700,7 @@ class MainWindow(QMainWindow):
     def _on_two_channel_selection_changed(self, selection: str) -> None:
         if selection in {"channel_1", "channel_2"}:
             self._two_channel_selection = selection
-        self._sync_export_button()
+        self.measure_io.sync_export_button()
 
     def _two_channel_devices_ready(self) -> bool:
         input_info = self._current_input_device_info()
@@ -1156,7 +1137,7 @@ class MainWindow(QMainWindow):
             settings_widget.refresh_from_settings()
         self._on_theme_changed(self._theme_controller.theme, log=False)
         if hasattr(self, "_upload_btn"):
-            self._sync_export_button()
+            self.measure_io.sync_export_button()
         if hasattr(self, "_console_events"):
             self._log_event("INFO", "theme", "brand mode changed", brand_mode=enabled)
 
@@ -1453,10 +1434,10 @@ class MainWindow(QMainWindow):
             self._curator_widget.export_png(target or value)
             self._run_automation_trigger("export_complete")
         elif action == "export_average":
-            self._export_average(target or None)
+            self.measure_io.export_average(target or None)
             self._run_automation_trigger("export_complete")
         elif action == "export_variation":
-            self._export_variation(target or None)
+            self.measure_io.export_variation(target or None)
             self._run_automation_trigger("export_complete")
         elif action == "export_log":
             self._export_console_log(target or None)
@@ -1812,13 +1793,13 @@ class MainWindow(QMainWindow):
             action = args[1].lower()
             if action == "save":
                 path = ensure_extension(Path(args[2]).expanduser(), MEASURE_SESSION_EXTENSION)
-                save_measure_session(self._current_measure_session(), path)
-                self._measure_session_path = path
-                self._clear_measure_dirty()
+                save_measure_session(self.measure_io.current_session(), path)
+                self.measure_io.session_path = path
+                self.measure_io.clear_dirty()
                 self._command_reply(f"Saved Measure session: {path}")
                 return
             if action == "load":
-                if not self._load_measure_session(str(Path(args[2]).expanduser())):
+                if not self.measure_io.load_session(str(Path(args[2]).expanduser())):
                     raise ValueError("The Measure session was not loaded.")
                 return
             raise ValueError("Usage: measure session save|load <path>")
@@ -1863,13 +1844,13 @@ class MainWindow(QMainWindow):
                 raise ValueError("Average export is only available while idle.")
             if self._bottom_curve_for_display_and_export() is None:
                 raise ValueError("No averaged curve is available yet.")
-            self._export_average(path)
+            self.measure_io.export_average(path)
         elif kind == "variation":
             if self._state != QueueState.IDLE:
                 raise ValueError("Variation export is only available while idle.")
             if self._variation is None:
                 raise ValueError("No variation band is available yet.")
-            self._export_variation(path)
+            self.measure_io.export_variation(path)
         elif kind == "squiglink" and path is None:
             if self._state != QueueState.IDLE:
                 raise ValueError("Squiglink upload is only available while idle.")
@@ -2123,23 +2104,7 @@ class MainWindow(QMainWindow):
         row.setContentsMargins(6, 4, 6, 4)
         row.setSpacing(8)
 
-        self._session_menu_btn = QToolButton()
-        self._session_menu_btn.setText("Session ▾")
-        self._session_menu_btn.setProperty("menuButton", True)
-        self._session_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._session_menu_btn.setToolTip("Save, reopen or start over on a Measure session file.")
-        self._session_menu = QMenu(self._session_menu_btn)
-        self._new_session_action = self._session_menu.addAction("New Session")
-        self._new_session_action.triggered.connect(self._new_measure_session)
-        self._save_session_action = self._session_menu.addAction("Save Session")
-        self._save_session_action.triggered.connect(lambda: self._save_measure_session())
-        self._save_session_as_action = self._session_menu.addAction("Save Session As…")
-        self._save_session_as_action.triggered.connect(
-            lambda: self._save_measure_session(save_as=True)
-        )
-        self._load_session_action = self._session_menu.addAction("Load Session…")
-        self._load_session_action.triggered.connect(lambda: self._load_measure_session())
-        self._session_menu_btn.setMenu(self._session_menu)
+        self._session_menu_btn = self.measure_io.build_session_menu()
         row.addWidget(self._session_menu_btn)
 
         row.addWidget(QLabel("Export directory:"))
@@ -2150,7 +2115,7 @@ class MainWindow(QMainWindow):
         self._export_dir_input.setMaximumWidth(240)
         row.addWidget(self._export_dir_input)
         export_dir_btn = QPushButton("Browse…")
-        export_dir_btn.clicked.connect(self._choose_export_directory)
+        export_dir_btn.clicked.connect(self.measure_io.choose_export_directory)
         row.addWidget(export_dir_btn)
 
         self._send_to_rnd_btn = QPushButton("Send to R&D")
@@ -2159,7 +2124,7 @@ class MainWindow(QMainWindow):
 
         self._export_btn = QPushButton("Export Average…")
         self._export_btn.setObjectName("btn_export")
-        self._export_btn.clicked.connect(self._export)
+        self._export_btn.clicked.connect(self.measure_io.export)
         row.addWidget(self._export_btn)
 
         self._send_to_curator_btn = QPushButton("Send to Curator")
@@ -2171,7 +2136,7 @@ class MainWindow(QMainWindow):
 
         self._upload_btn = QPushButton("Upload to Squiglink")
         self._upload_btn.setObjectName("btn_upload")
-        self._upload_btn.clicked.connect(self._run_measure_upload_action)
+        self._upload_btn.clicked.connect(self.measure_io.run_upload_action)
         row.addWidget(self._upload_btn)
         return row_widget
 
@@ -3025,7 +2990,7 @@ class MainWindow(QMainWindow):
             else bool(self._kept_curves) or self._pending_curve is not None
         )
         self._clear_btn.setEnabled(idle and has_measurements)
-        self._sync_export_button()
+        self.measure_io.sync_export_button()
 
     def _start_queue(self) -> None:
         if self._state != QueueState.IDLE:
@@ -3498,7 +3463,7 @@ class MainWindow(QMainWindow):
             self._recompute_two_channel_results()
             self._update_queue_progress()
             self._update_plots()
-            self._mark_measure_dirty()
+            self.measure_io.mark_dirty()
             self._run_automation_trigger("measurement_kept")
             if self._queue_index >= self._queue_target:
                 self._finish_queue()
@@ -3541,7 +3506,7 @@ class MainWindow(QMainWindow):
         self._recompute_variation()
         self._update_queue_progress()
         self._update_plots()
-        self._mark_measure_dirty()
+        self.measure_io.mark_dirty()
         match = self.measure_compare.target_match_message()
         if match:
             self._statusbar.showMessage(f"Kept {len(self._kept_curves)} measurement(s). {match}")
@@ -4161,7 +4126,7 @@ class MainWindow(QMainWindow):
                 variations=variations,
                 show_variation=show_variation,
             )
-            self._sync_export_button()
+            self.measure_io.sync_export_button()
             return
 
         avg = self._bottom_curve_for_display()
@@ -4187,7 +4152,7 @@ class MainWindow(QMainWindow):
             bottom_mode=bottom_mode,
             animate_last=show_pending and self._pending_curve is not None,
         )
-        self._sync_export_button()
+        self.measure_io.sync_export_button()
 
     def _bottom_view_mode(self) -> str:
         if self._is_hrtf_active() and self._hrtf.is_variation:
@@ -4386,7 +4351,7 @@ class MainWindow(QMainWindow):
             self._settings.set("hrtf_path", None)
             self._sync_hrtf_ui()
             self._update_plots()
-            self._mark_measure_dirty()
+            self.measure_io.mark_dirty()
             self._statusbar.showMessage("HRTF cleared.")
             return
 
@@ -4398,7 +4363,7 @@ class MainWindow(QMainWindow):
             if self._hrtf.is_variation:
                 self._variation_toggle.setChecked(True)
             self._update_plots()
-            self._mark_measure_dirty()
+            self.measure_io.mark_dirty()
             kind = "population variation compensation" if self._hrtf.is_variation else "HRTF"
             self._statusbar.showMessage(f"Loaded {kind}: {Path(path).name}")
         except Exception as exc:
@@ -4445,7 +4410,7 @@ class MainWindow(QMainWindow):
             self._recompute_variation()
             self._update_queue_progress()
             self._update_plots()
-            self._mark_measure_dirty()
+            self.measure_io.mark_dirty()
 
         if loaded == 0 and failed:
             QMessageBox.warning(
@@ -4525,9 +4490,9 @@ class MainWindow(QMainWindow):
         self._kept_distortion = None
         self._update_queue_progress()
         self._sweep_progress.setValue(0)
-        self._sync_export_button()
+        self.measure_io.sync_export_button()
         self._apply_state_ui()
-        self._mark_measure_dirty()
+        self.measure_io.mark_dirty()
 
     def _confirm_clear_all(self) -> tuple[bool, bool]:
         dialog = QMessageBox(self)
@@ -4573,7 +4538,7 @@ class MainWindow(QMainWindow):
         self._update_queue_progress()
         self._update_plots()
         self._apply_state_ui()
-        self._mark_measure_dirty()
+        self.measure_io.mark_dirty()
         self._statusbar.showMessage("Last kept measurement removed.")
 
     def _save_metadata_overlay(self) -> None:
@@ -4583,7 +4548,7 @@ class MainWindow(QMainWindow):
         self._refresh_session_labels()
         self._refresh_window_title()
         self._close_metadata_overlay()
-        self._mark_measure_dirty()
+        self.measure_io.mark_dirty()
         self._statusbar.showMessage("Headphone metadata updated.")
 
     def _clear_metadata(self) -> None:
@@ -4602,7 +4567,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_session_labels()
         self._refresh_window_title()
-        self._mark_measure_dirty()
+        self.measure_io.mark_dirty()
         self._statusbar.showMessage("Headphone metadata cleared.")
 
     def _confirm_clear_metadata(self) -> tuple[bool, bool]:
@@ -4693,18 +4658,6 @@ class MainWindow(QMainWindow):
         self._settings_widget.refresh_from_settings()
         return used_fallback
 
-    def _choose_export_directory(self) -> None:
-        current = self._export_dir_input.text().strip()
-        chosen = QFileDialog.getExistingDirectory(
-            self,
-            "Choose Export Directory",
-            current or "",
-        )
-        if not chosen:
-            return
-        self._export_dir_input.setText(chosen)
-        self._settings.set("export_directory", chosen)
-
     def _open_calibration(self) -> None:
         input_device = self._current_input_device()
         input_info = self._current_input_device_info()
@@ -4786,12 +4739,6 @@ class MainWindow(QMainWindow):
             rms_fs = 10.0 ** (dbfs / 20.0) if dbfs > -120.0 else 0.0
             spl = self._cal_store.rms_to_dbspl(input_device_name, rms_fs)
         return dbfs, spl, input_label
-
-    def _export(self) -> None:
-        if self._bottom_view_mode() == "variation":
-            self._export_variation()
-            return
-        self._export_average()
 
     def _send_to_curator(self) -> None:
         if self._state != QueueState.IDLE:
@@ -5163,7 +5110,9 @@ class MainWindow(QMainWindow):
             return
         compensated = bool(hrtf_path)
         filename = f"{self._safe_filename(measurement.name)} {'COMP' if compensated else 'RAW'}.txt"
-        path = self._resolve_export_path(requested_path, filename, "Export R&D Measurement")
+        path = self.measure_io.resolve_export_path(
+            requested_path, filename, "Export R&D Measurement"
+        )
         if path is None:
             return
         freqs, mag = self._rnd_widget.displayed_measurement_curve(measurement)
@@ -5205,7 +5154,7 @@ class MainWindow(QMainWindow):
             for measurement in measurements
         )
         filename = f"{self._safe_filename(group.name)} {'COMP' if compensated else 'RAW'} VAR.txt"
-        path = self._resolve_export_path(None, filename, "Export R&D Group Variation")
+        path = self.measure_io.resolve_export_path(None, filename, "Export R&D Group Variation")
         if path is None:
             return
         hrtf = None
@@ -5486,676 +5435,13 @@ class MainWindow(QMainWindow):
             return "add"
         return "cancel"
 
-    # ------------------------------------------------------------------
-    # Measure sessions
-    # ------------------------------------------------------------------
-
-    def _measure_default_dir(self) -> Path:
-        configured = str(self._settings.get("measure_session_directory") or "").strip()
-        if configured:
-            return Path(configured).expanduser()
-        documents = Path.home() / "Documents"
-        return documents if documents.exists() else Path.home()
-
-    def _current_measure_session(self) -> MeasureSession:
-        """The Measure workspace's live state as a serializable session."""
-        hrtf_path = self._hrtf.path if self._hrtf is not None else None
-        return MeasureSession.from_window_state(
-            session_data=self._session,
-            kept_curves=self._kept_curves,
-            pairs=self._two_channel_pairs,
-            two_channel=self._two_channel_enabled,
-            bottom_mode=self._two_channel_bottom_mode,
-            level_mode=self._level_mode(),
-            hrtf_path=hrtf_path,
-            hrtf_name=Path(hrtf_path).stem if hrtf_path else None,
-            hrtf_enabled=self._is_hrtf_active(),
-            sweep_diagnostics=[meta.get("diagnostics") for meta in self._kept_sweep_meta],
-            sweep_timing_quality=[meta.get("timing_quality") for meta in self._kept_sweep_meta],
-            sweep_distortion=[meta.get("distortion") for meta in self._kept_sweep_meta],
-            source_path=(
-                str(self._measure_session_path) if self._measure_session_path is not None else None
-            ),
-        )
-
-    def _mark_measure_dirty(self) -> None:
-        """Record an unsaved change and queue a crash-recovery snapshot."""
-        self._measure_dirty = True
-        self._refresh_window_title()
-        recovery = getattr(self, "_measure_recovery", None)
-        if recovery is None:
-            return
-        session = self._current_measure_session()
-        if session.is_empty():
-            recovery.clear_active()
-            return
-        recovery.schedule(session.to_dict())
-
-    def _clear_measure_dirty(self) -> None:
-        """The workspace now matches a file, so the recovery copy is redundant."""
-        self._measure_dirty = False
-        recovery = getattr(self, "_measure_recovery", None)
-        if recovery is not None:
-            recovery.clear_active()
-        self._refresh_window_title()
-
-    def _new_measure_session(self) -> None:
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "A new Measure session can only be started while idle.",
-            )
-            return
-        if not self._confirm_discard_measure_session():
-            return
-        # The save-or-discard prompt above already covered the question
-        # ``_clear_all`` would ask, so the discard runs unprompted here; with
-        # nothing kept there is nothing to discard at all.
-        if self._has_kept_measurements():
-            self._discard_all_measurements()
-        self._kept_sweep_meta.clear()
-        self._kept_pair_meta.clear()
-        self._measure_session_path = None
-        self._clear_measure_dirty()
-        self._statusbar.showMessage("New Measure session.")
-        self._log_event("INFO", "measure", "New Measure session started")
-
-    def _save_measure_session(self, *, save_as: bool = False) -> bool:
-        path = self._measure_session_path
-        if save_as or path is None:
-            default_path = path or (
-                self._measure_default_dir()
-                / f"fastgraph-measure-session{MEASURE_SESSION_EXTENSION}"
-            )
-            path_str, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save Measure Session",
-                str(default_path),
-                f"Fastgraph Measure Session (*{MEASURE_SESSION_EXTENSION});;"
-                "JSON Files (*.json);;All Files (*)",
-            )
-            if not path_str:
-                return False
-            path = ensure_extension(Path(path_str), MEASURE_SESSION_EXTENSION)
-            # The dialog checked the name the user typed; the canonical
-            # extension is added afterwards, so "demo" can still land on an
-            # existing "demo.fastgraph-measure.json" without a warning.
-            if path.exists() and not same_session_file(self._measure_session_path, path):
-                choice = QMessageBox.question(
-                    self,
-                    "Replace Measure Session?",
-                    f"Replace {path.name}?\n\n{path.parent}",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if choice != QMessageBox.StandardButton.Yes:
-                    return False
-        try:
-            written = save_measure_session(self._current_measure_session(), path)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Save Failed",
-                f"Could not save the Measure session.\n\n{exc}",
-            )
-            return False
-        self._measure_session_path = written
-        self._settings.set("measure_session_directory", str(written.parent))
-        self._settings_widget.refresh_from_settings()
-        self._clear_measure_dirty()
-        self._statusbar.showMessage(f"Saved Measure session: {written}")
-        self._log_event("INFO", "measure", "Measure session saved", path=str(written))
-        return True
-
-    def _load_measure_session(self, requested_path: str | None = None) -> bool:
-        if self._state != QueueState.IDLE:
-            QMessageBox.information(
-                self,
-                "Busy",
-                "Measure sessions can only be loaded while idle.",
-            )
-            return False
-        if not self._confirm_discard_measure_session():
-            return False
-        path_str = requested_path
-        if path_str is None:
-            path_str, _ = QFileDialog.getOpenFileName(
-                self,
-                "Load Measure Session",
-                str(self._measure_default_dir()),
-                "Fastgraph Measure Session (*.fastgraph-measure.json *.json);;All Files (*)",
-            )
-            if not path_str:
-                return False
-        try:
-            session = load_measure_session(Path(path_str))
-        except UnsupportedMeasureSessionVersion as exc:
-            QMessageBox.warning(self, "Newer Measure Session", str(exc))
-            return False
-        except MeasureSessionLoadError as exc:
-            QMessageBox.warning(
-                self,
-                "Load Failed",
-                f"Could not load the Measure session.\n\n{exc}",
-            )
-            return False
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Load Failed",
-                f"Could not load the Measure session.\n\n{exc}",
-            )
-            return False
-
-        self._apply_measure_session(session)
-        self._measure_session_path = Path(path_str)
-        self._settings.set("measure_session_directory", str(Path(path_str).parent))
-        self._settings_widget.refresh_from_settings()
-        self._clear_measure_dirty()
-        self._statusbar.showMessage(f"Loaded Measure session: {path_str}")
-        self._log_event("INFO", "measure", "Measure session loaded", path=str(path_str))
-        return True
-
-    def _apply_measure_session(self, session: MeasureSession) -> None:
-        """Replace the Measure workspace with a loaded session's state."""
-        self._queue.reset()
-        self._kept_distortion = None
-        self._pending_curve = None
-        self._pending_pair = None
-        self._pending_pair_first_raw = None
-        self._pending_pair_first_diagnostics = None
-        self._two_channel_stage = 0
-        self._queue_index = 0
-
-        self._kept_curves = [sweep.curve for sweep in session.sweeps]
-        self._kept_sweep_meta = [
-            {
-                "diagnostics": sweep.diagnostics,
-                "timing_quality": sweep.timing_quality,
-                "distortion": sweep.distortion_summary,
-            }
-            for sweep in session.sweeps
-        ]
-        self._two_channel_pairs = session.pair_objects()
-        self._kept_pair_meta = [{} for _ in self._two_channel_pairs]
-        self._average = None
-        self._variation = None
-        self._two_channel_averages = {}
-        self._two_channel_variations = {}
-
-        self._session = session.metadata
-        self._refresh_session_labels()
-        self._metadata_editor.set_session(self._session)
-
-        if bool(session.two_channel) != bool(self._two_channel_enabled):
-            self._two_channel_toggle.setChecked(bool(session.two_channel))
-
-        index = self._bottom_layout_combo.findData(session.bottom_mode)
-        if index >= 0 and index != self._bottom_layout_combo.currentIndex():
-            self._bottom_layout_combo.setCurrentIndex(index)
-
-        self._apply_session_level_mode(session.level_mode)
-        self._apply_session_hrtf(session)
-
-        self._recompute_average()
-        self._recompute_variation()
-        self._recompute_two_channel_results()
-        self._update_queue_progress()
-        self._update_plots()
-        self._apply_state_ui()
-        self._refresh_window_title()
-
-    def _apply_session_level_mode(self, level_mode: str) -> None:
-        wanted = "dbspl" if str(level_mode) == "dbspl" else "ref_1khz"
-        if wanted == self._level_mode():
-            return
-        if wanted == "dbspl" and self._calibrated_sensitivity() is None:
-            QMessageBox.warning(
-                self,
-                "Not Calibrated",
-                "This session was saved in dB SPL, but the selected input "
-                "device has no calibration. Levels stay at the 1 kHz "
-                "reference.",
-            )
-            return
-        self._settings.set("measure_level_mode", wanted)
-        self._spl_uncalibrated_warned = False
-        self._sync_level_mode_combo()
-
-    def _apply_session_hrtf(self, session: MeasureSession) -> None:
-        if not session.hrtf_path and not session.hrtf_name:
-            return
-        index = -1
-        if session.hrtf_path:
-            index = self._hrtf_combo.findData(session.hrtf_path)
-        if index < 0 and session.hrtf_name:
-            index = self._hrtf_combo.findText(session.hrtf_name)
-        if index < 0:
-            QMessageBox.warning(
-                self,
-                "Missing HRTF",
-                f"The HRTF this session used ({session.hrtf_name or session.hrtf_path}) "
-                "is not installed. It was left unset.",
-            )
-            return
-        self._hrtf_combo.blockSignals(True)
-        self._hrtf_combo.setCurrentIndex(index)
-        self._hrtf_combo.blockSignals(False)
-        self._on_hrtf_selected()
-        self._hrtf_toggle.setChecked(bool(session.hrtf_enabled))
-
-    def _confirm_discard_measure_session(self) -> bool:
-        """Offer to save before something replaces the Measure workspace."""
-        if not self._measure_dirty:
-            return True
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Save Measure Session?")
-        dialog.setText("The Measure session has unsaved changes.")
-        dialog.setInformativeText("Save it before it is replaced?")
-        dialog.setStandardButtons(
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel
-        )
-        dialog.setDefaultButton(
-            QMessageBox.StandardButton.Save
-            if self._measure_session_path is not None
-            else QMessageBox.StandardButton.Cancel
-        )
-        result = dialog.exec()
-        if result == QMessageBox.StandardButton.Save:
-            return self._save_measure_session()
-        return result == QMessageBox.StandardButton.Discard
-
-    def _initialize_measure_recovery(self) -> None:
-        try:
-            candidates = self._measure_recovery.candidates()
-            if candidates:
-                dialog = MeasureRecoveryDialog(candidates, self)
-                dialog.exec()
-                candidate = dialog.selected_candidate()
-                if dialog.action == MeasureRecoveryDialog.RESTORE and getattr(
-                    candidate, "unsupported", False
-                ):
-                    # Intact, but written by a newer build. It is left in place
-                    # rather than quarantined so an update can read it.
-                    QMessageBox.warning(
-                        self,
-                        "Newer Measure Session",
-                        "That recovered session was saved by a newer Fastgraph "
-                        "and cannot be opened by this version. It was left in "
-                        "place so a newer Fastgraph can recover it.",
-                    )
-                elif dialog.action == MeasureRecoveryDialog.RESTORE:
-                    session = self._measure_recovery.restore(candidate)
-                    self._apply_measure_session(session)
-                    self._measure_session_path = None
-                    self._tabs.setCurrentWidget(self._measure_tab)
-                    self._measure_dirty = not session.is_empty()
-                    self._refresh_window_title()
-                    self._restored_measure_candidate = (
-                        candidate if candidate.kind == "deferred" else None
-                    )
-                elif dialog.action == MeasureRecoveryDialog.DISCARD:
-                    self._measure_recovery.discard(candidate)
-                else:
-                    self._measure_recovery.keep_for_later(candidate)
-        except Exception as exc:
-            self._on_measure_recovery_failed(str(exc))
-        finally:
-            # Scheduling starts only once the prompt has been answered, so a
-            # snapshot can never overwrite what the user is being offered.
-            self._measure_recovery.enable()
-            if self._measure_dirty:
-                self._mark_measure_dirty()
-            if self._restored_measure_candidate is not None:
-                self._measure_recovery.discard(self._restored_measure_candidate)
-                self._restored_measure_candidate = None
-
-    def _on_measure_recovery_failed(self, error: str) -> None:
-        self._statusbar.showMessage("Measure recovery save failed.")
-        self._log_event("ERROR", "measure", "Measure recovery save failed", error=error)
-
     @staticmethod
     def _safe_filename(value: str) -> str:
         safe = "".join(ch if ch.isalnum() or ch in " ._-()" else "_" for ch in value).strip()
         return safe or "R&D Measurement"
 
-    def _resolve_export_path(
-        self,
-        requested_path: str | None,
-        filename: str,
-        title: str,
-        file_filter: str = "Text Files (*.txt);;All Files (*)",
-    ) -> Path | None:
-        if requested_path:
-            path = Path(requested_path).expanduser()
-            if path.exists() and path.is_dir():
-                path = path / filename
-            if not path.parent.exists():
-                raise ValueError(f"Export directory does not exist: {path.parent}")
-            if path.exists():
-                choice = QMessageBox.question(
-                    self,
-                    "Confirm Overwrite",
-                    f"Overwrite existing file?\n\n{path}",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if choice != QMessageBox.StandardButton.Yes:
-                    return None
-            return path
-        default_dir = self._export_dir_input.text().strip() or str(
-            self._settings.get("export_directory") or ""
-        )
-        default_path = str(Path(default_dir) / filename) if default_dir else filename
-        path_str, _ = QFileDialog.getSaveFileName(self, title, default_path, file_filter)
-        return Path(path_str) if path_str else None
-
-    def _export_average(self, requested_path: str | None = None) -> None:
-        # Export what is displayed: the same smoothed curve the bottom
-        # viewport draws, with the smoothing recorded in the header.
-        curve = self._bottom_curve_for_display()
-        if curve is None:
-            QMessageBox.information(self, "Nothing to Export", "No averaged curve available yet.")
-            return
-
-        compensated = self._is_hrtf_active()
-        two_channel = self._two_channel_enabled
-        channel_label = self._active_measure_label() if two_channel else ""
-        export_session = self._active_measure_session() if two_channel else self._session
-        active_count = self._active_measure_count() if two_channel else len(self._kept_curves)
-        filename = build_filename(
-            self._session,
-            compensated=compensated,
-            channel_label=channel_label,
-        )
-        path = self._resolve_export_path(requested_path, filename, "Export Average")
-        if path is None:
-            return
-        export_dir = str(path.parent)
-        self._export_dir_input.setText(export_dir)
-        self._settings.set("export_directory", export_dir)
-
-        freqs, mag_db = curve
-        try:
-            export_curve(
-                freqs=freqs,
-                mag_db=mag_db,
-                session=export_session,
-                output_path=path,
-                compensated=compensated,
-                hrtf=self._hrtf if compensated else None,
-                n_sweeps=active_count,
-                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
-            )
-            self._statusbar.showMessage(f"Exported average: {path}")
-            self._log_event(
-                "INFO", "export", "Average exported", path=str(path), compensated=compensated
-            )
-            self._run_automation_trigger("export_complete")
-        except Exception as exc:
-            self._log_event("ERROR", "export", f"Average export failed: {exc}")
-            QMessageBox.warning(self, "Export Error", str(exc))
-
-    def _export_variation(self, requested_path: str | None = None) -> None:
-        two_channel = self._two_channel_enabled
-        active_variation = self._active_measure_variation() if two_channel else self._variation
-        if active_variation is None:
-            QMessageBox.information(self, "Nothing to Export", "No variation band available yet.")
-            return
-
-        compensated = self._is_hrtf_active()
-        channel_label = self._active_measure_label() if two_channel else ""
-        export_session = self._active_measure_session() if two_channel else self._session
-        active_count = self._active_measure_count() if two_channel else len(self._kept_curves)
-        filename = build_variation_filename(
-            self._session,
-            compensated=compensated,
-            channel_label=channel_label,
-        )
-        path = self._resolve_export_path(requested_path, filename, "Export Variation")
-        if path is None:
-            return
-        export_dir = str(path.parent)
-        self._export_dir_input.setText(export_dir)
-        self._settings.set("export_directory", export_dir)
-
-        try:
-            export_variation(
-                freqs=active_variation.freqs,
-                p10_db=active_variation.p10,
-                p25_db=active_variation.p25,
-                median_db=active_variation.median,
-                p75_db=active_variation.p75,
-                p90_db=active_variation.p90,
-                session=export_session,
-                output_path=path,
-                compensated=compensated,
-                hrtf=self._hrtf if compensated else None,
-                n_sweeps=active_count,
-                smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                level_mode=self._level_mode() if self._spl_offset_db() is not None else "ref_1khz",
-            )
-            self._statusbar.showMessage(f"Exported variation: {path}")
-            self._log_event(
-                "INFO", "export", "Variation exported", path=str(path), compensated=compensated
-            )
-            self._run_automation_trigger("export_complete")
-        except Exception as exc:
-            self._log_event("ERROR", "export", f"Variation export failed: {exc}")
-            QMessageBox.warning(self, "Export Error", str(exc))
-
-    def _run_measure_upload_action(self) -> None:
-        if self._brand_mode_active():
-            self._export_all_measure_outputs()
-            return
-        self.squiglink.upload()
-
-    def _brand_mode_active(self) -> bool:
-        return bool(self._theme_controller.brand_mode)
-
-    def _export_all_unavailable_reason(self) -> str:
-        if self._state != QueueState.IDLE:
-            return "Export All is available while Measure is idle."
-        active_average = (
-            self._active_two_channel_average() if self._two_channel_enabled else self._average
-        )
-        if active_average is None:
-            return "Keep at least one measurement to create the average."
-        active_count = (
-            self._active_measure_count() if self._two_channel_enabled else len(self._kept_curves)
-        )
-        if active_count < 2:
-            return "Keep at least two measurements to create variation files."
-        if self._hrtf is None:
-            return "Select an HRTF to create the COMP files."
-        return ""
-
-    def _measure_export_directory(self) -> Path | None:
-        configured = self._export_dir_input.text().strip()
-        if configured:
-            path = Path(configured).expanduser()
-            if path.is_dir():
-                return path
-        saved = str(self._settings.get("export_directory") or "").strip()
-        start = Path(saved).expanduser() if saved else Path.home()
-        if not start.is_dir():
-            start = start.parent if start.parent.is_dir() else Path.home()
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Choose Export All Directory",
-            str(start),
-        )
-        if not selected:
-            return None
-        directory = Path(selected)
-        self._export_dir_input.setText(str(directory))
-        self._settings.set("export_directory", str(directory))
-        return directory
-
-    def _confirm_export_all_overwrite(self, conflicts: list[Path]) -> bool:
-        if not conflicts:
-            return True
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Overwrite Export Files?")
-        dialog.setText(
-            f"{len(conflicts)} Export All file(s) already exist in the selected directory."
-        )
-        dialog.setInformativeText("\n".join(path.name for path in conflicts))
-        overwrite = dialog.addButton(
-            "Overwrite All",
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-        dialog.addButton(QMessageBox.StandardButton.Cancel)
-        dialog.exec()
-        return dialog.clickedButton() is overwrite
-
-    def _export_all_measure_outputs(self) -> None:
-        reason = self._export_all_unavailable_reason()
-        if reason:
-            QMessageBox.information(self, "Export All Unavailable", reason)
-            return
-        directory = self._measure_export_directory()
-        if directory is None:
-            return
-
-        hrtf = self._hrtf
-        raw_average = self._average_curve_with_hrtf(None)
-        comp_average = self._average_curve_with_hrtf(hrtf)
-        active_average_raw = (
-            self._active_two_channel_average() if self._two_channel_enabled else self._average
-        )
-        active_curves = (
-            self._active_measure_curves() if self._two_channel_enabled else list(self._kept_curves)
-        )
-        if self._two_channel_enabled:
-            raw_variation = self._variation_from_curves(
-                active_curves, active_average_raw, hrtf=None
-            )
-            comp_variation = self._variation_from_curves(
-                active_curves, active_average_raw, hrtf=hrtf
-            )
-        else:
-            raw_variation = self._variation_from_kept_curves(hrtf=None)
-            comp_variation = self._variation_from_kept_curves(hrtf=hrtf)
-        if (
-            hrtf is None
-            or raw_average is None
-            or comp_average is None
-            or raw_variation is None
-            or comp_variation is None
-        ):
-            QMessageBox.warning(
-                self,
-                "Export All Failed",
-                "Fastgraph could not prepare all four Measure exports.",
-            )
-            return
-
-        channel_label = self._active_measure_label() if self._two_channel_enabled else ""
-        active_count = (
-            self._active_measure_count() if self._two_channel_enabled else len(self._kept_curves)
-        )
-        export_session = (
-            self._active_measure_session() if self._two_channel_enabled else self._session
-        )
-        filenames = [
-            build_filename(self._session, compensated=False, channel_label=channel_label),
-            build_filename(self._session, compensated=True, channel_label=channel_label),
-            build_variation_filename(self._session, compensated=False, channel_label=channel_label),
-            build_variation_filename(self._session, compensated=True, channel_label=channel_label),
-        ]
-        destinations = [directory / name for name in filenames]
-        conflicts = [path for path in destinations if path.exists()]
-        if not self._confirm_export_all_overwrite(conflicts):
-            return
-
-        try:
-            with tempfile.TemporaryDirectory(
-                prefix=".fastgraph-export-",
-                dir=directory,
-            ) as temp_name:
-                temp_dir = Path(temp_name)
-                # Same smoothed curves and header as Export Average.
-                raw_freqs, raw_mag = smooth_fractional_octave(
-                    *raw_average, fraction=_DISPLAY_AVG_SMOOTHING
-                )
-                comp_freqs, comp_mag = smooth_fractional_octave(
-                    *comp_average, fraction=_DISPLAY_AVG_SMOOTHING
-                )
-                level_mode = self._level_mode() if self._spl_offset_db() is not None else "ref_1khz"
-                export_curve(
-                    freqs=raw_freqs,
-                    mag_db=raw_mag,
-                    session=export_session,
-                    output_path=temp_dir / filenames[0],
-                    compensated=False,
-                    hrtf=None,
-                    n_sweeps=active_count,
-                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                    level_mode=level_mode,
-                )
-                export_curve(
-                    freqs=comp_freqs,
-                    mag_db=comp_mag,
-                    session=export_session,
-                    output_path=temp_dir / filenames[1],
-                    compensated=True,
-                    hrtf=hrtf,
-                    n_sweeps=active_count,
-                    smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                    level_mode=level_mode,
-                )
-                for index, variation, compensated in (
-                    (2, raw_variation, False),
-                    (3, comp_variation, True),
-                ):
-                    export_variation(
-                        freqs=variation.freqs,
-                        p10_db=variation.p10,
-                        p25_db=variation.p25,
-                        median_db=variation.median,
-                        p75_db=variation.p75,
-                        p90_db=variation.p90,
-                        session=export_session,
-                        output_path=temp_dir / filenames[index],
-                        compensated=compensated,
-                        hrtf=hrtf if compensated else None,
-                        n_sweeps=active_count,
-                        smoothing_fraction=_DISPLAY_AVG_SMOOTHING,
-                        level_mode=level_mode,
-                    )
-                for name, destination in zip(filenames, destinations):
-                    os.replace(temp_dir / name, destination)
-        except Exception as exc:
-            self._log_event("ERROR", "export", "Export All failed", error=str(exc))
-            QMessageBox.warning(self, "Export All Failed", str(exc))
-            return
-
-        self._export_dir_input.setText(str(directory))
-        self._settings.set("export_directory", str(directory))
-        self._statusbar.showMessage(f"Exported all Measure files: {directory}")
-        self._log_event(
-            "INFO",
-            "export",
-            "Export All completed",
-            directory=str(directory),
-            files=filenames,
-        )
-        self._run_automation_trigger("export_complete")
-        QMessageBox.information(
-            self,
-            "Export All Complete",
-            f"Exported to:\n{directory}\n\n" + "\n".join(filenames),
-        )
-
     def _export_console_log(self, requested_path: str | None = None) -> None:
-        path = self._resolve_export_path(
+        path = self.measure_io.resolve_export_path(
             requested_path,
             "fastgraph-console.log",
             "Export Console Log",
@@ -6167,54 +5453,6 @@ class MainWindow(QMainWindow):
         self._log_event("INFO", "export", "Console log exported", path=str(path))
         self._run_automation_trigger("export_complete")
 
-    def _sync_export_button(self) -> None:
-        idle = self._state == QueueState.IDLE
-        two_channel = self._two_channel_enabled
-        frequency_mode = not self._channel_balance_mode_active()
-        active_average = self._active_two_channel_average() if two_channel else self._average
-        active_variation = self._active_measure_variation() if two_channel else self._variation
-        if self._bottom_view_mode() == "variation":
-            self._export_btn.setText("Export Variation…")
-            self._export_btn.setToolTip(
-                "Export the displayed variation band as percentile columns in a tab-delimited TXT file."
-            )
-            export_enabled = idle and frequency_mode and active_variation is not None
-        else:
-            self._export_btn.setText("Export Average…")
-            self._export_btn.setToolTip("Export averaged FR as a REW-style TXT file.")
-            export_enabled = idle and frequency_mode and active_average is not None
-        self._export_btn.setEnabled(export_enabled)
-        self._send_to_curator_btn.setEnabled(export_enabled)
-        unavailable = self._measure_to_rnd_unavailable_reason()
-        self._send_to_rnd_btn.setEnabled(not unavailable)
-        self._send_to_rnd_btn.setToolTip(
-            unavailable or "Send the current average or all kept Var measurements to R&D."
-        )
-        if self._brand_mode_active():
-            self._upload_btn.setText("Export All…")
-            self._upload_btn.setObjectName("btn_export")
-            self._upload_btn.setRole("primary")
-            unavailable = self._export_all_unavailable_reason()
-            self._upload_btn.setEnabled(not unavailable)
-            self._upload_btn.setToolTip(
-                unavailable or "Export RAW AVG, COMP AVG, RAW VAR, and COMP VAR to one directory."
-            )
-        else:
-            self._upload_btn.setText("Upload to Squiglink")
-            self._upload_btn.setObjectName("btn_upload")
-            self._upload_btn.setRole("positive")
-            self._upload_btn.setEnabled(idle and frequency_mode and active_average is not None)
-            self._upload_btn.setToolTip("Upload the current average to Squiglink.")
-        self._undo_btn.setEnabled(idle and self._active_measure_count() > 0)
-        self._clear_btn.setEnabled(
-            idle
-            and (
-                bool(self._two_channel_pairs) or self._pending_pair is not None
-                if self._two_channel_enabled
-                else bool(self._kept_curves) or self._pending_curve is not None
-            )
-        )
-
     def _failed_recording_dir(self) -> str | None:
         """Folder for failed-recording dumps, or None when the setting is off."""
         if not bool(self._settings.get("save_failed_recordings")):
@@ -6225,7 +5463,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_rnd_close():
             event.ignore()
             return
-        if not self._confirm_measure_close():
+        if not self.measure_io.confirm_close():
             event.ignore()
             return
 
@@ -6261,49 +5499,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._log_event("ERROR", "rnd", "R&D recovery cleanup failed", error=str(exc))
 
-        try:
-            self._measure_recovery.shutdown_clean()
-        except Exception as exc:
-            self._log_event("ERROR", "measure", "Measure recovery cleanup failed", error=str(exc))
+        self.measure_io.shutdown()
 
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
         super().closeEvent(event)
-
-    def _confirm_measure_close(self) -> bool:
-        """Offer to save the Measure session before Fastgraph closes.
-
-        A workspace with no unsaved changes closes silently: everything on
-        screen is already in a file, so there is nothing to lose.
-        """
-        if not self._measure_dirty:
-            return True
-        if not bool(self._settings.get("confirm_discard_measurements")):
-            return True
-        kept = len(self._two_channel_pairs) if self._two_channel_enabled else len(self._kept_curves)
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("Save Measure Session?")
-        dialog.setText(
-            f"The Measure session has unsaved changes "
-            f"({kept} kept measurement{'s' if kept != 1 else ''})."
-        )
-        dialog.setInformativeText("Save the Measure session before Fastgraph closes?")
-        dialog.setStandardButtons(
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel
-        )
-        dialog.setDefaultButton(
-            QMessageBox.StandardButton.Save
-            if self._measure_session_path is not None
-            else QMessageBox.StandardButton.Cancel
-        )
-        result = dialog.exec()
-        if result == QMessageBox.StandardButton.Save:
-            return self._save_measure_session()
-        return result == QMessageBox.StandardButton.Discard
 
     def _confirm_rnd_close(self) -> bool:
         if self._rnd_widget.session.is_empty() or not self._rnd_dirty:
@@ -6349,7 +5550,7 @@ class MainWindow(QMainWindow):
         # the source tree and the released bundle read "fastgraph Beta".
         app_name = os.environ.get("FASTGRAPH_APP_NAME", "").strip() or "fastgraph Beta"
         title = f"DMS {app_name} — {self._session.display_name()} @ {self._session.rig}"
-        path = self._measure_session_path
+        path = self.measure_io.session_path
         if path is not None:
             # ``.fastgraph-measure.json`` is a two-part suffix, so one ``stem``
             # would leave ``.fastgraph-measure`` behind.
@@ -6359,6 +5560,6 @@ class MainWindow(QMainWindow):
             else:
                 name = path.stem
             title = f"{title} • {name}"
-        if self._measure_dirty:
+        if self.measure_io.dirty:
             title = f"{title}*"
         self.setWindowTitle(title)

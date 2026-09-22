@@ -104,7 +104,7 @@ class MeasureCompare(QObject):
             path_str, _ = QFileDialog.getOpenFileName(
                 self._window,
                 "Load Target Curve",
-                str(self._window._measure_default_dir()),
+                str(self._window.measure_io.measure_default_dir()),
                 "Measurement TXT (*.txt);;All Files (*)",
             )
             if not path_str:
@@ -167,7 +167,7 @@ class MeasureCompare(QObject):
             path_str, _ = QFileDialog.getOpenFileName(
                 self._window,
                 "Load Reference Curve",
-                str(self._window._measure_default_dir()),
+                str(self._window.measure_io.measure_default_dir()),
                 "Reference Curves (*.txt *.fastgraph-measure.json *.json);;All Files (*)",
             )
             if not path_str:

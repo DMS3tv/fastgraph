@@ -884,7 +884,7 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
     assert window._export_dir_input.minimumWidth() == 140
     assert window._export_dir_input.maximumWidth() == 240
 
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
     assert not window._send_to_rnd_btn.isEnabled()
     assert "average" in window._send_to_rnd_btn.toolTip().lower()
 
@@ -892,11 +892,11 @@ def test_measure_export_row_has_send_to_rnd_and_compact_directory(make_main_wind
         np.array([100.0, 1000.0]),
         np.array([1.0, 0.0]),
     )
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
     assert window._send_to_rnd_btn.isEnabled()
 
     window._state = QueueState.SWEEPING
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
     assert not window._send_to_rnd_btn.isEnabled()
     assert "idle" in window._send_to_rnd_btn.toolTip().lower()
     window._state = QueueState.IDLE

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-import dms.ui.main_window as main_window_module
+import dms.ui.measure_io as measure_io_module
 from dms.export import build_filename
 from dms.hrtf import HRTFCurve
 from dms.session import SessionData
@@ -40,7 +40,7 @@ def _batch_window(make_main_window, tmp_path: Path, hrtf: HRTFCurve):
     window._statusbar.messageChanged.connect(statuses.append)
     window._log_event = lambda *args, **kwargs: events.append(("log", args, kwargs))
     window._run_automation_trigger = triggers.append
-    window._confirm_export_all_overwrite = lambda conflicts: True
+    window.measure_io._confirm_export_all_overwrite = lambda conflicts: True
     return window, events, triggers, statuses
 
 
@@ -63,12 +63,12 @@ def test_export_all_writes_four_named_files_with_selected_inactive_hrtf(
     )
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
+        measure_io_module.QMessageBox,
         "information",
         lambda _parent, title, message: messages.append((title, message)),
     )
 
-    window._export_all_measure_outputs()
+    window.measure_io.export_all()
 
     names = {
         "DMS Example GRAS RAW AVG.txt",
@@ -102,9 +102,9 @@ def test_export_all_uses_population_median_and_variation_envelope(
     window, _events, _triggers, _statuses = _batch_window(
         make_main_window, tmp_path, _population_hrtf(tmp_path)
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args: None)
+    monkeypatch.setattr(measure_io_module.QMessageBox, "information", lambda *_args: None)
 
-    window._export_all_measure_outputs()
+    window.measure_io.export_all()
 
     comp_avg = _data_rows(tmp_path / "DMS Example GRAS COMP AVG.txt")
     assert np.allclose(comp_avg[:, 1], [9.0, 18.0])
@@ -132,13 +132,13 @@ def test_export_all_generation_failure_preserves_existing_files(
     for name in names:
         (tmp_path / name).write_text("original", encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module,
+        measure_io_module,
         "export_variation",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("simulated failure")),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args: None)
+    monkeypatch.setattr(measure_io_module.QMessageBox, "warning", lambda *_args: None)
 
-    window._export_all_measure_outputs()
+    window.measure_io.export_all()
 
     assert all((tmp_path / name).read_text(encoding="utf-8") == "original" for name in names)
     assert triggers == []
@@ -152,15 +152,15 @@ def test_export_all_collision_cancel_writes_nothing(
     )
     conflict = tmp_path / "DMS Example GRAS RAW AVG.txt"
     conflict.write_text("original", encoding="utf-8")
-    window._confirm_export_all_overwrite = lambda conflicts: False
+    window.measure_io._confirm_export_all_overwrite = lambda conflicts: False
     calls: list[bool] = []
     monkeypatch.setattr(
-        main_window_module,
+        measure_io_module,
         "export_curve",
         lambda **_kwargs: calls.append(True),
     )
 
-    window._export_all_measure_outputs()
+    window.measure_io.export_all()
 
     assert conflict.read_text(encoding="utf-8") == "original"
     assert calls == []
@@ -172,11 +172,11 @@ def test_measure_action_switches_between_squiglink_and_export_all(make_main_wind
     window = make_main_window()
     window._theme_controller.set_brand_mode(False, persist=False)
     window.squiglink.upload = lambda: calls.append("squiglink")
-    window._export_all_measure_outputs = lambda: calls.append("all")
+    window.measure_io.export_all = lambda: calls.append("all")
 
-    window._run_measure_upload_action()
+    window.measure_io.run_upload_action()
     window._theme_controller.set_brand_mode(True, persist=False)
-    window._run_measure_upload_action()
+    window.measure_io.run_upload_action()
 
     assert calls == ["squiglink", "all"]
 
@@ -186,7 +186,7 @@ def test_brand_export_all_button_reports_missing_requirements(make_main_window) 
     window._theme_controller.set_brand_mode(True, persist=False)
     assert window._bottom_view_mode() == "average"
 
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
     assert window._upload_btn.text() == "Export All…"
     assert window._upload_btn.isEnabled() is False
     assert "average" in window._upload_btn.toolTip().lower()
@@ -194,7 +194,7 @@ def test_brand_export_all_button_reports_missing_requirements(make_main_window) 
     window._average = (np.array([100.0]), np.array([0.0]))
     window._kept_curves = [window._average, window._average]
     window._hrtf = object()
-    window._sync_export_button()
+    window.measure_io.sync_export_button()
     assert window._upload_btn.isEnabled() is True
     assert window._upload_btn.role() == "primary"
 
@@ -213,7 +213,7 @@ def test_export_average_equals_displayed_curve(make_main_window, tmp_path: Path)
     assert displayed is not None
 
     output = tmp_path / "average.txt"
-    window._export_average(str(output))
+    window.measure_io.export_average(str(output))
 
     text = output.read_text(encoding="utf-8")
     assert "* Smoothing: 1/48 octave" in text
@@ -234,7 +234,7 @@ def test_export_all_comp_average_matches_export_average(
             return SimpleNamespace(strftime=lambda _fmt: "2026-01-01 00:00:00")
 
     monkeypatch.setattr("dms.export.datetime", _FixedDatetime)
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args: None)
+    monkeypatch.setattr(measure_io_module.QMessageBox, "information", lambda *_args: None)
     window = make_main_window()
     freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 400)
     rng = np.random.default_rng(11)
@@ -250,9 +250,9 @@ def test_export_all_comp_average_matches_export_average(
     all_dir = tmp_path / "all"
     single_dir.mkdir()
     all_dir.mkdir()
-    window._export_average(str(single_dir / "average.txt"))
+    window.measure_io.export_average(str(single_dir / "average.txt"))
     window._export_dir_input.setText(str(all_dir))
-    window._export_all_measure_outputs()
+    window.measure_io.export_all()
 
     comp_name = build_filename(window._session, compensated=True)
     assert (all_dir / comp_name).read_bytes() == (single_dir / "average.txt").read_bytes()

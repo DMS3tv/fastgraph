@@ -78,9 +78,9 @@ def _isolated_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _real_confirm_measure_close():
-    from dms.ui.main_window import MainWindow
+    from dms.ui.measure_io import MeasureIO
 
-    return MainWindow.__dict__["_confirm_measure_close"]
+    return MeasureIO.__dict__["confirm_close"]
 
 
 #: The unpatched close-time discard prompt, for the one test that exercises it.
@@ -90,9 +90,9 @@ REAL_CONFIRM_MEASURE_CLOSE = _real_confirm_measure_close()
 @pytest.fixture(autouse=True)
 def _no_modal_close_prompts(monkeypatch: pytest.MonkeyPatch):
     """Windows built outside the factory would block on the discard prompt."""
-    from dms.ui.main_window import MainWindow
+    from dms.ui.measure_io import MeasureIO
 
-    monkeypatch.setattr(MainWindow, "_confirm_measure_close", lambda self: True)
+    monkeypatch.setattr(MeasureIO, "confirm_close", lambda self: True)
 
 
 @pytest.fixture(autouse=True)
@@ -163,7 +163,7 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             # Both close-time prompts are modal dialogs; in a headless test
             # they would block forever.
             window._confirm_rnd_close = lambda: True
-            window._confirm_measure_close = lambda: True
+            window.measure_io.confirm_close = lambda: True
         created.append(window)
         return window
 

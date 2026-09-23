@@ -74,8 +74,10 @@ window.measure.recompute_average()
 window.measure_tab.variation_toggle.setChecked(True)
 window.measure.refresh()
 
-# Curator: real REW export.
-window._curator_widget.import_files(["/Users/dms/Desktop/airpods 5.txt"], show_errors=False)
+# Curator: one synthetic response written as a two-column text file.
+_curator_file = _tmp / "demo.txt"
+np.savetxt(_curator_file, np.column_stack([freqs, 90.0 + curve(0.0, 1.0)]), fmt="%.4f, %.3f")
+window._curator_widget.import_files([str(_curator_file)], show_errors=False)
 
 
 # R&D: one group of two measurements.

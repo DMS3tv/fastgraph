@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-- Imports: every text import (Curator, Measure import, HRTF, R&D target, comparison target) now reads through one parser. REW files with a decimal-comma locale and a comma delimiter import correctly, the Measure/HRTF/R&D loader no longer misreads decimal commas, semicolons or UTF-16, and a six-column file that is not a variation band (a REW distortion export) imports as a plain response with a warning.
-
 ### Fixed
 
 - Console logging: every console message now goes through Python's standard
@@ -46,7 +44,7 @@
   and save credentials only after a successful upload.
 - Curator: decimal-comma and BOM files import correctly, combined variation
   bands use a proper mixture model instead of percentiles of percentiles,
-  smoothing works on linearly spaced files, PNG exports drop out-of-band
+  PNG exports drop out-of-band
   points and honour the 25 dB/decade lock, BRAND colours pass the contrast
   guard, Show Names works outside Clean Slate, Remove acts on every selected
   layer, layers can be reordered, and combined layers show STALE when a

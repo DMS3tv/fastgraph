@@ -147,12 +147,9 @@ re-zeroes only when asked), `tests/test_hrtf_edges.py`,
 on the top plot are drawn unsmoothed.
 
 `smooth_fractional_octave` is a Gaussian on the log-frequency axis whose
-full width at half maximum is 1/N octave. Data that is not log-spaced (for
-example an unsmoothed REW export, which is linear in frequency) is
+full width at half maximum is 1/N octave. Data that is not log-spaced is
 resampled onto a uniform log grid first, smoothed there, and interpolated
-back, so the bandwidth is the same at every frequency. This was the bug in
-release 0.4.2, where the kernel width was fixed in samples and flattened
-the bass of linear-grid files.
+back, so the bandwidth is the same at every frequency.
 
 `DualPlotWidget._display_curve` in `dms/ui/dual_plot_widget.py` performs
 no arithmetic. In the retro themes it passes the curve through
@@ -160,8 +157,8 @@ no arithmetic. In the retro themes it passes the curve through
 preserved) and draws them as a staircase; it invents no values.
 
 *Values changed:* smoothing only, and only on the bottom plot.
-*Tests:* `tests/test_processing_smoothing.py` (byte-identical regression on
-log grids; linear-grid equivalence), `tests/test_graph_display.py`.
+*Tests:* `tests/test_processing_smoothing.py` (byte-identical regression),
+`tests/test_graph_display.py`.
 
 ## 8. Export and upload
 

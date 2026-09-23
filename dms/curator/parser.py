@@ -109,8 +109,8 @@ def _read_measurement_text(path: Path) -> str:
 
 def _split_numeric_fields(line: str) -> list[str]:
     """Split one data line, treating ``,`` as a decimal point when it is one."""
-    # REW with a decimal-comma locale and a comma delimiter writes
-    # "20,141602, 103,464": drop the delimiter left hanging on each token.
+    # A decimal-comma locale with a comma delimiter writes
+    # "20,5, 103,4": drop the delimiter left hanging on each token.
     parts = [part.rstrip(",;") for part in _FIELD_SPLIT.split(line) if part.rstrip(",;")]
     # A single "100,0" is ambiguous; only read it as a decimal comma when the
     # line still yields at least two columns that way.

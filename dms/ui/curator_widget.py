@@ -1718,14 +1718,18 @@ class CuratorWidget(QWidget):
     def _choose_export_path(self) -> None:
         self._on_export_text_changed()
         default_name = "curator_export_4k.png" if self._brand_mode else "curator_export.png"
+        # A bare file name lets the native dialog open wherever it likes (the
+        # root folder on macOS); start where the last export went, else home.
+        start_dir = getattr(self, "_last_export_dir", None) or Path.home()
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Curator PNG",
-            default_name,
+            str(Path(start_dir) / default_name),
             "PNG Image (*.png)",
         )
         if not path:
             return
+        self._last_export_dir = Path(path).parent
         brand = branding.active() if self._brand_mode else None
         if brand is not None:
             warnings = brand.export_warnings(self._state, brand.poster_size)

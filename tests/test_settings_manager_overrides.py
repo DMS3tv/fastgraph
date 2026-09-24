@@ -226,3 +226,23 @@ def test_settings_file_is_written_owner_only(monkeypatch, tmp_path: Path) -> Non
     SettingsManager().set("theme", "light")
     mode = stat.S_IMODE((tmp_path / "settings.json").stat().st_mode)
     assert mode & 0o077 == 0, f"credentials file is group/world readable: {oct(mode)}"
+
+
+def test_brand_settings_migration_is_saved(fake_brand, monkeypatch, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from dms import branding
+
+    def migrate(data: dict) -> None:
+        data["brand_mode"] = bool(data.pop("old_mode_key", False))
+
+    monkeypatch.setattr(branding, "_brand", replace(fake_brand, on_settings_load=migrate))
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    (tmp_path / "settings.json").write_text(json.dumps({"old_mode_key": True}))
+
+    settings = SettingsManager()
+
+    assert settings.get("brand_mode") is True
+    saved = json.loads((tmp_path / "settings.json").read_text())
+    assert "old_mode_key" not in saved
+    assert saved["brand_mode"] is True

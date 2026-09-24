@@ -211,7 +211,10 @@ class SettingsManager:
         self._migrate_drop_variation_combination(saved)
         brand = branding.active()
         if brand is not None and brand.on_settings_load is not None:
+            before = dict(self._data)
             brand.on_settings_load(self._data)
+            if self._data != before:
+                self._save()
 
     def _coerce_types(self, saved: dict[str, Any]) -> None:
         """Force stored values back onto their declared type.

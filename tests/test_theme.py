@@ -16,8 +16,6 @@ from dms.theme import (
     application_stylesheet,
     ensure_graph_color,
     graph_contrast_ratio,
-    brand_application_stylesheet,
-    brand_theme_colors,
     normalize_theme,
     theme_trace_palette,
 )
@@ -93,11 +91,6 @@ def test_existing_theme_stylesheets_match_pre_dither_status_snapshots() -> None:
         stylesheet = application_stylesheet(theme)
         assert hashlib.sha256(stylesheet.encode()).hexdigest() == expected_digest
 
-    brand_stylesheet = brand_application_stylesheet()
-    assert hashlib.sha256(brand_stylesheet.encode()).hexdigest() == (
-        "0c5c06085bf0a6df156aa5cc469e9b63131bbbec4cd624e14e22cb23b2342d09"
-    )
-
 
 def test_graph_colors_are_adjusted_for_light_and_dark_backgrounds() -> None:
     light_adjusted = ensure_graph_color("#c8ff00", "#ffffff")
@@ -120,7 +113,9 @@ def test_theme_controller_applies_and_persists(qapp, monkeypatch, tmp_path: Path
     assert "#f3f5f8" in qapp.styleSheet()
 
 
-def test_theme_controller_brand_mode_persists_and_signals(qapp, monkeypatch, tmp_path: Path) -> None:
+def test_theme_controller_brand_mode_persists_and_signals(
+    qapp, monkeypatch, tmp_path: Path, fake_brand
+) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     settings = SettingsManager()
     controller = ThemeController(qapp, settings)
@@ -132,8 +127,8 @@ def test_theme_controller_brand_mode_persists_and_signals(qapp, monkeypatch, tmp
 
     assert controller.brand_mode is True
     assert settings.get("brand_mode") is True
-    assert "#07090C" in qapp.styleSheet()
-    assert "#7A7A7A" in qapp.styleSheet()
+    assert qapp.property("fastgraphVisualMode") == "brand"
+    assert qapp.styleSheet().endswith(fake_brand.stylesheet_extra)
     assert received == [True]
 
     controller.set_brand_mode(True)
@@ -147,16 +142,13 @@ def test_theme_controller_brand_mode_persists_and_signals(qapp, monkeypatch, tmp
     assert received == [True, False]
 
 
-def test_brand_stylesheet_has_visible_accent_hierarchy() -> None:
-    stylesheet = brand_application_stylesheet()
+def test_brand_mode_is_refused_without_a_brand(qapp, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
+    settings = SettingsManager()
+    settings.set("brand_mode", True)
+    controller = ThemeController(qapp, settings)
 
-    assert brand_theme_colors()["window"] == "#07090C"
-    assert brand_theme_colors()["panel"] == "#2A2A2A"
-    assert brand_theme_colors()["plot_bg"] == "#232323"
-    assert brand_theme_colors()["border"] == "#5C5C5C"
-    assert "QGroupBox#brandPosterBox" in stylesheet
-    assert "QGroupBox#brandPosterBox QLabel#brandMetadataStatus" in stylesheet
-    assert "background-color: transparent" in stylesheet
-    assert "QPushButton#exportButton" in stylesheet
-    assert 'QLineEdit[metadataState="manual"]' in stylesheet
-    assert "border-bottom: 3px solid #7A7A7A" in stylesheet
+    assert controller.brand_mode is False
+    controller.set_brand_mode(True, persist=False)
+    assert controller.brand_mode is False
+    assert qapp.styleSheet() == application_stylesheet(controller.theme)

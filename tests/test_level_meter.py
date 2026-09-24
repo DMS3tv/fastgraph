@@ -10,7 +10,6 @@ from dms.style_tokens import (
     FASTGRAPH_95_DARK_TOKENS,
     FASTGRAPH_95_TOKENS,
     HACKERMAN_95_TOKENS,
-    BRAND_TOKENS,
     LIGHT_TOKENS,
 )
 from dms.ui.level_meter import LevelMeterWidget
@@ -27,7 +26,7 @@ def test_level_meter_fraction_and_threshold_colors() -> None:
     assert blended not in {DARK_TOKENS.accent.lower(), DARK_TOKENS.warning.lower()}
 
 
-def test_level_meter_uses_mode_tokens_and_nested_recessed_rects(qapp) -> None:
+def test_level_meter_uses_mode_tokens_and_nested_recessed_rects(qapp, fake_brand) -> None:
     meter = LevelMeterWidget(orientation=Qt.Orientation.Horizontal)
     meter.resize(220, 32)
     outer, well, track = meter._paint_rects()
@@ -38,7 +37,7 @@ def test_level_meter_uses_mode_tokens_and_nested_recessed_rects(qapp) -> None:
         ("dark", DARK_TOKENS),
         ("light", LIGHT_TOKENS),
         ("dither", DITHER_TOKENS),
-        ("brand", BRAND_TOKENS),
+        ("brand", fake_brand.tokens),
     ):
         qapp.setProperty("fastgraphVisualMode", mode)
         assert meter._tokens() is tokens

@@ -16,6 +16,8 @@ Responsibilities:
 - Warn (not fail) when a test leaves a large number of new widgets alive.
 - Offer ``make_main_window`` and ``make_curator`` so window tests share one
   construction path.
+- Offer ``fake_brand``: a neutral stand-in brand plugin for the brand-mode
+  paths (the public app ships no brand).
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ from typing import Any
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import contextlib
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent
@@ -221,3 +225,64 @@ def make_main_window(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             window.close()
         del window
     flush_deferred_deletes()
+
+
+@pytest.fixture
+def fake_brand(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Install a neutral brand, as a brand plugin would, for one test."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QColor, QImage
+
+    from dms import branding
+    from dms.style_tokens import DARK_TOKENS
+    from dms.theme import _color_dict
+
+    tokens = replace(
+        DARK_TOKENS,
+        name="brand",
+        panel="#262626",
+        accent="#3366CC",
+        focus="#3366CC",
+        plot_bg="#202020",
+    )
+    palette = ["#3366CC", "#CC6633", "#33CC99", "#9966CC", "#CCCC33"]
+    logo = QImage(8, 8, QImage.Format.Format_ARGB32)
+    logo.fill(QColor("#FFFFFF"))
+    logo_path = tmp_path / "logo.png"
+    logo.save(str(logo_path))
+
+    def draw_poster(painter, state, size):
+        painter.fillRect(0, 0, size[0], size[1], QColor(tokens.plot_bg))
+        painter.drawImage(QPointF(size[0] - 16.0, size[1] - 16.0), QImage(str(logo_path)))
+        return []
+
+    def menu_colors(current: str) -> list[str]:
+        rest = [color for color in palette if color.lower() != current.lower()]
+        return ([current] if current else []) + rest
+
+    brand = branding.Brand(
+        label="Test Brand",
+        short_label="Brand",
+        tokens=tokens,
+        theme_colors=_color_dict(
+            tokens, meter_bg="#141414", meter_mark="#555555", meter_peak="#FFFFFF"
+        ),
+        stylesheet_extra="QGroupBox#posterBox { border: 1px solid #3366CC; }",
+        trace_palette=palette,
+        menu_colors=menu_colors,
+        poster_size=(1280, 720),
+        poster_defaults={
+            "footer1": "Footer one",
+            "footer2": "Footer two",
+            "legend_bounds": "Bounds",
+            "legend_variation": "Variation",
+        },
+        draw_poster=draw_poster,
+        export_warnings=lambda state, size: [],
+        font_status=lambda: SimpleNamespace(
+            heading_family="Heading", mono_family="Mono", missing_families=()
+        ),
+        export_all_replaces_upload=True,
+    )
+    monkeypatch.setattr(branding, "_brand", brand)
+    return brand

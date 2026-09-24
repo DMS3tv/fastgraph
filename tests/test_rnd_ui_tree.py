@@ -539,13 +539,14 @@ def test_rnd_group_collapse_survives_tree_rebuilds_without_dirtying(
 def test_rnd_view_titles_use_mode_accent_and_splitter_uses_saved_ratio(
     monkeypatch,
     make_main_window,
+    fake_brand,
 ) -> None:
     plot_widget = rnd_widget_module.RnDPlotWidget()
     expected_colors = [
         ("dark", False, "#66ccff"),
         ("light", False, "#176ea6"),
         (HACKERMAN_95, False, "#39ff14"),
-        ("dark", True, "#7A7A7A"),
+        ("dark", True, fake_brand.tokens.accent),
     ]
     for theme, brand_mode, expected_color in expected_colors:
         plot_widget.apply_theme(theme, brand_mode)

@@ -52,7 +52,7 @@ def test_canonicalize_fastgraph_headers_preserves_original_values() -> None:
     assert result["connection"] == "Bluetooth"
 
 
-def test_automatic_values_use_curve_type_and_headphone_metadata() -> None:
+def test_automatic_values_use_curve_type_and_headphone_metadata(fake_brand) -> None:
     layer = _layer(
         "variation",
         brand="Sony",
@@ -73,7 +73,7 @@ def test_automatic_values_use_curve_type_and_headphone_metadata() -> None:
     assert values["fixture"] == "SONY WH-1000XM5 | ANC ON | STANDARD | BLUETOOTH"
     assert values["footer"] == "B&K 5128, HpTF 5128"
     assert values["footer1"] == "HP-104"
-    assert values["footer2"] == "VERSION 01."
+    assert values["footer2"] == fake_brand.poster_defaults["footer2"]
     assert values["legend_variation"] == "Frequency Response + HpTF Variation"
 
 
@@ -90,10 +90,17 @@ def test_shared_metadata_drops_conflicts() -> None:
     assert "model" not in shared
 
 
-def test_unknown_metadata_does_not_add_empty_segments() -> None:
+def test_unknown_metadata_does_not_add_empty_segments(fake_brand) -> None:
     layer = _layer(source="Imported")
     values = automatic_export_values(GraphState(layers=[layer]), layer)
 
     assert values["fixture"] == ""
     assert values["footer"] == ""
-    assert values["footer1"] == "SC-PROJECT-2026"
+    assert values["footer1"] == fake_brand.poster_defaults["footer1"]
+
+
+def test_poster_defaults_are_empty_without_a_brand() -> None:
+    layer = _layer(source="Imported")
+    values = automatic_export_values(GraphState(layers=[layer]), layer)
+
+    assert values["footer1"] == values["footer2"] == values["legend_bounds"] == ""

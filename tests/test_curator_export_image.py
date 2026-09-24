@@ -23,7 +23,7 @@ from dms.curator.export_image import (
     fit_title,
 )
 from dms.curator.models import CurveData, GraphState, LayerState, PreferenceBounds
-from dms.style_tokens import DITHER_TOKENS, BRAND_TOKENS, THEME_DEFINITIONS
+from dms.style_tokens import DITHER_TOKENS, THEME_DEFINITIONS
 from dms.theme import DARK, DITHER, FASTGRAPH_95_DARK
 
 
@@ -70,7 +70,7 @@ def test_standard_export_curve_uses_only_solid_stroke(monkeypatch) -> None:
         painter,
         QRectF(0.0, 0.0, 100.0, 100.0),
         curve,
-        QColor("#6E6E6E"),
+        QColor("#CC3344"),
         -10.0,
         10.0,
         trace_index=1,
@@ -178,7 +178,6 @@ def test_existing_export_themes_keep_matching_classic_and_retro_flags() -> None:
         if definition.key == DITHER:
             continue
         assert definition.tokens.classic_controls is definition.tokens.retro_graph
-    assert BRAND_TOKENS.classic_controls is BRAND_TOKENS.retro_graph
 
 
 def test_dither_export_uses_tokens_and_excludes_gold_accent(

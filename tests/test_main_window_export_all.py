@@ -166,7 +166,9 @@ def test_export_all_collision_cancel_writes_nothing(
     assert triggers == []
 
 
-def test_measure_action_switches_between_squiglink_and_export_all(make_main_window) -> None:
+def test_measure_action_switches_between_squiglink_and_export_all(
+    make_main_window, fake_brand
+) -> None:
     calls: list[str] = []
     window = make_main_window()
     window._theme_controller.set_brand_mode(False, persist=False)
@@ -180,7 +182,7 @@ def test_measure_action_switches_between_squiglink_and_export_all(make_main_wind
     assert calls == ["squiglink", "all"]
 
 
-def test_brand_export_all_button_reports_missing_requirements(make_main_window) -> None:
+def test_brand_export_all_button_reports_missing_requirements(make_main_window, fake_brand) -> None:
     window = make_main_window()
     window._theme_controller.set_brand_mode(True, persist=False)
     assert window.measure.bottom_view_mode() == "average"

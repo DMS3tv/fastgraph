@@ -15,7 +15,6 @@ from dms.style_tokens import (
     FASTGRAPH_95_DARK_TOKENS,
     FASTGRAPH_95_TOKENS,
     HACKERMAN_95_TOKENS,
-    BRAND_TOKENS,
     LIGHT_TOKENS,
     THEME_DEFINITIONS,
     tokens_for,
@@ -29,8 +28,6 @@ from dms.theme import (
     LIGHT,
     ThemeController,
     application_stylesheet,
-    brand_application_stylesheet,
-    brand_theme_colors,
     theme_colors,
 )
 from dms.ui.modern_button import (
@@ -69,16 +66,12 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert DARK_TOKENS.control == "#1E2833"
     assert DARK_TOKENS.plot_bg == "#1A1A1A"
     assert LIGHT_TOKENS.viewport == "#FFFFFF"
-    assert BRAND_TOKENS.background == DARK_TOKENS.background == "#07090C"
-    assert BRAND_TOKENS.accent == "#7A7A7A"
-    assert BRAND_TOKENS.danger == "#6E6E6E"
-    assert BRAND_TOKENS.typography.heading_family == "Heading"
     assert tokens_for(LIGHT) is LIGHT_TOKENS
     assert tokens_for(FASTGRAPH_95) is FASTGRAPH_95_TOKENS
     assert tokens_for(FASTGRAPH_95_DARK) is FASTGRAPH_95_DARK_TOKENS
     assert tokens_for(HACKERMAN_95) is HACKERMAN_95_TOKENS
     assert tokens_for(DITHER) is DITHER_TOKENS
-    assert tokens_for(DARK, brand_mode=True) is BRAND_TOKENS
+    assert tokens_for(DARK, brand_mode=True) is DARK_TOKENS
     assert [definition.label for definition in THEME_DEFINITIONS] == [
         "Default dark",
         "Default light",
@@ -181,19 +174,6 @@ def test_each_theme_styles_measure_submode_selected_state(theme: str) -> None:
     assert 'QPushButton[measureSegment="true"]:checked:disabled' in stylesheet
 
 
-def test_brand_styles_measure_submode_selected_state() -> None:
-    stylesheet = brand_application_stylesheet()
-    selected_selector = 'QPushButton[measureSegment="true"]:checked {'
-    selected_start = stylesheet.rfind(selected_selector)
-
-    assert selected_start >= 0
-    selected_rule = stylesheet[selected_start:].split("}", 1)[0]
-    assert f"background-color: {brand_theme_colors()['accent']}" in selected_rule
-    assert 'QPushButton[measureSegment="true"]:hover' in stylesheet
-    assert 'QPushButton[measureSegment="true"]:focus' in stylesheet
-    assert 'QPushButton[measureSegment="true"]:checked:disabled' in stylesheet
-
-
 def test_modern_button_roles_cover_semantic_actions(qapp) -> None:
     assert qapp is not None
     assert ModernButton("Export Average").role() == "primary"
@@ -240,6 +220,7 @@ def test_modern_button_size_hints_fit_painted_labels_in_each_theme(
     qapp,
     monkeypatch,
     tmp_path,
+    fake_brand,
 ) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     controller = ThemeController(qapp, SettingsManager())
@@ -301,7 +282,7 @@ def test_dither_button_size_hint_does_not_depend_on_plain_style_measurement(
     assert button.minimumSizeHint().width() > required_width
 
 
-def test_modern_button_can_use_a_dark_mode_only_accent(qapp) -> None:
+def test_modern_button_can_use_a_dark_mode_only_accent(qapp, fake_brand) -> None:
     button = ModernButton("Inputs")
     button.setProperty("darkAccentColor", "#A970FF")
 
@@ -310,7 +291,7 @@ def test_modern_button_can_use_a_dark_mode_only_accent(qapp) -> None:
     qapp.setProperty("fastgraphVisualMode", "light")
     assert button._accent(button._tokens()).name().upper() == LIGHT_TOKENS.accent
     qapp.setProperty("fastgraphVisualMode", "brand")
-    assert button._accent(button._tokens()).name().upper() == BRAND_TOKENS.accent
+    assert button._accent(button._tokens()).name().upper() == fake_brand.tokens.accent
 
 
 def test_modern_button_hover_and_press_endpoints(qapp) -> None:
@@ -477,7 +458,7 @@ def test_modern_button_animates_hover_and_press(qapp) -> None:
     assert button.pressProgress() < 0.05
 
 
-def test_modern_button_focus_and_disabled_states(qapp) -> None:
+def test_modern_button_focus_and_disabled_states(qapp, fake_brand) -> None:
     qapp.setProperty("fastgraphVisualMode", "brand")
     button = ModernButton("Action")
     button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -485,7 +466,7 @@ def test_modern_button_focus_and_disabled_states(qapp) -> None:
     button.show()
     button.setFocus()
     qapp.processEvents()
-    assert button._effective_hover() >= BRAND_TOKENS.motion.focus_glow_strength
+    assert button._effective_hover() >= fake_brand.tokens.motion.focus_glow_strength
 
     button.setEnabled(False)
     qapp.processEvents()
@@ -517,11 +498,11 @@ def test_button_click_flash_has_a_visible_release_tail(qapp) -> None:
     assert button.pressProgress() >= 0.58
 
 
-def test_palette_change_refreshes_button_mode(qapp) -> None:
+def test_palette_change_refreshes_button_mode(qapp, fake_brand) -> None:
     button = ModernButton("Action")
     qapp.setProperty("fastgraphVisualMode", "brand")
     QApplication.sendEvent(button, QEvent(QEvent.Type.ApplicationPaletteChange))
-    assert button._tokens() is BRAND_TOKENS
+    assert button._tokens() is fake_brand.tokens
 
 
 def test_rounded_viewport_keeps_the_plot_as_a_direct_capture_target(qapp) -> None:

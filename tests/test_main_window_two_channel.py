@@ -135,7 +135,7 @@ def test_measure_submode_segments_are_disabled_while_busy(make_main_window) -> N
 
 
 def test_measure_submode_segments_keep_text_width_in_all_display_profiles(
-    qapp, make_main_window
+    qapp, make_main_window, fake_brand
 ) -> None:
     window = _two_channel_window(make_main_window)
     window.show()

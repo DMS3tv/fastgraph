@@ -7,6 +7,7 @@ import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen
 
+from dms import branding
 from dms.curator.models import CurveData, GraphState
 from dms.curator.transforms import visible_display_layers
 from dms.graph_display import (
@@ -46,11 +47,9 @@ def export_graph_image(
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     try:
-        if brand_mode:
-            # Local import: export_brand imports helpers from this module.
-            from dms.curator.export_brand import draw_brand_poster
-
-            draw_brand_poster(painter, state, size)
+        brand = branding.active() if brand_mode else None
+        if brand is not None:
+            brand.draw_poster(painter, state, size)
         else:
             _draw_poster(painter, state, size, theme=normalize_theme(theme))
     finally:

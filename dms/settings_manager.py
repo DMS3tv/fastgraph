@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dms import branding
 from dms.file_io import atomic_write_json, load_json_with_backup
 from dms.shortcuts import DEFAULT_SHORTCUT_BINDINGS
 
@@ -12,7 +13,6 @@ _DEFAULTS: dict[str, Any] = {
     "settings_schema_version": 3,
     "theme": "dark",
     "brand_mode": False,
-    "brand_mode_unlocked": False,
     "sweep_duration": 2.0,
     "sample_rate": 48000,
     "buffer_size": 1024,
@@ -207,10 +207,11 @@ class SettingsManager:
             saved = loaded
             self._data.update(saved)
             self._coerce_types(saved)
-        if not bool(self._data.get("brand_mode_unlocked")):
-            self._data["brand_mode"] = False
         self._migrate_alignment_confidence(saved)
         self._migrate_drop_variation_combination(saved)
+        brand = branding.active()
+        if brand is not None and brand.on_settings_load is not None:
+            brand.on_settings_load(self._data)
 
     def _coerce_types(self, saved: dict[str, Any]) -> None:
         """Force stored values back onto their declared type.

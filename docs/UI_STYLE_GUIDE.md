@@ -7,16 +7,15 @@ measurement behavior, and audio behavior separate from the interface style.
 
 ## Typography
 
-| Use | Standard mode | FastGraph 95 mode | brand mode | Size |
-|---|---|---|---|---:|
-| Caption | Inter Regular | Tahoma | Inter Regular | 11 px |
-| Body and controls | Inter Regular | Tahoma | Inter Regular | 13 px |
-| Section heading | Inter Semibold | MS Sans Serif | Heading Semibold | 15 px |
-| Screen heading | Inter Bold | MS Sans Serif | Heading ExtraBold | 20 px |
-| Technical value | Inconsolata Regular | Fixedsys | Inconsolata Regular | 13 px |
+| Use | Standard mode | FastGraph 95 mode | Size |
+|---|---|---|---:|
+| Caption | Inter Regular | Tahoma | 11 px |
+| Body and controls | Inter Regular | Tahoma | 13 px |
+| Section heading | Inter Semibold | MS Sans Serif | 15 px |
+| Screen heading | Inter Bold | MS Sans Serif | 20 px |
+| Technical value | Inconsolata Regular | Fixedsys | 13 px |
 
-Use the existing font fallback check when a Brand font is not installed. Do not
-silently replace a missing Brand font.
+A brand plugin brings its own typography tokens and font fallback check.
 
 ## Geometry and Spacing
 
@@ -72,7 +71,7 @@ bottom center. Hover expands and brightens the light until it softly fills the
 button. Press briefly flashes the inner light like a bulb. The light must stay
 inside the recessed well.
 
-Use cyan light in standard FastGraph. Use orange light in Brand mode. Use red
+Use cyan light in standard FastGraph. Brand mode uses the brand accent. Use red
 light for destructive actions. Disabled buttons have no glow or motion.
 
 FastGraph 95 mode is an exception. Use a square two-step bevel for each button.
@@ -80,7 +79,7 @@ Do not use the inner light, hover glow, rounded well, or click flash in this
 mode. Move the label by one pixel when the user presses the button.
 
 The global Inputs button uses purple `#A970FF` in the standard dark theme. It
-uses the normal mode accent in the standard light and brand themes.
+uses the normal mode accent in the standard light theme and in brand mode.
 
 ## Segmented Controls
 
@@ -98,7 +97,7 @@ layout make a segment narrower than its label.
 ## Input Level Meter
 
 Use the shared visual tokens for the input meter in all modes. Draw the meter
-as a recessed, rounded well. Do not use a separate BRAND paint path.
+as a recessed, rounded well. Do not use a separate brand paint path.
 
 The active light starts at the signal origin and spreads across the well as the
 level rises from -60 dBFS to 0 dBFS. Keep the strongest light at the origin and
@@ -120,7 +119,7 @@ not draw a glow in these two themes.
 
 Use rounded top corners and a small gap between tabs. The selected tab is one
 surface level above the others and has a 2 px accent edge. Use cyan in standard
-mode and orange in Brand mode.
+mode and the brand accent in brand mode.
 
 FastGraph 95 mode uses square tabs. Use white top and left edges. Use black right
 edges. Join the selected tab to the gray tab pane.
@@ -175,28 +174,16 @@ Variation controls, and HRTF controls between the two viewports. Keep export
 controls below the bottom viewport. The queue bar can move its progress displays
 to a second row at narrow widths.
 
-## brand
+## Brand Mode
 
-Use these primary brand values:
-
-- Curator poster and image-export canvas: `#232323`
-- Off-white: `#F2F1F1`
-- White: `#FFFFFF`
-- Orange: `#7A7A7A`
-- Red: `#6E6E6E`
-- Magenta: `#626262`
-
-Use the standard dark `#07090C` value for the BRAND application backdrop. Keep
-the `#232323` canvas for Curator BRAND previews and image exports. Do not change
-export colors when changing application surfaces.
-
-Use `#1C1C1C`, `#2A2A2A`, `#303030`, and `#333333` only as neutral surface
-steps. Reserve the orange-red-magenta gradient for key Brand accents and primary
-actions. Do not apply the gradient to every control.
+A brand plugin (see `dms/branding.py`) supplies its own colors, tokens, and
+stylesheet rules. Keep brand values in the plugin, not in this repository.
+Brand mode keeps the standard dark application backdrop; its Curator poster
+canvas and export colors belong to the plugin.
 
 ## Review Checklist
 
-- Check dark, light, FastGraph 95, FastGraph 95 Dark, Hackerman 95, and Brand modes.
+- Check dark, light, FastGraph 95, FastGraph 95 Dark, Hackerman 95, and (with a brand plugin) brand mode.
 - Check keyboard focus and disabled controls.
 - Check 1280 x 700 and 1800 x 1100 windows.
 - Confirm that the inner glow does not cross the recessed well.

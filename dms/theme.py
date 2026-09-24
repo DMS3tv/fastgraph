@@ -6,11 +6,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
-from dms import brand_brand
+from dms import branding
 from dms.dither_fonts import configure_dither_typography, dither_font_status
 from dms.settings_manager import SettingsManager
 from dms.style_tokens import (
-    BRAND_TOKENS,
+    DEFAULT_TRACE_COLORS,
     THEME_DEFINITIONS,
     ThemeTokens,
     theme_definition,
@@ -106,10 +106,11 @@ def theme_colors(theme: str) -> dict[str, str]:
 
 def theme_trace_palette(theme: str, *, brand_mode: bool = False) -> list[str]:
     """Return a copy of the ordered trace palette for one visual mode."""
-    if brand_mode:
-        return list(brand_brand.TRACE_PALETTE)
+    brand = branding.active() if brand_mode else None
+    if brand is not None:
+        return list(brand.trace_palette)
     palette = tokens_for(normalize_theme(theme)).trace_palette
-    return list(palette) if palette else list(brand_brand.NON_BRAND_DEFAULT_COLORS)
+    return list(palette) if palette else list(DEFAULT_TRACE_COLORS)
 
 
 def _color_dict(
@@ -846,19 +847,10 @@ def _stylesheet_body(
     """
 
 
-def brand_theme_colors() -> dict[str, str]:
-    """Color set for brand mode (see BRAND Brand Guide)."""
-    return _color_dict(
-        BRAND_TOKENS,
-        meter_bg="#141414",
-        meter_mark="#555555",
-        meter_peak=brand_brand.WHITE,
-    )
-
-
 def colors_for(theme: str, *, brand_mode: bool = False) -> dict[str, str]:
-    """The colour set for one application mode; BRAND overrides the theme."""
-    return brand_theme_colors() if brand_mode else theme_colors(theme)
+    """The colour set for one application mode; the brand overrides the theme."""
+    brand = branding.active() if brand_mode else None
+    return dict(brand.theme_colors) if brand is not None else theme_colors(theme)
 
 
 def mix_colors(first: QColor, second: QColor, amount: float) -> QColor:
@@ -872,118 +864,22 @@ def mix_colors(first: QColor, second: QColor, amount: float) -> QColor:
     )
 
 
-def brand_application_stylesheet() -> str:
-    c = brand_theme_colors()
+def brand_application_stylesheet(brand: branding.Brand) -> str:
+    """The standard stylesheet built from the brand's tokens, plus its own rules."""
+    c = brand.theme_colors
     base = _stylesheet_body(
         c,
-        visual_tokens=BRAND_TOKENS,
-        status=_status_accent_colors(BRAND_TOKENS),
+        visual_tokens=brand.tokens,
+        status=_status_accent_colors(brand.tokens),
         tab_bg=c["alternate"],
         tab_selected=c["base"],
         group_bg=c["panel"],
     )
-    return (
-        base
-        + f"""
-    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
-    QPlainTextEdit:focus, QListWidget:focus {{
-        border: 2px solid {brand_brand.GRADIENT_ORANGE};
-    }}
-    QTabBar::tab:selected {{
-        border-bottom: 3px solid {brand_brand.GRADIENT_ORANGE};
-        color: {brand_brand.OFF_WHITE};
-    }}
-    QPushButton[measureSegment="true"] {{
-        background-color: {c["control"]};
-        color: {c["muted"]};
-        border-color: {c["border"]};
-        font-family: 'Heading', 'Inter', sans-serif;
-    }}
-    QPushButton[measureSegment="true"]:hover {{
-        background-color: {c["control_hover"]};
-        color: {brand_brand.OFF_WHITE};
-        border-color: {brand_brand.GRADIENT_ORANGE};
-    }}
-    QPushButton[measureSegment="true"]:focus {{
-        background-color: {c["control"]};
-        color: {brand_brand.OFF_WHITE};
-        border: 2px solid {brand_brand.GRADIENT_ORANGE};
-    }}
-    QPushButton[measureSegment="true"]:checked {{
-        background-color: {brand_brand.GRADIENT_ORANGE};
-        color: {BRAND_TOKENS.background};
-        border-color: {brand_brand.GRADIENT_ORANGE};
-    }}
-    QPushButton[measureSegment="true"]:checked:hover,
-    QPushButton[measureSegment="true"]:checked:focus {{
-        border: 2px solid {brand_brand.OFF_WHITE};
-    }}
-    QPushButton[measureSegment="true"]:disabled {{
-        background-color: {c["alternate"]};
-        color: {c["disabled"]};
-        border-color: {c["border"]};
-    }}
-    QPushButton[measureSegment="true"]:checked:disabled {{
-        background-color: {c["selected"]};
-        color: {c["muted"]};
-        border-color: {c["disabled"]};
-    }}
-    QListWidget::item:selected {{
-        border-left: 3px solid {brand_brand.GRADIENT_ORANGE};
-        background-color: #46301F;
-    }}
-    QGroupBox#brandPosterBox {{
-        border: 1px solid {brand_brand.GRADIENT_ORANGE};
-        border-left: 4px solid {brand_brand.GRADIENT_ORANGE};
-    }}
-    QGroupBox#brandPosterBox::title {{
-        color: {brand_brand.GRADIENT_ORANGE};
-        font-weight: 700;
-    }}
-    QGroupBox#brandPosterBox QLabel {{
-        background-color: transparent;
-    }}
-    QGroupBox#brandPosterBox QLabel#brandMetadataStatus,
-    QGroupBox#brandPosterBox QLabel#brandFontStatus {{
-        background-color: {brand_brand.SURFACE};
-        border: 1px solid #5C5C5C;
-        border-left: 3px solid {brand_brand.GRADIENT_ORANGE};
-        border-radius: 6px;
-        padding: 5px 8px;
-    }}
-    QGroupBox#brandPosterBox QLabel#brandFontStatus[tone="warning"] {{
-        border-left-color: {brand_brand.GRADIENT_RED};
-    }}
-    QPushButton#exportButton {{
-        border: 2px solid {brand_brand.GRADIENT_ORANGE};
-        background-color: #4A3018;
-        color: {brand_brand.OFF_WHITE};
-        font-weight: 700;
-    }}
-    QPushButton#exportButton:hover {{
-        background-color: #5E3B1B;
-    }}
-    QLineEdit[metadataState="manual"] {{
-        border-left: 3px solid {brand_brand.GRADIENT_RED};
-    }}
-    QLineEdit[metadataState="auto"] {{
-        border-left: 3px solid {brand_brand.GRADIENT_ORANGE};
-    }}
-    QWidget#controlPanel {{
-        background-color: {BRAND_TOKENS.panel};
-        border: 1px solid #707070;
-        border-radius: {BRAND_TOKENS.geometry.radius_surface}px;
-    }}
-    """
-    )
+    return base + brand.stylesheet_extra
 
 
 def _palette(theme: str) -> QPalette:
     return _palette_from_colors(theme_colors(theme))
-
-
-def _brand_palette() -> QPalette:
-    return _palette_from_colors(brand_theme_colors())
 
 
 def _palette_from_colors(c: dict[str, str]) -> QPalette:
@@ -1023,7 +919,7 @@ class ThemeController(QObject):
         self._app = app
         self._settings = settings
         self._theme = normalize_theme(settings.get("theme"))
-        self._brand_mode = bool(settings.get("brand_mode"))
+        self._brand_mode = bool(settings.get("brand_mode")) and branding.active() is not None
         self._apply()
 
     @property
@@ -1045,7 +941,7 @@ class ThemeController(QObject):
             self.theme_changed.emit(normalized)
 
     def set_brand_mode(self, enabled: bool, *, persist: bool = True) -> None:
-        enabled = bool(enabled)
+        enabled = bool(enabled) and branding.active() is not None
         changed = enabled != self._brand_mode
         self._brand_mode = enabled
         self._apply()
@@ -1055,10 +951,11 @@ class ThemeController(QObject):
             self.brand_mode_changed.emit(enabled)
 
     def _apply(self) -> None:
-        if self._brand_mode:
+        brand = branding.active() if self._brand_mode else None
+        if brand is not None:
             mode = "brand"
-            palette = _brand_palette()
-            stylesheet = brand_application_stylesheet()
+            palette = _palette_from_colors(brand.theme_colors)
+            stylesheet = brand_application_stylesheet(brand)
             flat_controls = False
         else:
             mode = self._theme

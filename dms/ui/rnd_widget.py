@@ -37,7 +37,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms import brand_brand
 from dms.curator.models import PreferenceBounds
 from dms.curator.parser import load_preference_bounds, load_two_column_txt_curve
 from dms.graph_display import (
@@ -164,7 +163,7 @@ class RnDPlotWidget(QWidget):
 
     def _accent_color(self) -> str:
         if self._brand_mode:
-            return brand_brand.GRADIENT_ORANGE
+            return tokens_for(self._theme, brand_mode=True).accent
         palette = theme_trace_palette(self._theme)
         return palette[0] if tokens_for(self._theme).trace_palette else VARIATION_COLOR
 
@@ -908,7 +907,7 @@ class RnDWidget(QWidget):
         return notes_panel
 
     def _accent_color(self) -> str:
-        return brand_brand.GRADIENT_ORANGE if self._brand_mode else "#FCBE11"
+        return tokens_for(self._theme, brand_mode=True).accent if self._brand_mode else "#FCBE11"
 
     def _apply_accent_stylesheets(self) -> None:
         self._tree.setStyleSheet("")

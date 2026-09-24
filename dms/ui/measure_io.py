@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QFileDialog, QMenu, QMessageBox, QToolButton
 
+from dms import branding
 from dms.export import (
     build_filename,
     build_variation_filename,
@@ -650,13 +651,18 @@ class MeasureIO(QObject):
             QMessageBox.warning(window, "Export Error", str(exc))
 
     def run_upload_action(self) -> None:
-        if self._brand_mode_active():
+        if self._export_all_replaces_upload():
             self.export_all()
             return
         self._window.squiglink.upload()
 
-    def _brand_mode_active(self) -> bool:
-        return bool(self._window._theme_controller.brand_mode)
+    def _export_all_replaces_upload(self) -> bool:
+        brand = branding.active()
+        return bool(
+            brand is not None
+            and brand.export_all_replaces_upload
+            and self._window._theme_controller.brand_mode
+        )
 
     def _export_all_unavailable_reason(self) -> str:
         window = self._window
@@ -909,7 +915,7 @@ class MeasureIO(QObject):
         window.measure_tab.send_to_rnd_btn.setToolTip(
             unavailable or "Send the current average or all kept Var measurements to R&D."
         )
-        if self._brand_mode_active():
+        if self._export_all_replaces_upload():
             window.measure_tab.upload_btn.setText("Export All…")
             window.measure_tab.upload_btn.setObjectName("btn_export")
             window.measure_tab.upload_btn.setRole("primary")

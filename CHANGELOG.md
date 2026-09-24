@@ -45,7 +45,7 @@
 - Curator: decimal-comma and BOM files import correctly, combined variation
   bands use a proper mixture model instead of percentiles of percentiles,
   PNG exports drop out-of-band
-  points and honour the 25 dB/decade lock, BRAND colours pass the contrast
+  points and honour the 25 dB/decade lock, brand-mode colours pass the contrast
   guard, Show Names works outside Clean Slate, Remove acts on every selected
   layer, layers can be reordered, and combined layers show STALE when a
   source changes.
@@ -70,6 +70,10 @@
 
 ### Changed
 
+- The branded mode is no longer part of the public app. A private brand
+  package plugs in through `dms/branding.py` (`FASTGRAPH_BRAND_PLUGIN`);
+  without one, Settings shows no brand toggle. The mode is a plain toggle,
+  with no password, and its setting is stored as `brand_mode`.
 - Code conventions: the default 1/48-octave smoothing and the analysis grid
   use named constants, measurement failure and warning reasons are string
   enums (saved files and dumps keep the same text), module-only helpers are
@@ -119,7 +123,7 @@
   orders. Band values are unchanged.
 - Graph helpers now have one home each: variation and preference-bounds
   drawing, plot setup, frequency ticks and markers, and the dither band
-  (`dms/graph_display.py`); the BRAND-or-theme colour choice and colour
+  (`dms/graph_display.py`); the brand-or-theme colour choice and colour
   mixing (`theme.colors_for`, `theme.mix_colors`). Theme tokens moved to
   `dms/style_tokens.py`, so Curator image export no longer loads UI
   modules. Graphs look the same.
@@ -179,7 +183,7 @@
   difference while it places the pair's power mean at 0 dB.
 - Kept separate single-channel and two-channel Measure workspaces in memory.
   Undo and Clear All now operate on the active workspace.
-- Added theme-aware two-channel plot panes for all standard themes and BRAND
+- Added theme-aware two-channel plot panes for all standard themes and brand
   mode.
 - Replaced the two-channel mode switch with a themed segmented control for
   Frequency Response and Channel Balance. Each segment keeps its full label.
@@ -227,7 +231,7 @@
 - Local R&D crash recovery with two active generations, deferred bundles,
   attachment recovery, startup restore choices, and normal-close dirty checks.
 - Measure-to-R&D transfer for one average or a grouped set of kept Var curves.
-- A Curator BRAND Clean Slate export with only the graph, BRAND logo, and optional
+- A Curator brand-mode Clean Slate export with only the graph, brand logo, and optional
   layer names.
 - Collapsible Curator controls with stable list and panel scroll positions.
 - A display-independent 50/50 R&D splitter default with a saved user ratio.
@@ -235,7 +239,7 @@
   every main tab.
 - A responsive Measure queue bar above the top viewport, with device controls
   removed from the old sidebar.
-- A BRAND Measure batch that exports `RAW AVG`, `COMP AVG`, `RAW VAR`, and
+- A brand-mode Measure batch that exports `RAW AVG`, `COMP AVG`, `RAW VAR`, and
   `COMP VAR` without changing the active graph state.
 - Six-column population HRTF support for P10, P25, median, P75, and P90
   compensation data.
@@ -254,16 +258,16 @@
   and renamed Start Queue to Measure. The level meter, Variation, and HRTF
   controls remain between the two viewports.
 - Added a purple Inputs accent for the standard dark theme while keeping the
-  standard light and brand accents unchanged.
+  standard light and brand mode accents unchanged.
 - Removed the translucent curve halo from Curator previews and PNG exports in
   standard and brand modes.
 - Improved compact R&D toolbar layout and the surface order for dark, light,
   and brand modes.
 - Replaced R&D list toggles with View 1 and View 2 checkboxes, preserved group
   collapse state, and changed the initial workspace split to 50/50.
-- Kept the standard dark application backdrop in BRAND mode while retaining
-  BRAND panel, control, graph, and viewport colors.
-- Added BRAND Curator poster layout, metadata controls, font checks, access
+- Kept the standard dark application backdrop in brand mode while retaining
+  brand panel, control, graph, and viewport colors.
+- Added brand-mode Curator poster layout, metadata controls, font checks, access
   control, and 3840x2160 export.
 
 ### Compatibility and Safety
@@ -273,7 +277,7 @@
 - Existing two-column HRTF files remain supported.
 - Standard mode keeps Squiglink upload and adds password-safe connection
   diagnostics to its console.
-- Curator BRAND image exports keep the existing `#232323` canvas and brand
+- Curator brand-mode image exports keep the existing canvas and brand
   colors.
 
 ### Notes

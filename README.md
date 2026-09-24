@@ -21,7 +21,7 @@ complete pair.
 The top viewports show channel 2/R on the left and channel 1/L on the right.
 The bottom result can show one Combined power average or separate R and L
 results. Select a separate bottom viewport to route Export, Send to R&D, Send
-to Curator, Squiglink upload, and BRAND Export All through that channel.
+to Curator, Squiglink upload, and brand-mode Export All through that channel.
 
 Use the segmented mode control to select **Frequency Response** or **Channel
 Balance**. Channel Balance sends the same continuous
@@ -98,12 +98,12 @@ offsets. Each measurement can choose its own HRTF from the shared HRTF library
 and can be shifted with its own dB offset. R&D sessions save processed
 measurement curves and workspace state to JSON; raw recordings are not saved.
 
-In brand mode, Curator includes a **Clean Slate** option. It disables all
-editable poster text and removes the header, guide box, and text footer from
-the BRAND PNG. The export keeps the graph and BRAND logo. It also keeps colored
-layer names when **Show Names** is enabled.
+In brand mode (see [Brand plugin](#brand-plugin)), Curator includes a **Clean
+Slate** option. It disables all editable poster text and removes the header,
+guide box, and text footer from the poster PNG. The export keeps the graph and
+brand logo. It also keeps colored layer names when **Show Names** is enabled.
 
-The Curator **View** and **BRAND Poster Text** sections can be collapsed below
+The Curator **View** and **Poster Text** sections can be collapsed below
 the Data list. Curator preserves the layer-list and control-panel scroll
 positions when a layer setting changes.
 
@@ -183,40 +183,16 @@ the selection and restores it at the next start.
 Developers can use [`docs/HOW_TO_ADD_THEMES.md`](docs/HOW_TO_ADD_THEMES.md) for
 the theme registry, token, graph, export, test, and visual-review procedure.
 
-## brand Mode
+## Brand plugin
 
-Enable **brand mode** in Settings to use the BRAND colors and the 3840x2160
-Curator poster export. The Curator preview uses the same layout as the saved
-image. BRAND mode keeps the normal dark application backdrop. BRAND panels,
-controls, plots, and Curator content keep their mode-specific colors.
-
-In the Measure tab, BRAND mode replaces the visible Squiglink button with
-**Export All…**. The batch needs an average, at least two kept measurements, an
-idle Measure state, and a selected HRTF. It writes four files to one directory:
-
-- `RAW AVG`: the average without HRTF correction.
-- `COMP AVG`: the average with the selected HRTF.
-- `RAW VAR`: variation without HRTF correction.
-- `COMP VAR`: variation with the selected HRTF.
-
-Fastgraph checks all four names before it writes the batch. It uses one
-overwrite prompt if any files already exist. Standard mode keeps Squiglink
-upload in the same button position.
-
-A clean installation starts in the standard FastGraph view. The first BRAND mode
-activation on each computer requires the BRAND access password. FastGraph stores
-the successful local unlock, not the password. This access check limits
-accidental brand use. It does not prove that an export came from brand.
-
-When a measurement has headphone metadata, Curator fills the poster title,
-headphone details, fixture or HRTF footer, asset footer, and legend labels.
-Each field remains editable. Right-click a field to restore its metadata value,
-or use **Fill from Metadata** to restore all automatic fields.
-
-Curator reduces text size when a value is too long for its poster area. It
-shows a warning before export when the text must go below the preferred
-readable size. BRAND mode reports missing Heading or Inconsolata fonts and
-uses a visible fallback without bundling licensed font files.
+The public app ships no brand. A private package can add one branded mode
+(skin, trace colors, and a poster-sized Curator export) through
+[`dms/branding.py`](dms/branding.py). Install the package into the app's
+environment and name its module in `FASTGRAPH_BRAND_PLUGIN`; Settings then
+shows a toggle for the mode. A brand can also replace the Measure tab's
+Squiglink button with **Export All…**, which writes RAW AVG, COMP AVG, RAW VAR,
+and COMP VAR to one directory. To bundle a plugin in a build, set the same
+variable when running the build script.
 
 ## HRTF Files
 

@@ -9,17 +9,15 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QKeySequenceEdit,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
-from dms.brand_access import verify_brand_password
+from dms import branding
 from dms.settings_manager import SettingsManager
 from dms.shortcuts import (
     DEFAULT_SHORTCUT_BINDINGS,
@@ -98,19 +96,20 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._themes_group)
 
     def _build_brand_group(self, layout: QVBoxLayout) -> None:
-        self._appearance_group = QGroupBox("brand")
+        brand = branding.active()
+        self._brand_mode: QCheckBox | None = None
+        if brand is None:
+            return
+        self._appearance_group = QGroupBox(brand.label)
         appearance_layout = QVBoxLayout(self._appearance_group)
-        self._brand_mode = QCheckBox("brand mode")
+        self._brand_mode = QCheckBox(f"{brand.label} mode")
         self._brand_mode.setToolTip(
-            "Re-themes the app to the brand brand. Curator exports switch to the "
-            "4K branded poster layout with brand trace colors."
+            f"Re-themes the app to the {brand.label} brand. Curator exports switch to the "
+            "branded poster layout with brand trace colors."
         )
         appearance_layout.addWidget(self._brand_mode)
-        brand_mode_hint = QLabel(
-            "Curator export becomes a 3840×2160 branded poster. First use on each "
-            "computer requires the BRAND access password. This local check does not "
-            "certify export authenticity."
-        )
+        width, height = brand.poster_size
+        brand_mode_hint = QLabel(f"Curator export becomes a {width}×{height} branded poster.")
         brand_mode_hint.setWordWrap(True)
         brand_mode_hint.setProperty("tone", "muted")
         appearance_layout.addWidget(brand_mode_hint)
@@ -371,7 +370,8 @@ class SettingsWidget(QWidget):
             lambda: self._save("automation_directory", self._automation_dir.text().strip())
         )
         self._automation_browse.clicked.connect(self._choose_automation_dir)
-        self._brand_mode.toggled.connect(self._on_brand_mode_toggled)
+        if self._brand_mode is not None:
+            self._brand_mode.toggled.connect(self._on_brand_mode_toggled)
         for theme_key, button in self._theme_buttons.items():
             button.toggled.connect(
                 lambda checked, theme_key=theme_key: checked and self._save("theme", theme_key)
@@ -390,33 +390,6 @@ class SettingsWidget(QWidget):
         self.settings_changed.emit(key, value)
 
     def _on_brand_mode_toggled(self, checked: bool) -> None:
-        if checked and not bool(self._settings.get("brand_mode_unlocked")):
-            password, accepted = QInputDialog.getText(
-                self,
-                "Unlock brand Mode",
-                "Enter the BRAND access password:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not accepted or not verify_brand_password(password):
-                self._brand_mode.blockSignals(True)
-                self._brand_mode.setChecked(False)
-                self._brand_mode.blockSignals(False)
-                if accepted:
-                    QMessageBox.warning(
-                        self,
-                        "brand Mode",
-                        "The password was not accepted.",
-                    )
-                return
-            self._settings.update(
-                {
-                    "brand_mode_unlocked": True,
-                    "brand_mode": True,
-                }
-            )
-            self.settings_changed.emit("brand_mode", True)
-            self._theme_choice_rows.setEnabled(False)
-            return
         self._save("brand_mode", checked)
         self._theme_choice_rows.setEnabled(not checked)
 
@@ -473,7 +446,7 @@ class SettingsWidget(QWidget):
 
     def refresh_from_settings(self) -> None:
         controls = (
-            self._brand_mode,
+            *([self._brand_mode] if self._brand_mode is not None else []),
             *self._theme_buttons.values(),
             self._duration,
             self._fs,
@@ -497,8 +470,9 @@ class SettingsWidget(QWidget):
         for control in controls:
             control.blockSignals(True)
         try:
-            brand_mode = bool(self._settings.get("brand_mode"))
-            self._brand_mode.setChecked(brand_mode)
+            brand_mode = self._brand_mode is not None and bool(self._settings.get("brand_mode"))
+            if self._brand_mode is not None:
+                self._brand_mode.setChecked(brand_mode)
             active_theme = theme_definition(self._settings.get("theme")).key
             self._theme_buttons[active_theme].setChecked(True)
             self._theme_choice_rows.setEnabled(not brand_mode)
@@ -536,7 +510,8 @@ class SettingsWidget(QWidget):
 
     def set_editing_enabled(self, enabled: bool) -> None:
         self._themes_group.setEnabled(enabled)
-        self._appearance_group.setEnabled(enabled)
+        if self._brand_mode is not None:
+            self._appearance_group.setEnabled(enabled)
         self._sweep_group.setEnabled(enabled)
         self._audio_tools_group.setEnabled(enabled)
         self._safety_group.setEnabled(enabled)

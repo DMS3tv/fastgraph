@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dms import brand_brand
+from dms import branding
 
 
 @dataclass(frozen=True)
@@ -100,12 +100,6 @@ class ThemeDefinition:
 STANDARD_TYPOGRAPHY = TypographyTokens(
     ui_family="Inter",
     heading_family="Inter",
-    technical_family="Inconsolata",
-)
-
-BRAND_TYPOGRAPHY = TypographyTokens(
-    ui_family="Inter",
-    heading_family="Heading",
     technical_family="Inconsolata",
 )
 
@@ -383,31 +377,15 @@ DITHER_TOKENS = ThemeTokens(
     ),
 )
 
-BRAND_TOKENS = ThemeTokens(
-    name="brand",
-    background=DARK_TOKENS.background,
-    viewport="#1C1C1C",
-    panel=brand_brand.SURFACE,
-    raised="#303030",
-    control="#333333",
-    control_hover="#3A332D",
-    alternate="#1C1C1C",
-    text=brand_brand.OFF_WHITE,
-    muted="#A8A8A8",
-    disabled="#6B6B6B",
-    border="#5C5C5C",
-    selected="#5A3018",
-    accent=brand_brand.GRADIENT_ORANGE,
-    focus=brand_brand.GRADIENT_ORANGE,
-    shadow="#000000",
-    danger=brand_brand.GRADIENT_RED,
-    positive="#303030",
-    warning=brand_brand.GRADIENT_ORANGE,
-    plot_bg=brand_brand.BACKGROUND,
-    plot_fg=brand_brand.OFF_WHITE,
-    plot_grid="#4A4A4A",
-    typography=BRAND_TYPOGRAPHY,
-)
+# Trace cycle for themes without their own palette (Curator, R&D).
+DEFAULT_TRACE_COLORS = [
+    "#15f4ee",
+    "#d8ff38",
+    "#ff4fd8",
+    "#ff8a22",
+    "#7f5cff",
+    "#4dff88",
+]
 
 
 THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
@@ -435,14 +413,13 @@ def theme_definition(theme: object) -> ThemeDefinition:
 
 def tokens_for(theme: str = "dark", *, brand_mode: bool = False) -> ThemeTokens:
     """Return the complete token set for one application mode."""
-    if brand_mode:
-        return BRAND_TOKENS
+    brand = branding.active() if brand_mode else None
+    if brand is not None:
+        return brand.tokens
     return theme_definition(theme).tokens
 
 
 def mode_tokens(mode: object) -> ThemeTokens:
     """Return tokens for the mode string stored on QApplication."""
     normalized = str(mode or "dark").strip().lower()
-    if normalized == "brand":
-        return BRAND_TOKENS
-    return tokens_for(normalized)
+    return tokens_for(normalized, brand_mode=normalized == "brand")

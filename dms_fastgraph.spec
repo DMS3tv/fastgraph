@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 from dms.version import __version__
 
 
@@ -14,24 +16,30 @@ BUNDLE_ID = (
     or "com.dms.fastgraph"
 )
 
-# A generated runtime hook makes the chosen name visible to the app itself
-# (the window title reads it), without baking it into the source tree.
+# An optional brand plugin (see dms/branding.py) is bundled only when it is
+# named at build time: FASTGRAPH_BRAND_PLUGIN=<module> ./build_macos.sh ...
+BRAND_PLUGIN = os.environ.get("FASTGRAPH_BRAND_PLUGIN", "").strip()
+_brand_imports = collect_submodules(BRAND_PLUGIN) if BRAND_PLUGIN else []
+_brand_datas = collect_data_files(BRAND_PLUGIN) if BRAND_PLUGIN else []
+
+# A generated runtime hook makes the chosen name (and brand plugin) visible to
+# the app itself (the window title reads it), without baking it into the
+# source tree.
 _hook_dir = Path("build") / "runtime_hooks"
 _hook_dir.mkdir(parents=True, exist_ok=True)
 _hook_path = _hook_dir / "fastgraph_app_name.py"
-_hook_path.write_text(
-    "import os\n"
-    f"os.environ.setdefault('FASTGRAPH_APP_NAME', {APP_NAME!r})\n",
-    encoding="utf-8",
-)
+_hook_lines = ["import os", f"os.environ.setdefault('FASTGRAPH_APP_NAME', {APP_NAME!r})"]
+if BRAND_PLUGIN:
+    _hook_lines.append(f"os.environ.setdefault('FASTGRAPH_BRAND_PLUGIN', {BRAND_PLUGIN!r})")
+_hook_path.write_text("\n".join(_hook_lines) + "\n", encoding="utf-8")
 
 
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[("HRTFs", "HRTFs"), ("Bounds", "Bounds"), ("assets", "assets")],
-    hiddenimports=["PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets"],
+    datas=[("HRTFs", "HRTFs"), ("Bounds", "Bounds"), *_brand_datas],
+    hiddenimports=["PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets", *_brand_imports],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[str(_hook_path)],

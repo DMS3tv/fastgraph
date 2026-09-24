@@ -4,8 +4,9 @@ FastGraph keeps theme definitions in one registry. A basic theme needs one
 token set and one registry entry. Settings reads the registry and adds the
 theme choice automatically.
 
-Use this guide for application themes. brand mode is a separate branded
-mode. Do not add it to the selectable theme registry.
+Use this guide for application themes. Brand mode comes from an optional
+private plugin (`dms/branding.py`). Do not add it to the selectable theme
+registry.
 
 ## Theme Files
 

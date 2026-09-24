@@ -557,19 +557,19 @@ class MainWindow(QMainWindow):
         return header
 
     def _on_theme_changed(self, theme: str, log: bool = True) -> None:
-        brand = self._theme_controller.brand_mode
+        brand_mode = self._theme_controller.brand_mode
         measure_tab = getattr(self, "measure_tab", None)
         if measure_tab is not None:
             measure_tab.measure_submode_control.refresh_segment_widths()
         plots = getattr(self, "_plots", None)
         if plots is not None:
-            plots.apply_theme(theme, brand_mode=brand)
+            plots.apply_theme(theme, brand_mode=brand_mode)
         rnd = getattr(self, "_rnd_widget", None)
         if rnd is not None:
-            rnd.apply_theme(theme, brand_mode=brand)
+            rnd.apply_theme(theme, brand_mode=brand_mode)
         curator = getattr(self, "_curator_widget", None)
         if curator is not None:
-            curator.apply_theme(theme, brand_mode=brand)
+            curator.apply_theme(theme, brand_mode=brand_mode)
         if measure_tab is not None:
             measure_tab.level_meter.update()
             measure_tab.level_meter_2.update()
@@ -587,7 +587,7 @@ class MainWindow(QMainWindow):
             self.measure_io.sync_export_button()
         if hasattr(self, "_console_events"):
             logger.info(
-                "brand mode changed",
+                "Brand mode changed",
                 extra={"source": "theme", "details": {"brand_mode": enabled}},
             )
 

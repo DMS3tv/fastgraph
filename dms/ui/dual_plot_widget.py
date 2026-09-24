@@ -17,7 +17,6 @@ from PyQt6.QtCore import QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PyQt6.QtWidgets import QFileDialog, QMenu, QVBoxLayout, QWidget
 
-from dms import brand_brand
 from dms.graph_display import (
     MEASURE_FREQUENCY_TICKS,
     add_variation_band,
@@ -33,7 +32,6 @@ from dms.theme import (
     LIGHT,
     colors_for,
     ensure_graph_color,
-    brand_theme_colors,
     normalize_theme,
     theme_colors,
     theme_trace_palette,
@@ -244,8 +242,8 @@ class DualPlotWidget(QWidget):
 
     def _bottom_accent_color(self) -> str:
         if self._brand_mode:
-            base = brand_brand.GRADIENT_ORANGE
-            background = brand_theme_colors()["plot_bg"]
+            base = tokens_for(self._theme, brand_mode=True).accent
+            background = colors_for(self._theme, brand_mode=True)["plot_bg"]
         else:
             custom_palette = tokens_for(self._theme).trace_palette
             base = (

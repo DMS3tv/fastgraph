@@ -9,7 +9,7 @@ a tab. For what the app does to a measurement, read
 
 ```
 dms/            core: pure Python + numpy/scipy, no Qt except where noted
-dms/curator/    Curator import, transforms and image/BRAND export (Qt painting only)
+dms/curator/    Curator import, transforms and image export (Qt painting only)
 dms/rnd/        R&D session models, persistence, photos
 dms/ui/         everything that shows on screen; imports core, never the reverse
 tests/          one file per module, shared helpers in tests/helpers.py
@@ -39,7 +39,7 @@ guards the Curator image exporter against pulling in a UI module.
 | `session.py`, `settings_manager.py`, `calibration.py`, `secure_store.py` | Headphone metadata, settings (schema-versioned, atomic, mode 0600), microphone calibration, obfuscated credential store |
 | `squiglink.py` | SFTP upload with trust-on-first-use host keys |
 | `console.py` | Console event store and the `logging` handler that feeds it |
-| `theme.py`, `style_tokens.py`, `graph_display.py`, `dither_fonts.py`, `brand_*.py` | Themes, design tokens, display-only plot helpers (retro steps, tick lists, band drawing), fonts, BRAND branding |
+| `theme.py`, `style_tokens.py`, `graph_display.py`, `dither_fonts.py`, `branding.py` | Themes, design tokens, display-only plot helpers (retro steps, tick lists, band drawing), fonts, the optional brand-plugin hook |
 | `automation.py`, `measurement_profiles.py`, `update_checker.py`, `recording_dump.py` | Automation files, measurement profiles, release check, failed-recording dumps |
 
 Core modules that import Qt do so for a reason stated in their docstring

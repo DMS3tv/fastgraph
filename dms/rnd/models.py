@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import numpy as np
 
-from dms.brand_brand import NON_BRAND_DEFAULT_COLORS as DEFAULT_COLORS
 from dms.processing import DEFAULT_SMOOTHING, VariationBand, percentile_band
 from dms.session import SessionData
+from dms.style_tokens import DEFAULT_TRACE_COLORS as DEFAULT_COLORS
 
 SCHEMA_VERSION = 1
 

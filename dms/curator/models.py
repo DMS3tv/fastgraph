@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from dms import brand_brand
+from dms import branding
 from dms.processing import DEFAULT_SMOOTHING
 
 if TYPE_CHECKING:
@@ -79,16 +79,22 @@ class PreferenceBounds:
     lower_path: Path | None = None
 
 
+def poster_default(key: str) -> str:
+    """The brand's default text for one poster field, or "" without a brand."""
+    brand = branding.active()
+    return brand.poster_defaults.get(key, "") if brand is not None else ""
+
+
 @dataclass
 class ExportText:
     title: str = "Curator"
     fixture: str = ""
     hrtf_note: str = "Test Fixture"
     notes: str = ""
-    brand_footer_left_1: str = brand_brand.FOOTER_LEFT_1_DEFAULT
-    brand_footer_left_2: str = brand_brand.FOOTER_LEFT_2_DEFAULT
-    brand_legend_bounds_label: str = brand_brand.LEGEND_BOUNDS_LABEL_DEFAULT
-    brand_legend_variation_label: str = brand_brand.LEGEND_VARIATION_LABEL_DEFAULT
+    poster_footer_1: str = field(default_factory=lambda: poster_default("footer1"))
+    poster_footer_2: str = field(default_factory=lambda: poster_default("footer2"))
+    poster_legend_bounds: str = field(default_factory=lambda: poster_default("legend_bounds"))
+    poster_legend_variation: str = field(default_factory=lambda: poster_default("legend_variation"))
 
 
 @dataclass
@@ -101,5 +107,5 @@ class GraphState:
     aspect_locked_25db: bool = True
     smoothing_fraction: int = DEFAULT_SMOOTHING
     show_layer_names: bool = True
-    brand_clean_slate: bool = False
+    poster_clean_slate: bool = False
     export_text: ExportText = field(default_factory=ExportText)

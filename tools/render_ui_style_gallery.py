@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from dms import branding
 from dms.dither_fonts import configure_dither_typography
 from dms.style_tokens import mode_tokens
 from dms.theme import application_stylesheet, brand_application_stylesheet
@@ -175,18 +176,16 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     app = QApplication.instance() or QApplication([])
-    for mode in (
-        "dark",
-        "light",
-        "fastgraph95",
-        "fastgraph95_dark",
-        "hackerman95",
-        "dither",
-        "brand",
-    ):
+    brand = branding.active()
+    modes = ["dark", "light", "fastgraph95", "fastgraph95_dark", "hackerman95", "dither"]
+    if brand is not None:
+        modes.append("brand")
+    for mode in modes:
         app.setProperty("fastgraphVisualMode", mode)
         app.setStyleSheet(
-            brand_application_stylesheet() if mode == "brand" else application_stylesheet(mode)
+            brand_application_stylesheet(brand)
+            if brand is not None and mode == "brand"
+            else application_stylesheet(mode)
         )
         gallery = build_gallery(mode)
         configure_dither_typography(app, mode_tokens(mode).flat_controls)

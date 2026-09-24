@@ -29,9 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from dms import brand_brand
+from dms import branding
 from dms.curator.export_image import export_graph_image
-from dms.curator.export_brand import draw_brand_poster, brand_export_warnings
 from dms.curator.metadata import automatic_export_values, metadata_has_identity
 from dms.curator.models import CurveData, ExportText, GraphState, LayerState, PreferenceBounds
 from dms.curator.parser import load_preference_bounds, parse_measurement_txt
@@ -42,14 +41,12 @@ from dms.curator.transforms import (
     normalization_offset_at_1khz_with_warning,
 )
 from dms.hrtf import HRTFCurve
-from dms.brand_fonts import brand_font_status
 from dms.processing import DEFAULT_SMOOTHING
 from dms.style_tokens import THEME_DEFINITIONS
 from dms.theme import (
     DARK,
     colors_for,
     ensure_graph_color,
-    theme_colors,
     theme_trace_palette,
 )
 from dms.ui.curator_graph_widget import (
@@ -76,8 +73,7 @@ DEFAULT_Y_MIN = -17.5
 DEFAULT_Y_MAX = 17.5
 SMOOTHING_OPTIONS = [48, 24, 12, 6, 3]
 _STANDARD_SWATCH_PREFIX_SIZE = max(
-    len(brand_brand.TRACE_PALETTE),
-    *(len(definition.tokens.trace_palette) for definition in THEME_DEFINITIONS),
+    len(definition.tokens.trace_palette) for definition in THEME_DEFINITIONS
 )
 _DEFAULT_STANDARD_SWATCHES = tuple(
     QColor(QColorDialog.standardColor(index)) for index in range(_STANDARD_SWATCH_PREFIX_SIZE)
@@ -202,8 +198,8 @@ class LayerListRow(QWidget):
         layout.addLayout(controls)
 
 
-class BrandPosterPreview(QWidget):
-    """Scaled preview that uses the final BRAND export renderer."""
+class PosterPreview(QWidget):
+    """Scaled preview that uses the brand's final poster renderer."""
 
     def __init__(self, state: GraphState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -214,7 +210,9 @@ class BrandPosterPreview(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         try:
-            draw_brand_poster(painter, self._state, (self.width(), self.height()))
+            brand = branding.active()
+            if brand is not None:
+                brand.draw_poster(painter, self._state, (self.width(), self.height()))
         finally:
             painter.end()
 
@@ -229,8 +227,8 @@ class GraphStage(QWidget):
             ratio=16.0 / 9.0,
         )
         self._graph_frame.setParent(self)
-        self._brand_preview = BrandPosterPreview(state, self)
-        self._brand_preview.hide()
+        self._poster_preview = PosterPreview(state, self)
+        self._poster_preview.hide()
         self._brand_mode = False
         self._on_text_changed = on_text_changed
 
@@ -261,7 +259,7 @@ class GraphStage(QWidget):
     def set_brand_mode(self, enabled: bool) -> None:
         self._brand_mode = bool(enabled)
         self._graph_frame.setVisible(not self._brand_mode)
-        self._brand_preview.setVisible(self._brand_mode)
+        self._poster_preview.setVisible(self._brand_mode)
         if enabled:
             self.title_input.setPlaceholderText("FREQUENCY RESPONSE & VARIATION")
             self.fixture_input.setPlaceholderText("MODEL | ANC ON | STANDARD | BLUETOOTH")
@@ -274,11 +272,11 @@ class GraphStage(QWidget):
             self.fixture_input.setToolTip(self._default_tooltips["fixture"])
             self.hrtf_note_input.setPlaceholderText(self._default_placeholders["hrtf_note"])
             self.hrtf_note_input.setToolTip(self._default_tooltips["hrtf_note"])
-        self._brand_preview.update()
+        self._poster_preview.update()
 
     def refresh_preview(self) -> None:
         if self._brand_mode:
-            self._brand_preview.update()
+            self._poster_preview.update()
 
     def start_wipe(
         self,
@@ -290,7 +288,7 @@ class GraphStage(QWidget):
     ) -> None:
         if self._brand_mode:
             self._graph.wipeProgress = 1.0
-            self._brand_preview.update()
+            self._poster_preview.update()
             return
         self._graph.start_data_wipe(
             entering_layer_ids=entering_layer_ids,
@@ -315,7 +313,7 @@ class GraphStage(QWidget):
         graph_left = (width - graph_width) // 2
         graph_top = 92
         self._graph_frame.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
-        self._brand_preview.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
+        self._poster_preview.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
 
         left = graph_left + 36
         top_width = min(520, max(260, graph_width - 72))
@@ -342,9 +340,7 @@ class CuratorWidget(QWidget):
         self._primary_metadata_layer_id: str | None = None
         self._applying_auto_text = False
         self._state = GraphState()
-        self._state.background = (
-            brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
-        )
+        self._state.background = colors_for(theme, brand_mode=self._brand_mode)["plot_bg"]
         self._selected_layer_id: str | None = None
         self._hrtf_options: list[tuple[str, str]] = []
         self._last_import_warnings: list[str] = []
@@ -371,12 +367,10 @@ class CuratorWidget(QWidget):
         self._theme = theme
         self._brand_mode = bool(brand_mode)
         if not self._custom_background:
-            self._state.background = (
-                brand_brand.BACKGROUND if self._brand_mode else theme_colors(theme)["plot_bg"]
-            )
+            self._state.background = colors_for(theme, brand_mode=self._brand_mode)["plot_bg"]
         self._graph.apply_theme(theme, brand_mode=self._brand_mode)
         self._export_btn.setText("Export 4K PNG..." if self._brand_mode else "Export 1080p PNG...")
-        self._brand_poster_section.setVisible(self._brand_mode)
+        self._poster_section.setVisible(self._brand_mode)
         self._graph_stage.set_brand_mode(self._brand_mode)
         if self._brand_mode:
             self._apply_auto_export_text()
@@ -384,9 +378,7 @@ class CuratorWidget(QWidget):
 
     def reset_background_to_theme(self) -> None:
         self._custom_background = False
-        self._state.background = (
-            brand_brand.BACKGROUND if self._brand_mode else theme_colors(self._theme)["plot_bg"]
-        )
+        self._state.background = colors_for(self._theme, brand_mode=self._brand_mode)["plot_bg"]
         self._redraw()
         logger.info(
             "Graph background reset to theme",
@@ -626,10 +618,10 @@ class CuratorWidget(QWidget):
             "title": self._graph_stage.title_input,
             "fixture": self._graph_stage.fixture_input,
             "footer": self._graph_stage.hrtf_note_input,
-            "footer1": self._brand_footer1_edit,
-            "footer2": self._brand_footer2_edit,
-            "legend_bounds": self._brand_legend_bounds_edit,
-            "legend_variation": self._brand_legend_variation_edit,
+            "footer1": self._poster_footer1_edit,
+            "footer2": self._poster_footer2_edit,
+            "legend_bounds": self._poster_legend_bounds_edit,
+            "legend_variation": self._poster_legend_variation_edit,
         }
         if field not in widgets:
             raise ValueError(
@@ -639,7 +631,7 @@ class CuratorWidget(QWidget):
         self._manual_export_fields.add(field)
         widgets[field].setText(value)
         if field in ("footer1", "footer2", "legend_bounds", "legend_variation"):
-            self._on_brand_text_changed()
+            self._on_poster_text_changed()
         else:
             self._on_export_text_changed()
         self._set_export_field_state(field)
@@ -663,15 +655,16 @@ class CuratorWidget(QWidget):
         if output.suffix.lower() != ".png":
             output = output.with_suffix(".png")
         self._on_export_text_changed()
-        if self._brand_mode:
-            warnings = brand_export_warnings(self._state)
+        brand = branding.active() if self._brand_mode else None
+        if brand is not None:
+            warnings = brand.export_warnings(self._state, brand.poster_size)
             if warnings:
                 logger.warning(
-                    "BRAND export text is below the preferred readable size",
+                    f"{brand.short_label} export text is below the preferred readable size",
                     extra={"source": "curator", "details": {"warnings": warnings}},
                 )
-                self._show_status("BRAND export has a text-size warning.")
-            export_graph_image(self._state, output, size=(3840, 2160), brand_mode=True)
+                self._show_status(f"{brand.short_label} export has a text-size warning.")
+            export_graph_image(self._state, output, size=brand.poster_size, brand_mode=True)
         else:
             export_graph_image(self._state, output, size=(1920, 1080), theme=self._theme)
         self._show_status(f"Exported Curator PNG: {output}")
@@ -739,7 +732,7 @@ class CuratorWidget(QWidget):
 
         self._build_data_box(layout)
         self._build_view_section(layout)
-        self._build_brand_poster_section(layout)
+        self._build_poster_section(layout)
         return panel
 
     def _build_data_box(self, layout: QVBoxLayout) -> None:
@@ -825,44 +818,51 @@ class CuratorWidget(QWidget):
         )
         layout.addWidget(self._view_section, 0)
 
-    def _build_brand_poster_section(self, layout: QVBoxLayout) -> None:
-        self._brand_poster_box = QGroupBox("BRAND Poster Text")
-        self._brand_poster_box.setObjectName("brandPosterBox")
-        brand_form = QFormLayout(self._brand_poster_box)
-        self._brand_form = brand_form
-        brand_form.setContentsMargins(12, 12, 12, 12)
-        brand_form.setHorizontalSpacing(12)
-        brand_form.setVerticalSpacing(8)
-        brand_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        brand_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-        brand_form.setFormAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        brand_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._brand_metadata_source_combo = QComboBox()
-        self._brand_metadata_source_combo.currentIndexChanged.connect(
+    def _build_poster_section(self, layout: QVBoxLayout) -> None:
+        brand = branding.active()
+        short_label = brand.short_label if brand is not None else ""
+        poster_title = f"{short_label} Poster Text".strip()
+        self._poster_box = QGroupBox(poster_title)
+        self._poster_box.setObjectName("posterBox")
+        poster_form = QFormLayout(self._poster_box)
+        self._poster_form = poster_form
+        poster_form.setContentsMargins(12, 12, 12, 12)
+        poster_form.setHorizontalSpacing(12)
+        poster_form.setVerticalSpacing(8)
+        poster_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        poster_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        poster_form.setFormAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        poster_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._poster_metadata_source_combo = QComboBox()
+        self._poster_metadata_source_combo.currentIndexChanged.connect(
             self._on_metadata_source_changed
         )
-        brand_form.addRow("Metadata source", self._brand_metadata_source_combo)
+        poster_form.addRow("Metadata source", self._poster_metadata_source_combo)
 
-        self._brand_fill_metadata_btn = QPushButton("Fill from Metadata")
-        self._brand_fill_metadata_btn.clicked.connect(self._fill_from_metadata)
-        brand_form.addRow("Automatic text", self._brand_fill_metadata_btn)
+        self._poster_fill_metadata_btn = QPushButton("Fill from Metadata")
+        self._poster_fill_metadata_btn.clicked.connect(self._fill_from_metadata)
+        poster_form.addRow("Automatic text", self._poster_fill_metadata_btn)
 
-        self._brand_clean_slate_enabled = ToggleSwitch()
-        self._brand_clean_slate_enabled.stateChanged.connect(self._on_brand_clean_slate_changed)
-        self._brand_clean_slate_enabled.setToolTip(
-            "Hide all BRAND poster text and guide boxes. Keep the graph, BRAND logo, "
+        self._poster_clean_slate_enabled = ToggleSwitch()
+        self._poster_clean_slate_enabled.stateChanged.connect(self._on_poster_clean_slate_changed)
+        self._poster_clean_slate_enabled.setToolTip(
+            f"Hide all {short_label} poster text and guide boxes. Keep the graph, "
+            f"{short_label} logo, "
             "and optional layer names."
         )
-        brand_form.addRow("Clean Slate", self._brand_clean_slate_enabled)
+        poster_form.addRow("Clean Slate", self._poster_clean_slate_enabled)
 
-        self._brand_metadata_status = QLabel("Field status: All fields are automatic.")
-        self._brand_metadata_status.setObjectName("brandMetadataStatus")
-        self._brand_metadata_status.setWordWrap(False)
-        self._brand_metadata_status.setProperty("tone", "muted")
-        brand_form.addRow(self._brand_metadata_status)
+        self._poster_metadata_status = QLabel("Field status: All fields are automatic.")
+        self._poster_metadata_status.setObjectName("posterMetadataStatus")
+        self._poster_metadata_status.setWordWrap(False)
+        self._poster_metadata_status.setProperty("tone", "muted")
+        poster_form.addRow(self._poster_metadata_status)
 
-        status = brand_font_status()
-        if status.uses_fallback:
+        status = brand.font_status() if brand is not None else None
+        uses_fallback = bool(status is not None and status.missing_families)
+        if status is None:
+            font_text = ""
+        elif uses_fallback:
             missing = ", ".join(status.missing_families)
             font_text = (
                 f"Missing fonts: {missing}. Fallbacks: {status.heading_family} headings, "
@@ -870,35 +870,35 @@ class CuratorWidget(QWidget):
             )
         else:
             font_text = f"Fonts: {status.heading_family} headings, {status.mono_family} body text."
-        self._brand_font_status = QLabel(font_text)
-        self._brand_font_status.setObjectName("brandFontStatus")
-        self._brand_font_status.setWordWrap(True)
-        self._brand_font_status.setMinimumHeight(30 if not status.uses_fallback else 48)
-        self._brand_font_status.setProperty(
+        self._poster_font_status = QLabel(font_text)
+        self._poster_font_status.setObjectName("posterFontStatus")
+        self._poster_font_status.setWordWrap(True)
+        self._poster_font_status.setMinimumHeight(30 if not uses_fallback else 48)
+        self._poster_font_status.setProperty(
             "tone",
-            "warning" if status.uses_fallback else "muted",
+            "warning" if uses_fallback else "muted",
         )
-        brand_form.addRow(self._brand_font_status)
+        poster_form.addRow(self._poster_font_status)
 
-        self._brand_footer1_edit = QLineEdit(self._state.export_text.brand_footer_left_1)
-        self._brand_footer2_edit = QLineEdit(self._state.export_text.brand_footer_left_2)
-        self._brand_legend_bounds_edit = QLineEdit(self._state.export_text.brand_legend_bounds_label)
-        self._brand_legend_variation_edit = QLineEdit(
-            self._state.export_text.brand_legend_variation_label
+        self._poster_footer1_edit = QLineEdit(self._state.export_text.poster_footer_1)
+        self._poster_footer2_edit = QLineEdit(self._state.export_text.poster_footer_2)
+        self._poster_legend_bounds_edit = QLineEdit(self._state.export_text.poster_legend_bounds)
+        self._poster_legend_variation_edit = QLineEdit(
+            self._state.export_text.poster_legend_variation
         )
-        self._brand_footer1_edit.textChanged.connect(self._on_brand_text_changed)
-        self._brand_footer2_edit.textChanged.connect(self._on_brand_text_changed)
-        self._brand_legend_bounds_edit.textChanged.connect(self._on_brand_text_changed)
-        self._brand_legend_variation_edit.textChanged.connect(self._on_brand_text_changed)
-        brand_form.addRow("Footer line 1", self._brand_footer1_edit)
-        brand_form.addRow("Footer line 2", self._brand_footer2_edit)
-        brand_form.addRow("Legend: bounds", self._brand_legend_bounds_edit)
-        brand_form.addRow("Legend: variation", self._brand_legend_variation_edit)
-        self._brand_poster_section, self._brand_poster_section_toggle = (
-            self._make_collapsible_section("BRAND Poster Text", self._brand_poster_box)
+        self._poster_footer1_edit.textChanged.connect(self._on_poster_text_changed)
+        self._poster_footer2_edit.textChanged.connect(self._on_poster_text_changed)
+        self._poster_legend_bounds_edit.textChanged.connect(self._on_poster_text_changed)
+        self._poster_legend_variation_edit.textChanged.connect(self._on_poster_text_changed)
+        poster_form.addRow("Footer line 1", self._poster_footer1_edit)
+        poster_form.addRow("Footer line 2", self._poster_footer2_edit)
+        poster_form.addRow("Legend: bounds", self._poster_legend_bounds_edit)
+        poster_form.addRow("Legend: variation", self._poster_legend_variation_edit)
+        self._poster_section, self._poster_section_toggle = self._make_collapsible_section(
+            poster_title, self._poster_box
         )
-        self._brand_poster_section.setVisible(False)
-        layout.addWidget(self._brand_poster_section, 0)
+        self._poster_section.setVisible(False)
+        layout.addWidget(self._poster_section, 0)
 
     def _make_collapsible_section(
         self,
@@ -936,10 +936,10 @@ class CuratorWidget(QWidget):
             "title": self._graph_stage.title_input,
             "fixture": self._graph_stage.fixture_input,
             "footer": self._graph_stage.hrtf_note_input,
-            "footer1": self._brand_footer1_edit,
-            "footer2": self._brand_footer2_edit,
-            "legend_bounds": self._brand_legend_bounds_edit,
-            "legend_variation": self._brand_legend_variation_edit,
+            "footer1": self._poster_footer1_edit,
+            "footer2": self._poster_footer2_edit,
+            "legend_bounds": self._poster_legend_bounds_edit,
+            "legend_variation": self._poster_legend_variation_edit,
         }
         for field, editor in self._export_field_widgets.items():
             editor.textEdited.connect(
@@ -979,7 +979,7 @@ class CuratorWidget(QWidget):
     def _fill_from_metadata(self) -> None:
         self._manual_export_fields.clear()
         self._apply_auto_export_text()
-        self._show_status("BRAND poster text filled from metadata.")
+        self._show_status("Poster text filled from metadata.")
 
     def _set_export_field_state(self, field: str) -> None:
         editor = self._export_field_widgets.get(field)
@@ -1007,13 +1007,13 @@ class CuratorWidget(QWidget):
         manual = [labels[field] for field in labels if field in self._manual_export_fields]
         if manual:
             automatic_count = len(labels) - len(manual)
-            self._brand_metadata_status.setText(
+            self._poster_metadata_status.setText(
                 f"Field status: {len(manual)} manual, {automatic_count} automatic."
             )
-            self._brand_metadata_status.setToolTip("Manual fields: " + ", ".join(manual) + ".")
+            self._poster_metadata_status.setToolTip("Manual fields: " + ", ".join(manual) + ".")
         else:
-            self._brand_metadata_status.setText("Field status: All fields are automatic.")
-            self._brand_metadata_status.setToolTip(
+            self._poster_metadata_status.setText("Field status: All fields are automatic.")
+            self._poster_metadata_status.setToolTip(
                 "Each field updates from the selected metadata source."
             )
         for field in self._export_field_widgets:
@@ -1031,27 +1031,27 @@ class CuratorWidget(QWidget):
         return layer
 
     def _refresh_metadata_source_combo(self) -> None:
-        if not hasattr(self, "_brand_metadata_source_combo"):
+        if not hasattr(self, "_poster_metadata_source_combo"):
             return
         primary = self._primary_metadata_layer()
-        self._brand_metadata_source_combo.blockSignals(True)
-        self._brand_metadata_source_combo.clear()
+        self._poster_metadata_source_combo.blockSignals(True)
+        self._poster_metadata_source_combo.clear()
         if not self._state.layers:
-            self._brand_metadata_source_combo.addItem("No layers", "")
-            self._brand_metadata_source_combo.setEnabled(False)
+            self._poster_metadata_source_combo.addItem("No layers", "")
+            self._poster_metadata_source_combo.setEnabled(False)
         else:
-            self._brand_metadata_source_combo.setEnabled(True)
+            self._poster_metadata_source_combo.setEnabled(True)
             for number, layer in enumerate(self._state.layers, 1):
-                self._brand_metadata_source_combo.addItem(
+                self._poster_metadata_source_combo.addItem(
                     f"Layer {number}: {layer.name}",
                     layer.id,
                 )
-            index = self._brand_metadata_source_combo.findData(primary.id if primary else "")
-            self._brand_metadata_source_combo.setCurrentIndex(max(0, index))
-        self._brand_metadata_source_combo.blockSignals(False)
+            index = self._poster_metadata_source_combo.findData(primary.id if primary else "")
+            self._poster_metadata_source_combo.setCurrentIndex(max(0, index))
+        self._poster_metadata_source_combo.blockSignals(False)
 
     def _on_metadata_source_changed(self, _index: int) -> None:
-        layer_id = str(self._brand_metadata_source_combo.currentData() or "")
+        layer_id = str(self._poster_metadata_source_combo.currentData() or "")
         self._primary_metadata_layer_id = layer_id or None
         self._apply_auto_export_text()
 
@@ -1073,7 +1073,7 @@ class CuratorWidget(QWidget):
                 if editor.text() != value:
                     editor.setText(value)
             self._on_export_text_changed()
-            self._on_brand_text_changed()
+            self._on_poster_text_changed()
         finally:
             self._applying_auto_text = False
         self._update_metadata_status()
@@ -1135,10 +1135,10 @@ class CuratorWidget(QWidget):
         self._show_names_enabled.blockSignals(True)
         self._show_names_enabled.setChecked(self._state.show_layer_names)
         self._show_names_enabled.blockSignals(False)
-        self._brand_clean_slate_enabled.blockSignals(True)
-        self._brand_clean_slate_enabled.setChecked(self._state.brand_clean_slate)
-        self._brand_clean_slate_enabled.blockSignals(False)
-        self._sync_brand_text_controls()
+        self._poster_clean_slate_enabled.blockSignals(True)
+        self._poster_clean_slate_enabled.setChecked(self._state.poster_clean_slate)
+        self._poster_clean_slate_enabled.blockSignals(False)
+        self._sync_poster_text_controls()
         self._sync_combine_button()
         self._refresh_metadata_source_combo()
         self._restore_curator_scroll_positions(layer_scroll, panel_scroll)
@@ -1428,9 +1428,10 @@ class CuratorWidget(QWidget):
         layer = self._layer_by_id(layer_id)
         if layer is None:
             return
-        if self._brand_mode:
+        brand = branding.active() if self._brand_mode else None
+        if brand is not None:
             menu = QMenu(self)
-            for hex_color in brand_brand.brand_menu_colors(layer.color):
+            for hex_color in brand.menu_colors(layer.color):
                 pixmap = QPixmap(14, 14)
                 pixmap.fill(QColor(hex_color))
                 label = hex_color
@@ -1631,21 +1632,21 @@ class CuratorWidget(QWidget):
             extra={"source": "curator", "details": {"visible": self._state.show_layer_names}},
         )
 
-    def _on_brand_clean_slate_changed(self, _state: int) -> None:
-        self._state.brand_clean_slate = self._brand_clean_slate_enabled.isChecked()
-        self._sync_brand_text_controls()
+    def _on_poster_clean_slate_changed(self, _state: int) -> None:
+        self._state.poster_clean_slate = self._poster_clean_slate_enabled.isChecked()
+        self._sync_poster_text_controls()
         self._redraw()
         logger.info(
-            "BRAND clean slate changed",
-            extra={"source": "curator", "details": {"enabled": self._state.brand_clean_slate}},
+            "Poster clean slate changed",
+            extra={"source": "curator", "details": {"enabled": self._state.poster_clean_slate}},
         )
 
-    def _sync_brand_text_controls(self) -> None:
-        enabled = not self._state.brand_clean_slate
+    def _sync_poster_text_controls(self) -> None:
+        enabled = not self._state.poster_clean_slate
         for editor in self._export_field_widgets.values():
             editor.setEnabled(enabled)
-        self._brand_metadata_source_combo.setEnabled(enabled and bool(self._state.layers))
-        self._brand_fill_metadata_btn.setEnabled(enabled)
+        self._poster_metadata_source_combo.setEnabled(enabled and bool(self._state.layers))
+        self._poster_fill_metadata_btn.setEnabled(enabled)
 
     def _reset_view(self) -> None:
         self._state.aspect_locked_25db = True
@@ -1691,25 +1692,25 @@ class CuratorWidget(QWidget):
             fixture=self._graph_stage.fixture_input.text(),
             hrtf_note=self._graph_stage.hrtf_note_input.text(),
             notes=previous.notes,
-            brand_footer_left_1=previous.brand_footer_left_1,
-            brand_footer_left_2=previous.brand_footer_left_2,
-            brand_legend_bounds_label=previous.brand_legend_bounds_label,
-            brand_legend_variation_label=previous.brand_legend_variation_label,
+            poster_footer_1=previous.poster_footer_1,
+            poster_footer_2=previous.poster_footer_2,
+            poster_legend_bounds=previous.poster_legend_bounds,
+            poster_legend_variation=previous.poster_legend_variation,
         )
         if hasattr(self, "_graph_stage"):
             self._graph_stage.refresh_preview()
 
-    def _on_brand_text_changed(self, _value: str = "") -> None:
+    def _on_poster_text_changed(self, _value: str = "") -> None:
         previous = self._state.export_text
         self._state.export_text = ExportText(
             title=previous.title,
             fixture=previous.fixture,
             hrtf_note=previous.hrtf_note,
             notes=previous.notes,
-            brand_footer_left_1=self._brand_footer1_edit.text(),
-            brand_footer_left_2=self._brand_footer2_edit.text(),
-            brand_legend_bounds_label=self._brand_legend_bounds_edit.text(),
-            brand_legend_variation_label=self._brand_legend_variation_edit.text(),
+            poster_footer_1=self._poster_footer1_edit.text(),
+            poster_footer_2=self._poster_footer2_edit.text(),
+            poster_legend_bounds=self._poster_legend_bounds_edit.text(),
+            poster_legend_variation=self._poster_legend_variation_edit.text(),
         )
         if hasattr(self, "_graph_stage"):
             self._graph_stage.refresh_preview()
@@ -1725,12 +1726,13 @@ class CuratorWidget(QWidget):
         )
         if not path:
             return
-        if self._brand_mode:
-            warnings = brand_export_warnings(self._state)
+        brand = branding.active() if self._brand_mode else None
+        if brand is not None:
+            warnings = brand.export_warnings(self._state, brand.poster_size)
             if warnings:
                 QMessageBox.warning(
                     self,
-                    "BRAND Export Text Warning",
+                    f"{brand.short_label} Export Text Warning",
                     "\n".join(warnings),
                 )
         try:

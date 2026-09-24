@@ -1,4 +1,4 @@
-"""Metadata normalization and BRAND poster defaults."""
+"""Metadata normalization and poster text defaults."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from dms import brand_brand
-from dms.curator.models import GraphState, LayerState
+from dms.curator.models import GraphState, LayerState, poster_default
 from dms.curator.transforms import visible_display_layers
 
 FIELD_ALIASES = {
@@ -79,7 +78,7 @@ def automatic_export_values(
     state: GraphState,
     primary_layer: LayerState | None,
 ) -> dict[str, str]:
-    """Build editable BRAND poster values from graph and headphone metadata."""
+    """Build editable poster values from graph and headphone metadata."""
 
     visible = visible_display_layers(state.layers, state.smoothing_fraction)
     kinds = {curve.kind for _layer, curve in visible}
@@ -112,9 +111,8 @@ def automatic_export_values(
     footer_center = ", ".join(part for part in (rig, hrtf_name) if part)
 
     asset_tag = str(metadata.get("asset_tag") or "").strip()
-    footer_left_1 = asset_tag or product or brand_brand.FOOTER_LEFT_1_DEFAULT
+    footer_left_1 = asset_tag or product or poster_default("footer1")
 
-    variation_label = brand_brand.LEGEND_VARIATION_LABEL_DEFAULT
     if has_variation and bool(metadata.get("compensated")):
         variation_label = "Frequency Response + HpTF Variation"
     elif has_variation:
@@ -129,8 +127,8 @@ def automatic_export_values(
         "fixture": " | ".join(detail_parts),
         "footer": footer_center,
         "footer1": footer_left_1,
-        "footer2": brand_brand.FOOTER_LEFT_2_DEFAULT,
-        "legend_bounds": brand_brand.LEGEND_BOUNDS_LABEL_DEFAULT,
+        "footer2": poster_default("footer2"),
+        "legend_bounds": poster_default("legend_bounds"),
         "legend_variation": variation_label,
     }
 

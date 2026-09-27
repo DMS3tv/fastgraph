@@ -683,3 +683,64 @@ def test_import_surfaces_parser_and_normalization_warnings(
     assert "repeated frequency" in shown[0]
     assert "1 kHz" in shown[0]
     assert window.graph_state.layers[0].vertical_offset_db == 0.0
+
+
+def test_present_flag_hides_export_and_poster_ui_and_keeps_the_live_plot(
+    make_curator, qapp, fake_brand
+) -> None:
+    normal = make_curator()
+    assert not normal._present
+    window = make_curator(present=True)
+    window.resize(1400, 900)
+    window.show()
+    window.apply_theme(DARK, brand_mode=True)
+    qapp.processEvents()
+
+    stage = window._graph_stage
+    assert not window._export_btn.isVisible()
+    assert not window._poster_section.isVisible()
+    for widget in (stage.title_input, stage.fixture_input, stage.hrtf_note_input):
+        assert not widget.isVisible()
+    assert stage.graph_frame.isVisible()
+    assert not stage._poster_preview.isVisible()
+    assert stage.graph_frame.y() == 0
+    assert window.panel_layout().indexOf(window._data_box) == 0
+
+
+def test_display_curves_returns_visible_layers_as_drawn(make_curator, qapp) -> None:
+    window = make_curator(present=True)
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    fr = CurveData(kind="fr", freqs=freqs, mag_db=np.array([1.0, 0.0, -1.0]))
+    variation = CurveData(
+        kind="variation",
+        freqs=freqs,
+        p10_db=np.array([-3.0, -3.0, -3.0]),
+        p25_db=np.array([-1.0, -1.0, -1.0]),
+        median_db=np.array([2.0, 2.0, 2.0]),
+        p75_db=np.array([3.0, 3.0, 3.0]),
+        p90_db=np.array([4.0, 4.0, 4.0]),
+    )
+    window.add_curve(fr, "One", normalize=False, animate=False)
+    window.add_curve(variation, "Band", normalize=False, animate=False)
+    window.add_curve(fr, "Hidden", normalize=False, animate=False)
+    window.set_layer_number_visible(3, False)
+
+    curves = window.display_curves()
+
+    assert [name for name, _x, _y in curves] == ["One", "Band"]
+    assert np.allclose(curves[0][1], [2.0, 3.0, 4.0])
+    assert curves[1][2][1] == pytest.approx(2.0, abs=0.5)
+
+
+def test_graph_font_scale_grows_axis_and_legend_text(qapp) -> None:
+    from dms.ui.curator_graph_widget import GraphWidget
+
+    graph = GraphWidget()
+    base = graph.getAxis("left").label.font()
+    graph.set_font_scale(1.5)
+    scaled = graph.getAxis("left").style["tickFont"]
+    assert scaled is not None
+    assert scaled.pointSizeF() == pytest.approx(base.pointSizeF() * 1.5)
+    graph.set_font_scale(1.0)
+    assert graph.getAxis("left").style["tickFont"] is None
+    graph.deleteLater()

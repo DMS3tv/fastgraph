@@ -39,6 +39,7 @@ from dms.curator.transforms import (
     can_combine_layers,
     combine_variation_layers,
     normalization_offset_at_1khz_with_warning,
+    visible_display_layers,
 )
 from dms.hrtf import HRTFCurve
 from dms.processing import DEFAULT_SMOOTHING
@@ -218,8 +219,11 @@ class PosterPreview(QWidget):
 
 
 class GraphStage(QWidget):
-    def __init__(self, graph: GraphWidget, state: GraphState, on_text_changed) -> None:
+    def __init__(
+        self, graph: GraphWidget, state: GraphState, on_text_changed, *, present: bool = False
+    ) -> None:
         super().__init__()
+        self._present = present
         self._graph = graph
         self._rounded_graph = RoundedViewportFrame(graph)
         self._graph_frame = AspectRatioWidget(
@@ -241,6 +245,9 @@ class GraphStage(QWidget):
         self.title_input.setObjectName("viewportTitleInput")
         self.fixture_input.setObjectName("viewportFixtureInput")
         self.hrtf_note_input.setObjectName("viewportFooterInput")
+        if present:
+            for widget in (self.title_input, self.fixture_input, self.hrtf_note_input):
+                widget.hide()
 
         self._default_placeholders = {
             "title": self.title_input.placeholderText(),
@@ -257,7 +264,8 @@ class GraphStage(QWidget):
         return self._graph_frame
 
     def set_brand_mode(self, enabled: bool) -> None:
-        self._brand_mode = bool(enabled)
+        # Present mode keeps the live plot; brand colours still apply to it.
+        self._brand_mode = bool(enabled) and not self._present
         self._graph_frame.setVisible(not self._brand_mode)
         self._poster_preview.setVisible(self._brand_mode)
         if enabled:
@@ -305,13 +313,13 @@ class GraphStage(QWidget):
     def resizeEvent(self, event) -> None:
         width = self.width()
         height = self.height()
-        graph_height = max(240, height - 104)
+        graph_top, reserve = (0, 0) if self._present else (92, 104)
+        graph_height = max(240, height - reserve)
         graph_width = min(width, int(round(graph_height * (16.0 / 9.0))))
         if graph_width > width:
             graph_width = width
             graph_height = int(round(graph_width / (16.0 / 9.0)))
         graph_left = (width - graph_width) // 2
-        graph_top = 92
         self._graph_frame.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
         self._poster_preview.setGeometry(QRect(graph_left, graph_top, graph_width, graph_height))
 
@@ -331,8 +339,10 @@ class CuratorWidget(QWidget):
         parent: QWidget | None = None,
         *,
         brand_mode: bool = False,
+        present: bool = False,
     ) -> None:
         super().__init__(parent)
+        self._present = bool(present)
         self._theme = theme
         self._brand_mode = bool(brand_mode)
         self._custom_background = False
@@ -357,6 +367,20 @@ class CuratorWidget(QWidget):
     def graph_state(self) -> GraphState:
         return self._state
 
+    def panel_layout(self) -> QVBoxLayout:
+        return self._panel_layout
+
+    def display_curves(self) -> list[tuple[str, np.ndarray, np.ndarray]]:
+        """Visible layers as drawn: (name, log10 Hz, dB), the median for variations."""
+        curves = []
+        for layer, curve in visible_display_layers(
+            self._state.layers, self._state.smoothing_fraction
+        ):
+            values = curve.mag_db if curve.kind == "fr" else curve.median_db
+            if values is not None:
+                curves.append((layer.name, np.log10(curve.freqs), np.asarray(values)))
+        return curves
+
     def _show_status(self, message: str, severity: str = "INFO") -> None:
         logger.log(logging.getLevelName(severity), message, extra={"source": "curator"})
         window = self.window()
@@ -370,7 +394,7 @@ class CuratorWidget(QWidget):
             self._state.background = colors_for(theme, brand_mode=self._brand_mode)["plot_bg"]
         self._graph.apply_theme(theme, brand_mode=self._brand_mode)
         self._export_btn.setText("Export 4K PNG..." if self._brand_mode else "Export 1080p PNG...")
-        self._poster_section.setVisible(self._brand_mode)
+        self._poster_section.setVisible(self._brand_mode and not self._present)
         self._graph_stage.set_brand_mode(self._brand_mode)
         if self._brand_mode:
             self._apply_auto_export_text()
@@ -704,7 +728,9 @@ class CuratorWidget(QWidget):
         self._splitter = splitter
 
         self._graph = GraphWidget()
-        self._graph_stage = GraphStage(self._graph, self._state, self._on_export_text_changed)
+        self._graph_stage = GraphStage(
+            self._graph, self._state, self._on_export_text_changed, present=self._present
+        )
         self._graph_stage.setProperty("surfaceLevel", "viewport")
         self._graph_frame = self._graph_stage.graph_frame
         self._graph_frame.setMinimumHeight(430)
@@ -731,6 +757,7 @@ class CuratorWidget(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
+        self._panel_layout = layout
 
         self._build_data_box(layout)
         self._build_view_section(layout)
@@ -814,6 +841,8 @@ class CuratorWidget(QWidget):
         self._export_btn.setObjectName("exportButton")
         self._export_btn.clicked.connect(self._choose_export_path)
         view_form.addRow("Export", self._export_btn)
+        if self._present:
+            view_form.setRowVisible(self._export_btn, False)
         self._view_section, self._view_section_toggle = self._make_collapsible_section(
             "View",
             view_box,

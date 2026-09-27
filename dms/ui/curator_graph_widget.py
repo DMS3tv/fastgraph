@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, pyqtProperty
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import QWidget
 
 from dms.curator.export_image import aligned_bounds
@@ -102,6 +102,7 @@ class GraphWidget(LockedPlotWidget):
         self._items: list[object] = []
         self._state: GraphState | None = None
         self._wipe_progress = 1.0
+        self._font_scale = 1.0
         self._entering_layer_ids: set[str] = set()
         self._entering_bounds = False
         self._exiting_layers: list[LayerSnapshot] = []
@@ -119,6 +120,26 @@ class GraphWidget(LockedPlotWidget):
             [[(np.log10(freq), label) for freq, label in FREQUENCY_TICKS]]
         )
         self._apply_x_range()
+        self._base_font = QFont(self.getAxis("left").label.font())
+
+    def set_font_scale(self, scale: float) -> None:
+        """Scale axis tick, axis label and legend text (1.0 restores the defaults)."""
+        self._font_scale = float(scale)
+        font = self._scaled_font()
+        for name in ("bottom", "left"):
+            axis = self.getAxis(name)
+            axis.setStyle(tickFont=font if self._font_scale != 1.0 else None)
+            axis.label.setFont(font)
+            axis.setLabel(axis.labelText, axis.labelUnits)
+        self._render()
+
+    def _scaled_font(self) -> QFont:
+        font = QFont(self._base_font)
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(font.pointSizeF() * self._font_scale)
+        else:
+            font.setPixelSize(round(font.pixelSize() * self._font_scale))
+        return font
 
     def redraw(self, state: GraphState) -> None:
         self._state = state
@@ -255,6 +276,8 @@ class GraphWidget(LockedPlotWidget):
                 border=pg.mkPen(chip_border),
                 anchor=(1, 0),
             )
+            if self._font_scale != 1.0:
+                item.setFont(self._scaled_font())
             item.setPos(
                 np.log10(18500.0 if column == 0 else 3500.0),
                 state.y_max - row * y_step,

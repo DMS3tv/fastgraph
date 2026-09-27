@@ -98,12 +98,6 @@ def test_panel_scale_and_pen_keys(present) -> None:
     assert present.overlay.crosshair
 
 
-def test_cmd_0_makes_the_graph_frame_1080p(present) -> None:
-    _key(present, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
-    assert not present.curator._controls_scroll.isVisible()
-    assert (present.graph_frame.width(), present.graph_frame.height()) == (1920, 1080)
-
-
 def test_cmd_c_copies_the_graph_to_the_clipboard(present) -> None:
     QApplication.clipboard().clear()
     _key(present, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)

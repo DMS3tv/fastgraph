@@ -1,13 +1,13 @@
 """A standalone Curator view for live presentations.
 
 The Curator graph with a trimmed side panel, an annotation overlay (draw,
-tape, crosshair, laser), keyboard layer control, a 1920x1080 preset and a
-clipboard copy. Nothing here is saved.
+tape, crosshair, laser), keyboard layer control and a clipboard
+copy. Nothing here is saved.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -35,13 +35,12 @@ from dms.ui.modern_button import ModernButton as QPushButton
 from dms.ui.modern_spinbox import ModernDoubleSpinBox, ModernSpinBox
 from dms.ui.toggle_switch import ToggleSwitch
 
-PRESET_SIZE = QSize(1920, 1080)
 MODE_KEYS = {"D": "draw", "T": "tape", "L": "laser", "Esc": "pointer"}
 LEGEND = (
     "D draw   T tape   L laser   Esc pointer\n"
     "⌘Z undo   ⇧⌘Z clear   [ ] pen   C crosshair\n"
     "1–9 layer   H solo   B bounds   N names\n"
-    "F panel   S scale   ⌘0 1080p   ⌘C copy   ⌘O add\n"
+    "F panel   S scale   ⌘C copy   ⌘O add\n"
     "Shift-drag line   Alt-click free tape"
 )
 _EDITORS = (
@@ -120,7 +119,6 @@ class PresentWindow(QMainWindow):
             ("Undo", self.overlay.undo),
             ("Clear", self.overlay.clear),
             ("Copy PNG", self.copy_png),
-            ("1080p", self.preset_1080p),
             ("Hide Panel", self.toggle_panel),
         )
         for index, (text, slot) in enumerate(actions):
@@ -129,7 +127,7 @@ class PresentWindow(QMainWindow):
             grid.addWidget(button, 3 + index // 4, index % 4)
         self._scale_toggle = ToggleSwitch("Scale 1.5×")
         self._scale_toggle.toggled.connect(self._set_font_scale)
-        grid.addWidget(self._scale_toggle, 4, 1, 1, 3)
+        grid.addWidget(self._scale_toggle, 4, 0, 1, 4)
         self.curator.panel_layout().insertWidget(0, box)
         self.set_mode("pointer")
         self.change_pen_width(0)
@@ -170,7 +168,6 @@ class PresentWindow(QMainWindow):
                 "N": self.curator._show_names_enabled.toggle,
                 "F": self.toggle_panel,
                 "S": self._scale_toggle.toggle,
-                "Ctrl+0": self.preset_1080p,
                 "Ctrl+C": self.copy_png,
                 "Ctrl+O": self.curator._choose_import_files,
             }
@@ -245,18 +242,6 @@ class PresentWindow(QMainWindow):
     def toggle_panel(self) -> None:
         scroll = self.curator._controls_scroll
         scroll.setVisible(not scroll.isVisible())
-
-    def preset_1080p(self) -> None:
-        """Hide the panel and size the window so the graph frame is exactly 1920x1080."""
-        self.curator._controls_scroll.hide()
-        if self.isMaximized() or self.isFullScreen():
-            self.showNormal()
-        for _attempt in range(3):
-            QApplication.sendPostedEvents()
-            delta = PRESET_SIZE - self.graph_frame.size()
-            if delta.isNull():
-                return
-            self.resize(self.size() + delta)
 
     def copy_png(self) -> None:
         clipboard = QApplication.clipboard()

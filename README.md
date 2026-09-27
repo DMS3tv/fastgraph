@@ -194,7 +194,6 @@ Drawings, tapes and layers in this window are never saved.
 | B / N | Preference bounds / layer names |
 | F | Hide or show the side panel |
 | S | Presentation text scale 1.0 / 1.5 |
-| Cmd+0 | Hide the panel and size the graph to exactly 1920x1080 |
 | Cmd+C | Copy the graph with its annotations as a PNG |
 | Cmd+O | Add TXT files |
 | Shift-drag / Alt-click | Straight line / place the tape without snapping |

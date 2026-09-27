@@ -164,6 +164,11 @@
 - Diagnostics summaries include the sweep correlation peak, the next-best
   alignment ratio, the mid-band level above noise, and sweep coverage by
   tenth.
+- HRTFs: "5128 IEM Population Average (1690 ears)" band built from 1,690
+  blocked-canal ear curves (HUTUBS, ARI, SONICOM, Sound Sphere 2) moved to
+  the 5128 eardrum with the ISO 11904-1 canal transfer, with a 0.06-octave
+  canal-resonance spread, and carrying P0/P100 extrema columns alongside
+  P10-P90. `tools/build_population_hrtf.py` regenerates it.
 
 ### Notes
 

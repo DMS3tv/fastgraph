@@ -119,3 +119,33 @@ def test_frequency_markers_include_1k_3k_8k_and_10k_weights() -> None:
         assert 8000 not in markers
         assert markers[1000][4] > markers[3000][4]
         assert markers[10000][4] > markers[3000][4]
+
+
+def test_add_variation_band_draws_the_extrema_fill_first(qapp) -> None:
+    import pyqtgraph as pg
+
+    from dms.graph_display import add_variation_band, retro_step_band
+    from dms.processing import VariationBand
+
+    freqs = np.geomspace(20.0, 20000.0, 600)
+    mid = np.sin(np.log(freqs))
+    plain = VariationBand(freqs, mid - 2, mid - 1, mid, mid + 1, mid + 2)
+    wide = plain._replace(p0=mid - 4, p100=mid + 4)
+    style = {"outer_brush": QColor(0, 0, 255, 55), "inner_brush": QColor(0, 0, 255, 95)}
+    plot = pg.PlotWidget()
+
+    def draw(band, **extra):
+        return add_variation_band(plot, band, median_pen=pg.mkPen("w"), **style, **extra)
+
+    brush = QColor(0, 0, 255, 22)
+    assert len(draw(plain, extrema_brush=brush)) == len(draw(plain)) == 7
+    items = draw(wide, extrema_brush=brush)
+    assert len(items) == 10
+    assert isinstance(items[2], pg.FillBetweenItem)
+    assert items[2].brush().color().alpha() == 22
+    np.testing.assert_array_equal(items[0].getData()[1], mid + 4)
+    assert len(draw(wide)) == 7
+
+    stepped = retro_step_band(wide)
+    assert len(stepped.p0) == len(stepped.freqs) == len(stepped.p10)
+    assert retro_step_band(plain).p0 is None

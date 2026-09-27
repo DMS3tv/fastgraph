@@ -140,6 +140,8 @@ class _PlotPane(QWidget):
             outer.setAlpha(50)
             inner = QColor(display_color)
             inner.setAlpha(88)
+            extrema = QColor(outer)
+            extrema.setAlpha(round(outer.alpha() * 0.4))
             self._items.extend(
                 add_variation_band(
                     self.plot,
@@ -147,6 +149,7 @@ class _PlotPane(QWidget):
                     outer_brush=outer,
                     inner_brush=inner,
                     median_pen=pg.mkPen(display_color, width=2.0),
+                    extrema_brush=extrema,
                 )
             )
             _auto_center(self.plot, [(band.freqs, band.p10), (band.freqs, band.p90)])

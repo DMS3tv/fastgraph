@@ -675,10 +675,22 @@ def _draw_variation_band(
     median = curve.median_db
     p75 = curve.p75_db
     p90 = curve.p90_db
+    # Population minimum and maximum, stepped with the percentiles so they align.
+    extrema = (
+        (curve.p0_db, curve.p100_db)
+        if curve.p0_db is not None and curve.p100_db is not None
+        else ()
+    )
     if retro:
-        freqs, p10, p25, median, p75, p90 = retro_step_group(freqs, (p10, p25, median, p75, p90))
+        freqs, p10, p25, median, p75, p90, *extrema_list = retro_step_group(
+            freqs, (p10, p25, median, p75, p90, *extrema)
+        )
+        extrema = tuple(extrema_list)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    if extrema:
+        p0, p100 = extrema
+        _fill_between(painter, rect, freqs, p100, p0, color, 20, y_min, y_max)
     _fill_between(painter, rect, freqs, p90, p10, color, 50, y_min, y_max)
     _fill_between(painter, rect, freqs, p75, p25, color, 85, y_min, y_max)
     painter.setBrush(Qt.BrushStyle.NoBrush)

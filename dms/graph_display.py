@@ -377,20 +377,22 @@ def add_variation_band(
     median_pen,
     median_glow_pen=None,
     plot_curve=None,
+    extrema_brush=None,
 ) -> list:
     """Draw the p10-p90 and p25-p75 fills and the median; return every item added.
 
-    ``plot_curve(freqs, values, pen=...)`` adds one line; it defaults to an
-    antialiased ``plot.plot``.
+    With ``extrema_brush`` and a band that carries P0/P100, the min-max fill
+    is drawn first, behind the others. ``plot_curve(freqs, values, pen=...)``
+    adds one line; it defaults to an antialiased ``plot.plot``.
     """
     if plot_curve is None:
         plot_curve = partial(_plot_line, plot)
     clear = pg.mkPen((0, 0, 0, 0))
     items = []
-    for upper, lower, brush in (
-        (band.p90, band.p10, outer_brush),
-        (band.p75, band.p25, inner_brush),
-    ):
+    fills = [(band.p90, band.p10, outer_brush), (band.p75, band.p25, inner_brush)]
+    if extrema_brush is not None and band.p0 is not None and band.p100 is not None:
+        fills.insert(0, (band.p100, band.p0, extrema_brush))
+    for upper, lower, brush in fills:
         upper_item = plot_curve(band.freqs, upper, pen=clear)
         lower_item = plot_curve(band.freqs, lower, pen=clear)
         fill = pg.FillBetweenItem(upper_item, lower_item, brush=pg.mkBrush(brush))

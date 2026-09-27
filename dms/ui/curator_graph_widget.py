@@ -362,6 +362,10 @@ class GraphWidget(LockedPlotWidget):
         outer.setAlpha(55)
         inner = QColor(qcolor)
         inner.setAlpha(95)
+        extrema = QColor(outer)
+        extrema.setAlpha(round(outer.alpha() * 0.4))
+        if curve.p0_db is not None and curve.p100_db is not None:
+            bands = (*bands, curve.p0_db, curve.p100_db)
         band = VariationBand(*_trim_series_group(curve.freqs, bands, progress))
         if len(band.freqs) < 2:
             return
@@ -374,6 +378,7 @@ class GraphWidget(LockedPlotWidget):
                 outer_brush=outer,
                 inner_brush=inner,
                 median_pen=pg.mkPen(qcolor, width=2.2),
+                extrema_brush=extrema,
             )
         )
 

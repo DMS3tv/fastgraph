@@ -792,6 +792,8 @@ class DualPlotWidget(QWidget):
         )
         median_color = ensure_graph_color(median_base, colors["plot_bg"])
         median_color.setAlpha(_BAND_MEDIAN[3])
+        extrema_color = QColor(outer_color)
+        extrema_color.setAlpha(round(outer_color.alpha() * 0.4))
         self._bot_extra_items.extend(
             add_variation_band(
                 self._bot_plot,
@@ -799,6 +801,7 @@ class DualPlotWidget(QWidget):
                 outer_brush=outer_color,
                 inner_brush=inner_color,
                 median_pen=pg.mkPen(color=median_color, width=1.8),
+                extrema_brush=extrema_color,
             )
         )
         self._auto_center_y(self._bot_plot, [(band.freqs, band.p10), (band.freqs, band.p90)])

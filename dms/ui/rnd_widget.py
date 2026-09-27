@@ -354,6 +354,8 @@ class RnDPlotWidget(QWidget):
         inner.setAlpha(95 if not group.milestone else 118)
         glow = QColor(qcolor)
         glow.setAlpha(58)
+        extrema = QColor(outer)
+        extrema.setAlpha(round(outer.alpha() * 0.4))
         self._items.extend(
             add_variation_band(
                 plot,
@@ -363,6 +365,7 @@ class RnDPlotWidget(QWidget):
                 median_pen=pg.mkPen(qcolor, width=2.2 if not group.milestone else 2.8),
                 median_glow_pen=pg.mkPen(glow, width=7.0),
                 plot_curve=partial(self._plot_curve, plot),
+                extrema_brush=extrema,
             )
         )
         return [(variation.freqs, variation.p10), (variation.freqs, variation.p90)]

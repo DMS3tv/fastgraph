@@ -460,3 +460,41 @@ def test_mismatched_bounds_grids_no_longer_zip_by_index(qapp, tmp_path: Path) ->
     background = image.pixelColor(right, outside)
     band = image.pixelColor(right, inside)
     assert band != background
+
+
+@pytest.mark.parametrize("retro", [False, True])
+def test_export_draws_the_extrema_fill_outside_p10_p90(qapp, retro: bool) -> None:
+    from dataclasses import replace
+
+    from PyQt6.QtGui import QPainter
+
+    freqs = np.geomspace(20.0, 20000.0, 400)
+    flat = np.zeros_like(freqs)
+    plain = CurveData(
+        kind="variation",
+        freqs=freqs,
+        p10_db=flat - 2,
+        p25_db=flat - 1,
+        median_db=flat,
+        p75_db=flat + 1,
+        p90_db=flat + 2,
+    )
+    wide = replace(plain, p0_db=flat - 8, p100_db=flat + 8)
+    rect = QRectF(0, 0, 400, 400)
+
+    def render(curve: CurveData) -> QImage:
+        image = QImage(400, 400, QImage.Format.Format_ARGB32)
+        image.fill(QColor("black"))
+        painter = QPainter(image)
+        export_image_module._draw_curve_data(
+            painter, rect, curve, QColor("white"), -10.0, 10.0, retro=retro
+        )
+        painter.end()
+        return image
+
+    y_outer = int(_y_for_db(rect, 5.0, -10.0, 10.0))
+    y_p90_band = int(_y_for_db(rect, 1.5, -10.0, 10.0))
+    without, with_extrema = render(plain), render(wide)
+    assert without.pixelColor(200, y_outer).red() == 0
+    extrema_level = with_extrema.pixelColor(200, y_outer).red()
+    assert 0 < extrema_level < with_extrema.pixelColor(200, y_p90_band).red()

@@ -12,8 +12,10 @@ fi
 # --name "<App Name>" builds a differently named bundle with its own bundle
 # identifier (com.dms.fastgraph.<slug>), so a development build can live in
 # /Applications beside the released one and keeps its own permissions.
+# --icon <png> picks the square PNG the app icon is made from.
 APP_NAME="${FASTGRAPH_APP_NAME:-FastGraph Beta}"
 BUNDLE_ID="${FASTGRAPH_BUNDLE_ID:-}"
+ICON_SOURCE="$ROOT_DIR/fastgraph icon.png"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name)
@@ -24,8 +26,13 @@ while [[ $# -gt 0 ]]; do
       BUNDLE_ID="${2:?--bundle-id needs a value}"
       shift 2
       ;;
+    --icon)
+      ICON_SOURCE="${2:?--icon needs a value}"
+      [[ "$ICON_SOURCE" == /* ]] || ICON_SOURCE="$ROOT_DIR/$ICON_SOURCE"
+      shift 2
+      ;;
     *)
-      echo "Usage: $0 [--name \"App Name\"] [--bundle-id com.example.id]"
+      echo "Usage: $0 [--name \"App Name\"] [--bundle-id com.example.id] [--icon icon.png]"
       exit 2
       ;;
   esac
@@ -59,7 +66,6 @@ fi
 
 rm -rf build dist
 
-ICON_SOURCE="$ROOT_DIR/fastgraph icon.png"
 ICONSET="$ROOT_DIR/build/FastGraph.iconset"
 MACOS_ICON="$ROOT_DIR/build/FastGraph.icns"
 

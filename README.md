@@ -180,7 +180,8 @@ A clean Curator window for live, screen-recorded presentations: the graph, the
 layer and view controls, and an annotation layer. Open it from the Curator's
 **Present…** button (it copies the current layers), run
 `python main.py --present` (or set `FASTGRAPH_MODE=present`), or build a
-separate app with `FASTGRAPH_MODE=present ./build_macos.sh --name "FastGraph Present"`.
+separate app with
+`FASTGRAPH_MODE=present ./build_macos.sh --name "FastGraph Present" --icon "fastgraph present icon.png"`.
 Drawings, tapes and layers in this window are never saved.
 
 | Key | Action |

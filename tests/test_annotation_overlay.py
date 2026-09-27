@@ -58,15 +58,19 @@ def test_labels():
     assert format_frequency(12500.0) == "12.5 kHz"
 
 
-def test_snap_picks_nearest_curve_sample(qapp):
+def test_snap_picks_nearest_curve_sample_only_when_close(qapp):
     graph = GraphWidget()
+    graph.resize(1000, 600)
     overlay = AnnotationOverlay(graph, curves=lambda: CURVES)
-    x, y = overlay.snap(3.001, 2.0)
+    # Within a few pixels of the curve at +4 dB: snaps onto its sample.
+    x, y = overlay.snap(3.001, 3.7)
     assert y == 4.0
     assert x == LOG_F[np.argmin(np.abs(LOG_F - 3.001))]
-    assert overlay.snap(3.001, -1.0)[1] == -3.0
+    assert overlay.snap(3.001, -2.7)[1] == -3.0
+    # Far from every curve: the point stays where it was clicked.
+    assert overlay.snap(3.001, 12.0) == (3.001, 12.0)
     overlay.curves = lambda: []
-    assert overlay.snap(3.001, 2.0) == (3.001, 2.0)
+    assert overlay.snap(3.001, 3.7) == (3.001, 3.7)
     graph.deleteLater()
 
 

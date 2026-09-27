@@ -22,6 +22,7 @@ Curves = list[tuple[str, np.ndarray, np.ndarray]]
 
 MODES = ("pointer", "draw", "tape", "laser")
 DEFAULT_PEN_COLOR = "#FCBE11"
+SNAP_PX = 14  # tape points snap to a curve only this close on screen
 LASER_FADE_S = 2.0
 _CURSORS = {
     "pointer": Qt.CursorShape.ArrowCursor,
@@ -146,7 +147,11 @@ class AnnotationOverlay(QWidget):
         self.update()
 
     def snap(self, x: float, y: float) -> Point:
-        """Nearest sample of the nearest curve at frequency ``x``."""
+        """Nearest curve sample at frequency ``x`` if it is within SNAP_PX on screen.
+
+        Beyond that the point stays exactly where it was clicked, so a tape can
+        also measure against empty plot space.
+        """
         best: tuple[float, Point] | None = None
         for _name, log_f, db in self.curves():
             if len(log_f) == 0:
@@ -155,7 +160,10 @@ class AnnotationOverlay(QWidget):
             distance = abs(float(db[index]) - y)
             if best is None or distance < best[0]:
                 best = (distance, (float(log_f[index]), float(db[index])))
-        return best[1] if best is not None else (x, y)
+        if best is None:
+            return (x, y)
+        pixels = abs(self.data_to_widget(x, best[1][1]).y() - self.data_to_widget(x, y).y())
+        return best[1] if pixels <= SNAP_PX else (x, y)
 
     def begin_stroke(self, point: Point) -> None:
         self._active = Stroke([point], self.pen_color, self.pen_width)

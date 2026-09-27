@@ -257,3 +257,36 @@ def test_export_all_comp_average_matches_export_average(
 
     comp_name = build_filename(window._session, compensated=True)
     assert (all_dir / comp_name).read_bytes() == (single_dir / "average.txt").read_bytes()
+
+
+def test_export_all_variation_files_carry_extrema_only_when_the_band_has_them(
+    make_main_window,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    window, _events, _triggers, _statuses = _batch_window(
+        make_main_window, tmp_path, _standard_hrtf(tmp_path)
+    )
+    monkeypatch.setattr(measure_io_module.QMessageBox, "information", lambda *_args: None)
+
+    window.measure_io.export_all()
+    raw_var = _data_rows(tmp_path / "DMS Example GRAS RAW VAR.txt")
+    assert raw_var.shape[1] == 8
+    assert np.all(raw_var[:, 6] <= raw_var[:, 1])
+    assert np.all(raw_var[:, 7] >= raw_var[:, 5])
+    with_extrema = raw_var
+
+    original = window.measure.variation_from_curves
+    monkeypatch.setattr(
+        window.measure,
+        "variation_from_curves",
+        lambda *args, **kwargs: original(*args, **kwargs)._replace(p0=None, p100=None),
+    )
+    window.measure_io.export_all()
+    for name in ("RAW VAR", "COMP VAR"):
+        text = (tmp_path / f"DMS Example GRAS {name}.txt").read_text()
+        assert "P0(dB)" not in text
+        assert "* Percentiles: p10/p25/median/p75/p90 across kept measurements" in text
+    raw_var = _data_rows(tmp_path / "DMS Example GRAS RAW VAR.txt")
+    assert raw_var.shape[1] == 6
+    np.testing.assert_array_equal(raw_var, with_extrema[:, :6])

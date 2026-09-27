@@ -1,8 +1,11 @@
+import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
+import dms.export as export_module
+from dms.curator.parser import parse_measurement_txt
 from dms.export import (
     build_filename,
     build_variation_filename,
@@ -241,3 +244,81 @@ def test_exports_match_the_former_writers_byte_for_byte(tmp_path: Path, monkeypa
         "1000.0000\t-2.000000\t-1.000000\t0.000000\t1.000000\t2.000000\n"
         "19999.8765\t0.718282\t1.718282\t2.718282\t3.718282\t4.718282\n"
     )
+
+
+class _FixedDatetime(dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 1, 2, 3, 4, 5)
+
+
+_SIX_COLUMN_EXPORT = """* DMS Fastgraph measurement
+* Rig: GRAS
+* Brand: DMS
+* Model: Example
+* EQ Applied: No
+* ANC/Transparency: Off
+* Form Factor: over-ear
+* Acoustic Type: Open Back
+* Connection: wired analog
+* Export Type: Variation Band
+* Export Date: 2026-01-02 03:04:05
+* Compensated: Yes
+* Variation Sweeps: 5
+* HRTF File: h.txt
+* Smoothing: 1/48 octave
+* Percentiles: p10/p25/median/p75/p90 across kept measurements
+* Normalization: 1 kHz reference offset only (shape preserved)
+* Points: log-spaced
+*
+* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)
+100.0000\t-3.000000\t-2.000000\t0.000000\t2.000000\t3.000000
+1000.0000\t-1.000000\t-0.500000\t1.000000\t2.500000\t4.000000
+"""
+
+
+def _export_band(monkeypatch, path: Path, **extrema) -> str:
+    monkeypatch.setattr(export_module, "datetime", _FixedDatetime)
+    export_variation(
+        freqs=np.array([100.0, 1000.0]),
+        p10_db=np.array([-3.0, -1.0]),
+        p25_db=np.array([-2.0, -0.5]),
+        median_db=np.array([0.0, 1.0]),
+        p75_db=np.array([2.0, 2.5]),
+        p90_db=np.array([3.0, 4.0]),
+        session=SessionData(rig="GRAS", brand="DMS", model="Example"),
+        output_path=path,
+        compensated=True,
+        hrtf=SimpleNamespace(name="h.txt"),
+        n_sweeps=5,
+        smoothing_fraction=48,
+        **extrema,
+    )
+    return path.read_text(encoding="utf-8")
+
+
+def test_export_variation_without_extrema_is_unchanged(monkeypatch, tmp_path: Path) -> None:
+    assert _export_band(monkeypatch, tmp_path / "six.txt") == _SIX_COLUMN_EXPORT
+
+
+def test_export_variation_with_extrema_appends_two_columns(monkeypatch, tmp_path: Path) -> None:
+    six = _export_band(monkeypatch, tmp_path / "six.txt")
+    eight = _export_band(
+        monkeypatch,
+        tmp_path / "eight.txt",
+        p0_db=np.array([-5.0, -2.0]),
+        p100_db=np.array([6.0, 7.0]),
+    )
+    assert "* Percentiles: p0/p10/p25/median/p75/p90/p100 across kept measurements" in eight
+    assert "\tP90(dB)\tP0(dB)\tP100(dB)\n" in eight
+
+    def rows(text: str) -> list[list[str]]:
+        return [line.split("\t") for line in text.splitlines() if not line.startswith("*")]
+
+    assert [row[:6] for row in rows(eight)] == rows(six)
+
+    curve = parse_measurement_txt(tmp_path / "eight.txt")
+    np.testing.assert_array_equal(curve.p0_db, [-5.0, -2.0])
+    np.testing.assert_array_equal(curve.p100_db, [6.0, 7.0])
+    np.testing.assert_array_equal(curve.p90_db, [3.0, 4.0])
+    assert parse_measurement_txt(tmp_path / "six.txt").p0_db is None

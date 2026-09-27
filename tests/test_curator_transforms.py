@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -476,3 +477,46 @@ def test_map_bands_matches_the_former_per_field_code() -> None:
         assert got is getattr(variation, name)
     with pytest.raises(ValueError):
         fr.bands()
+
+
+def test_layer_sweep_count_reads_the_leading_number() -> None:
+    layer = _normal_band_layer(name="x", half_width_db=1.0)
+    layer.curve = replace(layer.curve, metadata={"Variation Sweeps": "749 listener curves"})
+    assert layer_sweep_count(layer) == 749
+    layer.curve = replace(layer.curve, metadata={"Variation Sweeps": "many"})
+    assert layer_sweep_count(layer) is None
+
+
+def _with_extrema(layer: LayerState, low: float, high: float) -> LayerState:
+    curve = layer.curve
+    layer.curve = replace(curve, p0_db=curve.p10_db - low, p100_db=curve.p90_db + high)
+    return layer
+
+
+def test_combine_pools_extrema_as_outermost_min_and_max() -> None:
+    first = _with_extrema(_variation_layer(name="a"), 1.0, 5.0)
+    second = _with_extrema(_variation_layer(name="b", median_shift=2.0), 4.0, 1.0)
+    combined = combine_variation_layers([first, second])
+    freqs = combined.freqs
+    expected = [
+        np.interp(freqs, layer.curve.freqs, getattr(layer.curve, name))
+        for layer in (first, second)
+        for name in ("p0_db", "p100_db")
+    ]
+    np.testing.assert_allclose(combined.p0_db, np.minimum(expected[0], expected[2]))
+    np.testing.assert_allclose(combined.p100_db, np.maximum(expected[1], expected[3]))
+
+    without = combine_variation_layers([first, _variation_layer(name="c")])
+    assert without.p0_db is None and without.p100_db is None
+    np.testing.assert_array_equal(
+        without.p90_db,
+        combine_variation_layers([_variation_layer(name="a"), _variation_layer(name="c")]).p90_db,
+    )
+
+
+def test_map_bands_moves_extrema_but_bands_stays_five_wide() -> None:
+    layer = _with_extrema(_variation_layer(name="a", offset=3.0), 1.0, 1.0)
+    shifted = apply_layer_transform(layer)
+    np.testing.assert_allclose(shifted.p0_db, layer.curve.p0_db + 3.0)
+    np.testing.assert_allclose(shifted.p100_db, layer.curve.p100_db + 3.0)
+    assert len(shifted.bands()) == 5

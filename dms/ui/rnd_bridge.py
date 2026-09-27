@@ -440,19 +440,16 @@ class RndBridge(QObject):
             band = source_variation if source_variation is not None else active_variation
             if active_hrtf is not None and not getattr(active_hrtf, "is_variation", False):
                 correction = active_hrtf.evaluate(band.freqs)
+            shift = correction if correction is not None else 0.0
+            shifted_bands = {
+                f"{name}_db": np.array(values, dtype=float) + shift
+                for name in ("p10", "p25", "median", "p75", "p90", "p0", "p100")
+                if (values := getattr(band, name)) is not None
+            }
             curve = CurveData(
                 kind="variation",
                 freqs=np.array(band.freqs, dtype=float, copy=True),
-                p10_db=np.array(band.p10, dtype=float, copy=True)
-                + (correction if correction is not None else 0.0),
-                p25_db=np.array(band.p25, dtype=float, copy=True)
-                + (correction if correction is not None else 0.0),
-                median_db=np.array(band.median, dtype=float, copy=True)
-                + (correction if correction is not None else 0.0),
-                p75_db=np.array(band.p75, dtype=float, copy=True)
-                + (correction if correction is not None else 0.0),
-                p90_db=np.array(band.p90, dtype=float, copy=True)
-                + (correction if correction is not None else 0.0),
+                **shifted_bands,
                 metadata={
                     **curator_metadata,
                     "Source": "Fastgraph current variation",
@@ -749,6 +746,8 @@ class RndBridge(QObject):
                 median_db=np.array(variation.median, dtype=float, copy=True),
                 p75_db=np.array(variation.p75, dtype=float, copy=True),
                 p90_db=np.array(variation.p90, dtype=float, copy=True),
+                p0_db=None if variation.p0 is None else np.array(variation.p0, dtype=float),
+                p100_db=None if variation.p100 is None else np.array(variation.p100, dtype=float),
                 metadata=group_metadata,
             )
             name = f"{group.name} VAR"
@@ -870,6 +869,8 @@ class RndBridge(QObject):
             median_db=variation.median,
             p75_db=variation.p75,
             p90_db=variation.p90,
+            p0_db=variation.p0,
+            p100_db=variation.p100,
             session=session,
             output_path=path,
             compensated=compensated,

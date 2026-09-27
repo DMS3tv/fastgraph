@@ -405,6 +405,8 @@ class CuratorWidget(QWidget):
             median_db=_copy_optional(curve.median_db),
             p75_db=_copy_optional(curve.p75_db),
             p90_db=_copy_optional(curve.p90_db),
+            p0_db=_copy_optional(curve.p0_db),
+            p100_db=_copy_optional(curve.p100_db),
             metadata=dict(curve.metadata),
         )
         colors = theme_trace_palette(self._theme, brand_mode=self._brand_mode)

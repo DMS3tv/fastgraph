@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 CurveKind = Literal["fr", "variation"]
 
 _PERCENTILE_BANDS = ("p10_db", "p25_db", "median_db", "p75_db", "p90_db")
+# Population minimum and maximum: offsets, HRTF and smoothing apply to them,
+# but ``bands()`` stays five-wide.
+_EXTREMA_BANDS = ("p0_db", "p100_db")
 
 
 @dataclass(frozen=True)
@@ -29,13 +32,15 @@ class CurveData:
     median_db: np.ndarray | None = None
     p75_db: np.ndarray | None = None
     p90_db: np.ndarray | None = None
+    p0_db: np.ndarray | None = None
+    p100_db: np.ndarray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
     def map_bands(self, fn: Callable[[np.ndarray], np.ndarray]) -> CurveData:
         """Return a copy with ``fn`` applied to every band array that is set."""
         changes = {}
-        for name in ("mag_db", *_PERCENTILE_BANDS):
+        for name in ("mag_db", *_PERCENTILE_BANDS, *_EXTREMA_BANDS):
             values = getattr(self, name)
             if values is not None:
                 changes[name] = fn(values)

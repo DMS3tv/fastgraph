@@ -99,6 +99,8 @@ def test_export_variation_uses_current_variation_data(
     assert np.array_equal(written["median_db"], np.array([0.0]))
     assert np.array_equal(written["p75_db"], np.array([1.0]))
     assert np.array_equal(written["p90_db"], np.array([2.0]))
+    # A band without extrema writes the six-column file.
+    assert written["p0_db"] is None and written["p100_db"] is None
     assert written["output_path"] == save_path
     assert written["n_sweeps"] == 1
     assert written["smoothing_fraction"] == 48

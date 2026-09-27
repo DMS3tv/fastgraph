@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 import numpy as np
@@ -90,14 +91,17 @@ def can_combine_layers(layers: list[LayerState]) -> bool:
 
 
 def layer_sweep_count(layer: LayerState) -> int | None:
-    """Sweep count from the ``Variation Sweeps`` header, when the file has one."""
+    """Sweep count from the ``Variation Sweeps`` header, when the file has one.
+
+    Only the leading number is read, so ``749 listener curves`` counts as 749.
+    """
     metadata = layer.curve.metadata or {}
     for key in ("variation_sweeps", "Variation Sweeps"):
         if key in metadata:
-            try:
-                count = int(float(str(metadata[key]).strip()))
-            except (TypeError, ValueError):
+            match = re.match(r"\s*(\d+(?:\.\d*)?)", str(metadata[key]))
+            if match is None:
                 return None
+            count = int(float(match.group(1)))
             return count if count > 0 else None
     return None
 
@@ -152,6 +156,7 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
     means: list[np.ndarray] = []
     sigmas: list[np.ndarray] = []
     coverage: list[np.ndarray] = []
+    extrema: list[tuple[np.ndarray, ...]] = []
     for layer in layers:
         curve = apply_layer_transform(layer)
         if not _is_complete_variation(curve):
@@ -159,6 +164,13 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
         source = np.asarray(curve.freqs, dtype=float)
         p10, p25, median, p75, p90 = (np.interp(freqs, source, values) for values in curve.bands())
         means.append(median)
+        extrema.append(
+            tuple(
+                np.interp(freqs, source, values)
+                for values in (curve.p0_db, curve.p100_db)
+                if values is not None
+            )
+        )
         sigmas.append(
             np.maximum(np.abs(sigma_from_percentiles(p10, p25, p75, p90)), _MIXTURE_SIGMA_FLOOR)
         )
@@ -181,6 +193,11 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
         weights[:, uncovered] = base_weights[:, None]
 
     percentiles = _mixture_percentiles(np.vstack(means), np.vstack(sigmas), weights)
+    # The pooled extrema are the outermost of every layer's, when all have them.
+    p0 = p100 = None
+    if all(len(pair) == 2 for pair in extrema):
+        p0 = np.min([pair[0] for pair in extrema], axis=0)
+        p100 = np.max([pair[1] for pair in extrema], axis=0)
     return CurveData(
         kind="variation",
         freqs=freqs,
@@ -189,6 +206,8 @@ def combine_variation_layers(layers: list[LayerState]) -> CurveData:
         median_db=percentiles[2],
         p75_db=percentiles[3],
         p90_db=percentiles[4],
+        p0_db=p0,
+        p100_db=p100,
         metadata={"Derived": "Combined variation"},
     )
 
@@ -197,7 +216,9 @@ def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
     if curve.kind == "fr" and curve.mag_db is not None:
         band = hrtf.apply_to_magnitude_as_variation(curve.freqs, curve.mag_db)
     elif _is_complete_variation(curve):
-        band = hrtf.apply_to_variation(VariationBand(curve.freqs, *curve.bands()))
+        band = hrtf.apply_to_variation(
+            VariationBand(curve.freqs, *curve.bands(), curve.p0_db, curve.p100_db)
+        )
     else:
         return curve
     return replace(
@@ -209,6 +230,8 @@ def _apply_variation_hrtf(curve: CurveData, hrtf) -> CurveData:
         median_db=band.median,
         p75_db=band.p75,
         p90_db=band.p90,
+        p0_db=band.p0,
+        p100_db=band.p100,
     )
 
 

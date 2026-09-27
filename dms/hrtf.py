@@ -125,11 +125,8 @@ class HRTFCurve:
 def _load_hrtf_data(path: str) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
     curve = parse_measurement_txt(path)
     if curve.kind == "variation":
-        return curve.freqs, (
-            curve.p10_db,
-            curve.p25_db,
-            curve.median_db,
-            curve.p75_db,
-            curve.p90_db,
-        )
+        columns: tuple = (curve.p10_db, curve.p25_db, curve.median_db, curve.p75_db, curve.p90_db)
+        if curve.p0_db is not None and curve.p100_db is not None:
+            columns += (curve.p0_db, curve.p100_db)
+        return curve.freqs, columns
     return curve.freqs, (curve.mag_db,)

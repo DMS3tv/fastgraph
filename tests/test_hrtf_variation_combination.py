@@ -141,3 +141,14 @@ def test_magnitude_with_extrema_hrtf_mirrors_the_extrema(monkeypatch) -> None:
     np.testing.assert_allclose(band.p0, mag - hrtf_p100)
     np.testing.assert_allclose(band.p100, mag - hrtf_p0)
     assert np.all(band.p0 <= band.p10) and np.all(band.p100 >= band.p90)
+
+
+def test_eight_column_population_file_loads_its_extrema(tmp_path: Path) -> None:
+    path = tmp_path / "population8.txt"
+    path.write_text("20 -2 -1 0 1 2 -5 5\n1000 -3 -1 0 1 3 -6 6\n", encoding="utf-8")
+    hrtf = HRTFCurve(str(path))
+    assert hrtf.is_variation
+    p0, p100 = hrtf.evaluate_extrema(np.array([20.0, 1000.0]))
+    np.testing.assert_array_equal(p0, [-5.0, -6.0])
+    np.testing.assert_array_equal(p100, [5.0, 6.0])
+    np.testing.assert_array_equal(hrtf.mags, [0.0, 0.0])

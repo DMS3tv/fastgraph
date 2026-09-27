@@ -19,7 +19,7 @@ _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 def parse_measurement_txt(path: str | Path) -> CurveData:
     file_path = Path(path)
-    rows, metadata, warnings = _numeric_rows(file_path)
+    rows, metadata, warnings, comments = _numeric_rows(file_path)
     if len(rows) < 2:
         raise ValueError(f"{file_path.name} has fewer than 2 valid data rows.")
 
@@ -42,7 +42,8 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
         )
 
     if wide:
-        data = np.asarray([row[:6] for row in kept], dtype=float)
+        extrema = _has_extrema(kept, comments)
+        data = np.asarray([row[: 8 if extrema else 6] for row in kept], dtype=float)
         data = _positive_sorted(data, file_path)
         data, merged = _average_duplicate_frequencies(data)
         if merged:
@@ -55,6 +56,8 @@ def parse_measurement_txt(path: str | Path) -> CurveData:
             median_db=data[:, 3],
             p75_db=data[:, 4],
             p90_db=data[:, 5],
+            p0_db=data[:, 6] if extrema else None,
+            p100_db=data[:, 7] if extrema else None,
             metadata=canonicalize_metadata(metadata),
             warnings=tuple(warnings),
         )
@@ -80,7 +83,7 @@ def load_two_column_txt_curve(path: str, *, label: str = "Curve") -> tuple[np.nd
     the same files: any delimiter, decimal commas, byte-order marks, UTF-16,
     extra columns such as phase, and repeated frequencies.
     """
-    rows, _metadata, _warnings = _numeric_rows(Path(path))
+    rows, _metadata, _warnings, _comments = _numeric_rows(Path(path))
     if len(rows) < 2:
         raise ValueError(f"{label} file '{path}' has fewer than 2 valid data rows.")
 
@@ -119,16 +122,21 @@ def _split_numeric_fields(line: str) -> list[str]:
     return [part for part in _FIELD_SPLIT_WITH_COMMA.split(line) if part]
 
 
-def _numeric_rows(path: Path) -> tuple[list[list[float]], dict[str, str], list[str]]:
+def _numeric_rows(
+    path: Path,
+) -> tuple[list[list[float]], dict[str, str], list[str], list[str]]:
+    """Return (numeric rows, metadata, warnings, comment lines)."""
     rows: list[list[float]] = []
     metadata: dict[str, str] = {}
     warnings: list[str] = []
+    comments: list[str] = []
     for raw_line in _read_measurement_text(path).splitlines():
         line = raw_line.strip()
         if not line:
             continue
         if line.startswith("*") or line.startswith("#"):
             _capture_metadata(line, metadata)
+            comments.append(line)
             continue
         values: list[float] = []
         for part in _split_numeric_fields(line):
@@ -143,7 +151,7 @@ def _numeric_rows(path: Path) -> tuple[list[list[float]], dict[str, str], list[s
             values.append(value)
         if len(values) >= 2:
             rows.append(values)
-    return rows, metadata, warnings
+    return rows, metadata, warnings, comments
 
 
 def _classify_rows(rows: list[list[float]]) -> tuple[list[list[float]], int, bool]:
@@ -168,6 +176,21 @@ def _looks_like_percentiles(rows: list[list[float]]) -> bool:
     bands = np.asarray([row[1:6] for row in rows], dtype=float)
     ordered = np.all(np.diff(bands, axis=1) >= -0.01, axis=1)
     return float(np.mean(ordered)) >= 0.9
+
+
+def _has_extrema(rows: list[list[float]], comments: list[str]) -> bool:
+    """True when columns 7 and 8 are the population minimum and maximum.
+
+    Either the column header names ``P0(dB)``, or column 7 sits at or below
+    P10 and column 8 at or above P90 on nearly every row.
+    """
+    if any(len(row) < 8 for row in rows):
+        return False
+    if any("P0(dB)" in line for line in comments):
+        return True
+    data = np.asarray([row[:8] for row in rows], dtype=float)
+    outside = (data[:, 6] <= data[:, 1]) & (data[:, 7] >= data[:, 5])
+    return float(np.mean(outside)) >= 0.9
 
 
 def _average_duplicate_frequencies(data: np.ndarray) -> tuple[np.ndarray, int]:

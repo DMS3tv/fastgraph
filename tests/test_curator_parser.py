@@ -279,3 +279,44 @@ def test_load_two_column_txt_curve_drops_non_positive_frequencies(tmp_path: Path
     path.write_text("0 1\n-10 2\n100 3\n")
     with pytest.raises(ValueError, match="fewer than 2 positive frequency rows"):
         load_two_column_txt_curve(str(path), label="Measurement")
+
+
+def test_parse_reads_ordered_columns_seven_and_eight_as_extrema(tmp_path: Path) -> None:
+    path = tmp_path / "population.txt"
+    path.write_text(
+        "20 -2 -1 0 1 2 -5 5\n1000 -3 -1 0 1 3 -6 6\n20000 -2 -1 0 1 2 -2 4\n",
+        encoding="utf-8",
+    )
+    curve = parse_measurement_txt(path)
+    assert curve.kind == "variation"
+    assert np.array_equal(curve.p0_db, [-5.0, -6.0, -2.0])
+    assert np.array_equal(curve.p100_db, [5.0, 6.0, 4.0])
+    assert np.array_equal(curve.p90_db, [2.0, 3.0, 2.0])
+
+
+def test_parse_ignores_extra_columns_that_are_not_extrema(tmp_path: Path) -> None:
+    path = tmp_path / "extra.txt"
+    # Column 7 sits above P10: not a minimum.
+    path.write_text("20 -2 -1 0 1 2 7 8\n1000 -3 -1 0 1 3 7 8\n", encoding="utf-8")
+    curve = parse_measurement_txt(path)
+    assert curve.kind == "variation"
+    assert curve.p0_db is None and curve.p100_db is None
+
+
+def test_parse_takes_extrema_from_a_p0_column_header(tmp_path: Path) -> None:
+    path = tmp_path / "header.txt"
+    path.write_text(
+        "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)\tP0(dB)\tP100(dB)\n"
+        "20 -2 -1 0 1 2 7 8\n1000 -3 -1 0 1 3 7 8\n",
+        encoding="utf-8",
+    )
+    curve = parse_measurement_txt(path)
+    assert np.array_equal(curve.p0_db, [7.0, 7.0])
+    assert np.array_equal(curve.p100_db, [8.0, 8.0])
+
+
+def test_six_column_variation_has_no_extrema(tmp_path: Path) -> None:
+    path = tmp_path / "six.txt"
+    path.write_text("20 -2 -1 0 1 2\n1000 -3 -1 0 1 3\n", encoding="utf-8")
+    curve = parse_measurement_txt(path)
+    assert curve.p0_db is None and curve.p100_db is None

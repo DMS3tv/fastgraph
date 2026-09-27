@@ -132,8 +132,14 @@ def export_variation(
     n_sweeps: int | None = None,
     smoothing_fraction: int | None = None,
     level_mode: str = "ref_1khz",
+    p0_db: np.ndarray | None = None,
+    p100_db: np.ndarray | None = None,
 ) -> None:
-    """Write DMS Fastgraph variation-band TXT file."""
+    """Write DMS Fastgraph variation-band TXT file.
+
+    With ``p0_db`` and ``p100_db`` the population minimum and maximum are
+    appended after P90, so a reader of the first six columns is unaffected.
+    """
     header = session.to_rew_header()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -150,12 +156,18 @@ def export_variation(
     if smoothing_fraction is not None and smoothing_fraction > 0:
         lines.append(f"* Smoothing: 1/{int(smoothing_fraction)} octave")
 
+    extrema = p0_db is not None and p100_db is not None
+    percentiles = "p0/p10/p25/median/p75/p90/p100" if extrema else "p10/p25/median/p75/p90"
+    columns = "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)"
     lines += [
-        "* Percentiles: p10/p25/median/p75/p90 across kept measurements",
+        f"* Percentiles: {percentiles} across kept measurements",
         _level_line(level_mode),
         "* Points: log-spaced",
         "*",
-        "* Frequency(Hz)\tP10(dB)\tP25(dB)\tMedian(dB)\tP75(dB)\tP90(dB)",
+        columns + "\tP0(dB)\tP100(dB)" if extrema else columns,
     ]
 
-    _write_rew_file(output_path, lines, zip(freqs, p10_db, p25_db, median_db, p75_db, p90_db))
+    values = [freqs, p10_db, p25_db, median_db, p75_db, p90_db]
+    if extrema:
+        values += [p0_db, p100_db]
+    _write_rew_file(output_path, lines, zip(*values))

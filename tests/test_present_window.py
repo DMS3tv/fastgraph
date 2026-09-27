@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication
 
 from dms.curator.models import CurveData
 from dms.settings_manager import SettingsManager
+from dms.style_tokens import THEME_DEFINITIONS
 from dms.theme import ThemeController
 from dms.ui.present_window import PresentWindow
 
@@ -96,6 +97,22 @@ def test_panel_scale_and_pen_keys(present) -> None:
     assert present.overlay.pen_width == 4
     _key(present, Qt.Key.Key_C)
     assert present.overlay.crosshair
+
+
+def test_theme_combo_lists_and_follows_the_app_themes(present) -> None:
+    combo = present._theme_combo
+    controller = present._theme_controller
+    keys = [combo.itemData(index) for index in range(combo.count())]
+    assert keys == [definition.key for definition in THEME_DEFINITIONS]
+    assert combo.currentData() == controller.theme
+
+    target = next(key for key in keys if key != controller.theme)
+    combo.activated.emit(keys.index(target))
+    assert controller.theme == target
+    assert present.curator._theme == target
+
+    controller.set_theme(keys[0], persist=False)
+    assert combo.currentData() == keys[0]
 
 
 def test_cmd_c_copies_the_graph_to_the_clipboard(present) -> None:

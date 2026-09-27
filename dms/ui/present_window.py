@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from dms.curator.models import LayerState
 from dms.settings_manager import SettingsManager
-from dms.style_tokens import tokens_for
+from dms.style_tokens import THEME_DEFINITIONS, tokens_for
 from dms.theme import ThemeController, theme_trace_palette
 from dms.ui.annotation_overlay import AnnotationOverlay
 from dms.ui.curator_widget import ACCENT_COLOR, CuratorWidget
@@ -127,7 +127,18 @@ class PresentWindow(QMainWindow):
             grid.addWidget(button, 3 + index // 4, index % 4)
         self._scale_toggle = ToggleSwitch("Scale 1.5×")
         self._scale_toggle.toggled.connect(self._set_font_scale)
-        grid.addWidget(self._scale_toggle, 4, 0, 1, 4)
+        grid.addWidget(self._scale_toggle, 4, 0, 1, 2)
+        self._theme_combo = QComboBox()
+        self._theme_combo.setToolTip("Theme")
+        # Keep focus off the combo so single-key shortcuts still work after a pick.
+        self._theme_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for definition in THEME_DEFINITIONS:
+            self._theme_combo.addItem(definition.label, definition.key)
+        self._theme_combo.activated.connect(
+            lambda index: self._theme_controller.set_theme(self._theme_combo.itemData(index))
+        )
+        grid.addWidget(QLabel("Theme"), 4, 2)
+        grid.addWidget(self._theme_combo, 4, 3)
         self.curator.panel_layout().insertWidget(0, box)
         self.set_mode("pointer")
         self.change_pen_width(0)
@@ -268,6 +279,7 @@ class PresentWindow(QMainWindow):
 
     def _on_theme_changed(self, *_args) -> None:
         controller = self._theme_controller
+        self._theme_combo.setCurrentIndex(self._theme_combo.findData(controller.theme))
         self.curator.apply_theme(controller.theme, brand_mode=controller.brand_mode)
         typography = tokens_for(controller.theme, brand_mode=controller.brand_mode).typography
         self._legend.setStyleSheet(

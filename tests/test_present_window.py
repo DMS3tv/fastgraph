@@ -121,3 +121,20 @@ def test_present_button_opens_a_window_with_the_same_layers(make_main_window) ->
     assert [layer.name for layer in layers] == ["Layer 1", "Layer 2"]
     assert [layer.visible for layer in layers] == [True, False]
     present.close()
+
+
+def test_main_selects_the_present_window(qapp, monkeypatch) -> None:
+    import main
+
+    monkeypatch.delenv("FASTGRAPH_MODE", raising=False)
+    assert main.wants_present_mode(["main.py", "--present"])
+    assert not main.wants_present_mode(["main.py"])
+    monkeypatch.setenv("FASTGRAPH_MODE", "present")
+    assert main.wants_present_mode(["main.py"])
+
+    settings = SettingsManager()
+    controller = ThemeController(qapp, settings)
+    window = main.build_window(settings, controller, present=True)
+    assert isinstance(window, PresentWindow)
+    window.close()
+    window.deleteLater()

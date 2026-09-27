@@ -31,6 +31,10 @@ _hook_path = _hook_dir / "fastgraph_app_name.py"
 _hook_lines = ["import os", f"os.environ.setdefault('FASTGRAPH_APP_NAME', {APP_NAME!r})"]
 if BRAND_PLUGIN:
     _hook_lines.append(f"os.environ.setdefault('FASTGRAPH_BRAND_PLUGIN', {BRAND_PLUGIN!r})")
+# FASTGRAPH_MODE=present builds the standalone presentation app (see README).
+APP_MODE = os.environ.get("FASTGRAPH_MODE", "").strip()
+if APP_MODE:
+    _hook_lines.append(f"os.environ.setdefault('FASTGRAPH_MODE', {APP_MODE!r})")
 _hook_path.write_text("\n".join(_hook_lines) + "\n", encoding="utf-8")
 
 

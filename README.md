@@ -174,6 +174,34 @@ curator reset | curator export <path>
 Layer numbers are one-based and are shown by `curator layers`. Quote paths or
 text containing spaces.
 
+## Present mode
+
+A clean Curator window for live, screen-recorded presentations: the graph, the
+layer and view controls, and an annotation layer. Open it from the Curator's
+**Present…** button (it copies the current layers), run
+`python main.py --present` (or set `FASTGRAPH_MODE=present`), or build a
+separate app with `FASTGRAPH_MODE=present ./build_macos.sh --name "FastGraph Present"`.
+Drawings, tapes and layers in this window are never saved.
+
+| Key | Action |
+|---|---|
+| D / T / L / Esc | Draw / tape / laser / pointer |
+| Cmd+Z / Cmd+Shift+Z | Undo the last annotation / clear all |
+| [ / ] | Pen width down / up |
+| C | Crosshair readout on / off |
+| 1–9 | Show or hide layer n |
+| H | Solo the selected layer; H again restores |
+| B / N | Preference bounds / layer names |
+| F | Hide or show the side panel |
+| S | Presentation text scale 1.0 / 1.5 |
+| Cmd+0 | Hide the panel and size the graph to exactly 1920x1080 |
+| Cmd+C | Copy the graph with its annotations as a PNG |
+| Cmd+O | Add TXT files |
+| Shift-drag / Alt-click | Straight line / place the tape without snapping |
+
+The tape snaps each end to the nearest visible curve at the clicked frequency
+and labels the level difference and the distance in octaves.
+
 ## Themes
 
 Fastgraph starts with Default dark. Open Settings to select Default dark,

@@ -130,6 +130,11 @@
 
 ### Added
 
+- Present mode: a standalone Curator window for live presentations (the
+  **Present…** button in the Curator, `python main.py --present`, or a
+  `FASTGRAPH_MODE=present` build) with freehand drawing, a snapping measuring
+  tape, crosshair readout, laser pointer, keyboard layer control, a 1920x1080
+  preset and copy-to-clipboard. Annotations are not saved.
 - Variation bands now carry the population minimum and maximum (P0/P100),
   drawn as a very faint outer fill in Measure, R&D, Curator and PNG exports.
   Variation exports append P0 and P100 after P90 (older readers of the first

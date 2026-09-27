@@ -74,6 +74,10 @@ dialogs in `measure_dialogs.py`, and the themed controls
 (`modern_button.py`, `modern_spinbox.py`, `toggle_switch.py`, `level_meter.py`,
 `rounded_viewport.py`, `theme_surface.py`).
 
+`present_window.py` is the standalone presentation window: a Curator built with
+`present=True` plus tools, shortcuts and the 1080p preset. `annotation_overlay.py`
+is its transparent drawing layer over the graph (strokes and tapes in data coordinates).
+
 ## Where state lives
 
 - Measurement state (queue, kept curves, averages, HRTF, level mode) is on

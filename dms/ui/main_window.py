@@ -74,6 +74,7 @@ from dms.ui.modern_spinbox import (
 from dms.ui.modern_spinbox import (
     ModernSpinBox as QSpinBox,
 )
+from dms.ui.present_window import PresentWindow
 from dms.ui.rnd_bridge import RndBridge
 from dms.ui.rnd_widget import RnDWidget
 from dms.ui.session_dialog import SessionEditor
@@ -209,6 +210,8 @@ class MainWindow(QMainWindow):
             brand_mode=self._theme_controller.brand_mode,
             parent=self,
         )
+        self._curator_widget.present_requested.connect(self.open_present_window)
+        self._present_window: PresentWindow | None = None
         self._tabs.addTab(self._curator_widget, "Curator")
 
         self._console_widget = ConsoleWidget(self._console_events)
@@ -254,6 +257,15 @@ class MainWindow(QMainWindow):
         )
         self._statusbar.addPermanentWidget(self._feedback_btn)
         self.update_check = UpdateCheck(self)
+
+    def open_present_window(self) -> PresentWindow:
+        """Open the current Curator layers in a presentation window."""
+        window = PresentWindow(self._settings, self._theme_controller)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        window.add_layers(self._curator_widget.graph_state.layers)
+        window.show()
+        self._present_window = window
+        return window
 
     def _on_tab_changed(self, _index: int) -> None:
         self._close_inputs_overlay()

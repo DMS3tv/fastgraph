@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QRect, Qt, QTimer
+from PyQt6.QtCore import QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -333,6 +333,8 @@ class GraphStage(QWidget):
 
 
 class CuratorWidget(QWidget):
+    present_requested = pyqtSignal()
+
     def __init__(
         self,
         theme: str = DARK,
@@ -772,7 +774,14 @@ class CuratorWidget(QWidget):
         import_layout.setSpacing(5)
         add_btn = QPushButton("Add TXT Files...")
         add_btn.clicked.connect(self._choose_import_files)
-        import_layout.addWidget(add_btn)
+        add_row = QHBoxLayout()
+        add_row.addWidget(add_btn, 1)
+        if not self._present:
+            self._present_btn = QPushButton("Present…")
+            self._present_btn.setToolTip("Open these layers in a presentation window")
+            self._present_btn.clicked.connect(self.present_requested.emit)
+            add_row.addWidget(self._present_btn)
+        import_layout.addLayout(add_row)
         self._layer_list = QListWidget()
         self._layer_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._layer_list.currentItemChanged.connect(self._on_layer_selected)

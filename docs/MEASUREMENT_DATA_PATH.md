@@ -127,7 +127,9 @@ offset), `tests/test_two_channel.py`.
   mode.
 - `MeasureController.variation_from_curves` builds the population band: each
   curve interpolated onto the grid, HRTF applied, smoothed at 1/48 octave,
-  then the 10th/25th/50th/75th/90th percentiles across curves.
+  then the 10th/25th/50th/75th/90th percentiles across curves. The band also
+  carries the minimum and maximum of the kept sweeps; compensation shifts
+  them by the median offset and never combines them.
 - HRTF compensation is `HRTFCurve.apply` in `dms/hrtf.py`:
   `curve − hrtf`, with the HRTF's edge values held outside its range.
   `apply_to_variation` combines the population spread with the HRTF spread

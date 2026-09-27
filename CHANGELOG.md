@@ -130,6 +130,11 @@
 
 ### Added
 
+- Variation bands now carry the population minimum and maximum (P0/P100),
+  drawn as a very faint outer fill in Measure, R&D, Curator and PNG exports.
+  Variation exports append P0 and P100 after P90 (older readers of the first
+  six columns are unaffected); bands and files without them look and export
+  exactly as before.
 - Measure: a Distortion toggle between the plots draws THD, H2 and H3
   relative to the fundamental on a right-hand axis when the sweep's SNR is
   at least 20 dB, and the review dialog reports THD over 100 Hz to 10 kHz.

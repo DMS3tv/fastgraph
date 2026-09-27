@@ -87,18 +87,19 @@ class AnnotationOverlay(QWidget):
         vb = graph.getPlotItem().getViewBox()
         vb.sigTransformChanged.connect(self.update)
         vb.sigResized.connect(self.update)
-        graph.viewport().installEventFilter(self)
+        self._viewport = graph.viewport()
+        self._viewport.installEventFilter(self)
         self._fit()
 
     # Geometry -----------------------------------------------------------
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._graph.viewport() and event.type() == QEvent.Type.Resize:
+        if watched is self._viewport and event.type() == QEvent.Type.Resize:
             self._fit()
         return False
 
     def _fit(self) -> None:
-        self.setGeometry(self._graph.viewport().geometry())
+        self.setGeometry(self._viewport.geometry())
         self.raise_()
 
     def _vb(self):
@@ -243,17 +244,18 @@ class AnnotationOverlay(QWidget):
         """Draw ``text`` with its top-left near ``anchor``, kept inside the widget."""
         font = self._font()
         path = QPainterPath()
+        path.setFillRule(Qt.FillRule.WindingFill)  # glyph contours overlap, e.g. "+"
         path.addText(0.0, 0.0, font, text)
         box = path.boundingRect()
         x = min(max(4.0, anchor.x()), self.width() - box.width() - 4.0)
         y = min(max(4.0, anchor.y()), self.height() - box.height() - 4.0)
         path.translate(x - box.left(), y - box.top())
         halo = QColor("#000000" if color.lightnessF() > 0.5 else "#FFFFFF")
-        halo.setAlpha(220)
+        halo.setAlpha(200)
         painter.setPen(
             QPen(
                 halo,
-                4.0 * self.font_scale,
+                3.0 * self.font_scale,
                 cap=Qt.PenCapStyle.RoundCap,
                 join=Qt.PenJoinStyle.RoundJoin,
             )

@@ -138,12 +138,13 @@ class PresentWindow(QMainWindow):
         while self._swatch_row.count():
             item = self._swatch_row.takeAt(0)
             if item is not None and item.widget() is not None:
-                item.widget().deleteLater()
+                item.widget().setParent(None)
         palette = theme_trace_palette(
             self._theme_controller.theme, brand_mode=self._theme_controller.brand_mode
         )
         for color in dict.fromkeys([ACCENT_COLOR, *palette]):
             swatch = QPushButton()
+            swatch.setObjectName("colorSwatch")
             swatch.setFixedSize(22, 22)
             swatch.setToolTip(color)
             swatch.setStyleSheet(f"background-color: {color}; border-radius: 4px;")

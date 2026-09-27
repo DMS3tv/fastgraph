@@ -109,10 +109,26 @@ def canal_ensemble(
     return {"p10": p10, "p25": p25, "median": median, "p75": p75, "p90": p90}
 
 
+def spread_weight(grid: np.ndarray, f_zero: float, f_full: float) -> np.ndarray:
+    """0 at/below ``f_zero``, 1 at/above ``f_full``, raised cosine in log frequency between."""
+    x = np.clip(np.log(grid / f_zero) / np.log(f_full / f_zero), 0.0, 1.0)
+    return 0.5 - 0.5 * np.cos(np.pi * x)
+
+
 def build(
-    population: Path, canal: Path, canal_sigma: float
+    population: Path,
+    canal: Path,
+    canal_sigma: float,
+    taper: tuple[float, float] | None = None,
 ) -> tuple[np.ndarray, dict[str, np.ndarray], list[str], bool]:
-    """Return (grid, output columns, input header, P10/P90 derived)."""
+    """Return (grid, output columns, input header, P10/P90 derived).
+
+    ``taper=(f_zero, f_full)`` shrinks every column's distance from the median
+    below ``f_full`` so the band converges onto the median by ``f_zero``: the
+    blocked-canal corpora are less reliable in the bass. A measured band
+    compensated with the file keeps its own bass spread (spreads add in
+    quadrature).
+    """
     raw, header, derived = read_population(population)
     grid = log_grid()
     bc = {k: _resample(grid, raw["freqs"], v) for k, v in raw.items() if k != "freqs"}
@@ -133,6 +149,11 @@ def build(
     out["p0"] = np.minimum(bc["p0"] + cn["median"], out["p10"])
     out["p100"] = np.maximum(bc["p100"] + cn["median"], out["p90"])
 
+    if taper is not None:
+        w = spread_weight(grid, *taper)
+        for key in ("p0", "p10", "p25", "p75", "p90", "p100"):
+            out[key] = out["median"] + w * (out[key] - out["median"])
+
     offset = np.interp(F_REF, grid, out["median"])
     return grid, {k: v - offset for k, v in out.items()}, header, derived
 
@@ -148,6 +169,7 @@ def write(
     canal_sigma: float,
     sweeps: int,
     name: str | None,
+    taper: tuple[float, float] | None = None,
 ) -> None:
     lines = ["* DMS Fastgraph population variation export", "* Rig: B&K 5128"]
     if name:
@@ -166,6 +188,12 @@ def write(
         "* Listener Normalization: median 0 dB at 1 kHz",
         "* Frequency Extension: held flat below 200 Hz and above 16 kHz",
     ]
+    if taper is not None:
+        lines.append(
+            f"* Bass Taper: spread converges onto the median from {taper[1]:g} Hz down to "
+            f"{taper[0]:g} Hz (raised cosine in log frequency); the source corpora are "
+            "less reliable below that"
+        )
     lines += [
         line
         for line in input_header
@@ -187,9 +215,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--canal-sigma", type=float, default=0.06, help="octaves")
     parser.add_argument("--sweeps", type=int, default=1690)
     parser.add_argument("--name", default=None, help="optional Dataset header value")
+    parser.add_argument(
+        "--taper-full", type=float, default=500.0, help="full spread above this Hz; 0 disables"
+    )
+    parser.add_argument(
+        "--taper-zero", type=float, default=200.0, help="no spread at/below this Hz"
+    )
     args = parser.parse_args(argv)
 
-    grid, cols, header, derived = build(args.population, args.canal, args.canal_sigma)
+    taper = (args.taper_zero, args.taper_full) if args.taper_full > 0 else None
+    grid, cols, header, derived = build(args.population, args.canal, args.canal_sigma, taper)
     write(
         args.out,
         grid,
@@ -200,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         canal_sigma=args.canal_sigma,
         sweeps=args.sweeps,
         name=args.name,
+        taper=taper,
     )
     print(f"Wrote {args.out}")
     return 0

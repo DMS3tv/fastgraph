@@ -122,3 +122,19 @@ def test_written_file_parses_as_band(tmp_path):
         rows[:, :6],
     )
     assert abs(np.interp(F_REF, rows[:, 0], rows[:, 3])) < 1e-6
+
+
+def test_bass_taper_converges_onto_the_median_and_leaves_the_rest_alone(tmp_path):
+    _write_population(tmp_path / "pop.txt")
+    _write_canal(tmp_path / "canal.txt", flat=False)
+    grid, plain, _, _ = build(tmp_path / "pop.txt", tmp_path / "canal.txt", 0.0)
+    _, tapered, _, _ = build(tmp_path / "pop.txt", tmp_path / "canal.txt", 0.0, (200.0, 500.0))
+    low = grid <= 200.0
+    high = grid >= 500.0
+    for key in ("p0", "p10", "p25", "p75", "p90", "p100"):
+        np.testing.assert_allclose(tapered[key][low], tapered["median"][low], atol=1e-9)
+        np.testing.assert_allclose(tapered[key][high], plain[key][high], atol=1e-9)
+    np.testing.assert_allclose(tapered["median"], plain["median"], atol=1e-9)
+    mid = (grid > 200.0) & (grid < 500.0)
+    width = tapered["p90"] - tapered["p10"]
+    assert np.all(np.diff(width[mid]) >= -1e-9)

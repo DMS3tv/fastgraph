@@ -11,9 +11,11 @@ class HRTFCurve:
         self.path = path
         self.name = Path(path).stem
         self.freqs, columns = _load_hrtf_data(path)
-        self.is_variation = len(columns) == 5
+        self.is_variation = len(columns) in (5, 7)
         self.mags = columns[2] if self.is_variation else columns[0]
-        self._variation = columns if self.is_variation else None
+        self._variation = columns[:5] if self.is_variation else None
+        # Population minimum and maximum, when the file carries them.
+        self._extrema = columns[5:7] if len(columns) == 7 else None
 
     def evaluate(self, freqs_hz: np.ndarray) -> np.ndarray:
         """Return the HRTF line, or the median for a variation HRTF.
@@ -32,6 +34,13 @@ class HRTFCurve:
         if self._variation is None:
             return None
         return tuple(np.interp(freqs_hz, self.freqs, values) for values in self._variation)
+
+    def evaluate_extrema(self, freqs_hz: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+        """Return the population minimum and maximum, or None when the file has none."""
+        if self._extrema is None:
+            return None
+        p0, p100 = (np.interp(freqs_hz, self.freqs, values) for values in self._extrema)
+        return p0, p100
 
     def apply(self, freqs_hz: np.ndarray, mag_db: np.ndarray, invert: bool = False) -> np.ndarray:
         """
@@ -54,6 +63,7 @@ class HRTFCurve:
             corrected = self.apply(freqs_hz, mag_db)
             return VariationBand(freqs_hz, corrected, corrected, corrected, corrected, corrected)
         p10, p25, median, p75, p90 = variation
+        extrema = self.evaluate_extrema(freqs_hz)
         return VariationBand(
             freqs_hz,
             mag_db - p90,
@@ -61,6 +71,8 @@ class HRTFCurve:
             mag_db - median,
             mag_db - p25,
             mag_db - p10,
+            None if extrema is None else mag_db - extrema[1],
+            None if extrema is None else mag_db - extrema[0],
         )
 
     def apply_to_variation(self, band: VariationBand) -> VariationBand:
@@ -68,7 +80,9 @@ class HRTFCurve:
 
         The measurement spread and the population spread are treated as
         independent and their variances are added in quadrature, which is
-        what two unrelated sources of variation actually do.
+        what two unrelated sources of variation actually do. The extrema are
+        never combined: they move by the median offset and are clamped so they
+        stay outside the combined P10-P90.
         """
         variation = self.evaluate_variation(band.freqs)
         if variation is None:
@@ -81,19 +95,30 @@ class HRTFCurve:
                 band.median - correction,
                 band.p75 - correction,
                 band.p90 - correction,
+                None if band.p0 is None else band.p0 - correction,
+                None if band.p100 is None else band.p100 - correction,
             )
         comp_p10, comp_p25, comp_median, comp_p75, comp_p90 = variation
         sigma_meas = sigma_from_percentiles(band.p10, band.p25, band.p75, band.p90)
         sigma_hrtf = sigma_from_percentiles(comp_p10, comp_p25, comp_p75, comp_p90)
         sigma = np.sqrt(np.square(sigma_meas) + np.square(sigma_hrtf))
-        median_c = np.asarray(band.median, dtype=float) - np.asarray(comp_median, dtype=float)
+        offset = np.asarray(comp_median, dtype=float)
+        median_c = np.asarray(band.median, dtype=float) - offset
+        p10 = median_c - _Z_P90 * sigma
+        p90 = median_c + _Z_P90 * sigma
+        p0 = p100 = None
+        if band.p0 is not None and band.p100 is not None:
+            p0 = np.minimum(np.asarray(band.p0, dtype=float) - offset, p10)
+            p100 = np.maximum(np.asarray(band.p100, dtype=float) - offset, p90)
         return VariationBand(
             band.freqs,
-            median_c - _Z_P90 * sigma,
+            p10,
             median_c - _Z_P75 * sigma,
             median_c,
             median_c + _Z_P75 * sigma,
-            median_c + _Z_P90 * sigma,
+            p90,
+            p0,
+            p100,
         )
 
 

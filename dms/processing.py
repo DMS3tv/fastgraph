@@ -857,6 +857,9 @@ class VariationBand(NamedTuple):
     median: np.ndarray
     p75: np.ndarray
     p90: np.ndarray
+    # Population minimum and maximum; shifted by compensation, never combined.
+    p0: np.ndarray | None = None
+    p100: np.ndarray | None = None
 
 
 def percentile_band(
@@ -880,5 +883,7 @@ def percentile_band(
         if smoothing is not None:
             _, values = smooth_fractional_octave(freqs, values, fraction=smoothing)
         rows.append(values)
-    p10, p25, median, p75, p90 = np.percentile(np.vstack(rows), [10, 25, 50, 75, 90], axis=0)
-    return VariationBand(freqs, p10, p25, median, p75, p90)
+    p0, p10, p25, median, p75, p90, p100 = np.percentile(
+        np.vstack(rows), [0, 10, 25, 50, 75, 90, 100], axis=0
+    )
+    return VariationBand(freqs, p10, p25, median, p75, p90, p0, p100)

@@ -142,8 +142,10 @@ def retro_step_group(
 
 
 def retro_step_band(band: VariationBand) -> VariationBand:
-    """``retro_step_group`` for a whole variation band."""
-    return VariationBand(*retro_step_group(band.freqs, band[1:]))
+    """``retro_step_group`` for a whole variation band, extrema included when present."""
+    names = [name for name in VariationBand._fields[1:] if getattr(band, name) is not None]
+    freqs, *values = retro_step_group(band.freqs, [getattr(band, name) for name in names])
+    return VariationBand(freqs=freqs, **dict(zip(names, values, strict=True)))
 
 
 def retro_step_series(

@@ -2080,6 +2080,8 @@ class RnDWidget(QWidget):
                             curve.median - ref,
                             curve.p75 - ref,
                             curve.p90 - ref,
+                            None if curve.p0 is None else curve.p0 - ref,
+                            None if curve.p100 is None else curve.p100 - ref,
                         ),
                     )
                 )

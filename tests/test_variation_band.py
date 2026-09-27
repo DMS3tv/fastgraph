@@ -28,7 +28,7 @@ def _curves() -> list[tuple[np.ndarray, np.ndarray]]:
     return curves
 
 
-def _old_band(curves, grid, smoothing, hrtf) -> tuple[np.ndarray, ...]:
+def _old_band(curves, grid, smoothing, hrtf) -> dict[str, np.ndarray]:
     rows = []
     for freqs, mag in curves:
         values = np.interp(grid, freqs, mag)
@@ -38,14 +38,17 @@ def _old_band(curves, grid, smoothing, hrtf) -> tuple[np.ndarray, ...]:
             _, values = smooth_fractional_octave(grid, values, fraction=smoothing)
         rows.append(values)
     mat = np.vstack(rows)
-    return (
-        grid,
-        np.percentile(mat, 10, axis=0),
-        np.percentile(mat, 25, axis=0),
-        np.percentile(mat, 50, axis=0),
-        np.percentile(mat, 75, axis=0),
-        np.percentile(mat, 90, axis=0),
-    )
+    return {
+        "freqs": grid,
+        "p10": np.percentile(mat, 10, axis=0),
+        "p25": np.percentile(mat, 25, axis=0),
+        "median": np.percentile(mat, 50, axis=0),
+        "p75": np.percentile(mat, 75, axis=0),
+        "p90": np.percentile(mat, 90, axis=0),
+        # The extrema are the exact row minimum and maximum.
+        "p0": mat.min(axis=0),
+        "p100": mat.max(axis=0),
+    }
 
 
 def test_percentile_band_matches_the_old_computation() -> None:
@@ -59,5 +62,14 @@ def test_percentile_band_matches_the_old_computation() -> None:
         band = percentile_band(curves, grid=grid, smoothing=smoothing, hrtf=hrtf)
         expected = _old_band(curves, log_grid() if grid is None else grid, smoothing, hrtf)
         assert isinstance(band, VariationBand)
-        for field, reference in zip(VariationBand._fields, expected, strict=True):
+        assert set(expected) == set(VariationBand._fields)
+        for field, reference in expected.items():
             assert np.allclose(getattr(band, field), reference, rtol=0, atol=1e-9), field
+        assert np.array_equal(band.p0, expected["p0"])
+        assert np.array_equal(band.p100, expected["p100"])
+
+
+def test_band_without_extrema_still_constructs() -> None:
+    freqs = np.array([100.0, 1000.0])
+    band = VariationBand(freqs, freqs - 2, freqs - 1, freqs, freqs + 1, freqs + 2)
+    assert band.p0 is None and band.p100 is None

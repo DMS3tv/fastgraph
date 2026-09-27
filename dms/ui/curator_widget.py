@@ -784,6 +784,9 @@ class CuratorWidget(QWidget):
         import_layout.addLayout(add_row)
         self._layer_list = QListWidget()
         self._layer_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        if self._present:
+            # The presenter panel is tall; keep several layer rows in view.
+            self._layer_list.setMinimumHeight(240)
         self._layer_list.currentItemChanged.connect(self._on_layer_selected)
         self._layer_list.itemSelectionChanged.connect(self._sync_combine_button)
         import_layout.addWidget(self._layer_list, 1)

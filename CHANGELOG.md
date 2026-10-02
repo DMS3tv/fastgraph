@@ -130,6 +130,11 @@
 
 ### Added
 
+- Continuous integration: lint, mypy and the test suite on macOS, Windows and
+  Linux now run on every push and pull request (`.github/workflows/ci.yml`),
+  and release builds reuse the same checks. A golden end-to-end measurement
+  test runs first and fails when a change alters a measured frequency
+  response.
 - Present mode: a standalone Curator window for live presentations (the
   **Present…** button in the Curator, `python main.py --present`, or a
   `FASTGRAPH_MODE=present` build) with freehand drawing, a snapping measuring

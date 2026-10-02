@@ -471,6 +471,10 @@ The one-off formatting commit is listed in `.git-blame-ignore-revs`; run
 `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
 skips it.
 
+Checks run on every push and pull request (`.github/workflows/ci.yml`). The
+golden measurement check runs first and fails when a change alters a measured
+response.
+
 ## Project Records
 
 Historical engineering records that are useful when maintaining the app are

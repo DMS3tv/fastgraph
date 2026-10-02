@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "cleanup/**"
+      - "hardening/**"
+  pull_request:
+  # The release workflow calls this file so a build runs only after the same
+  # checks pass on the ref it is about to build.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit to check out (default: the triggering ref)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# github.workflow is the caller's name when this runs from the release
+# workflow, so a release never cancels (or is cancelled by) a push run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Workflow-level env is not inherited by called workflows, so the release
+  # workflow's PYTHON_VERSION is repeated here; keep the two in step.
+  # CI runs the same interpreter as local development (.venv is CPython 3.14).
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff and mypy
+        run: python -m pip install ruff==0.14.0 mypy==2.3.1
+
+      - name: Check formatting and lint rules
+        run: |
+          ruff format --check dms tests tools main.py
+          ruff check dms tests tools main.py
+
+      - name: Type-check the core modules
+        run: mypy --config-file pyproject.toml
+
+  test:
+    name: Test ${{ matrix.name }}
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-14
+          - name: Windows x64
+            os: windows-latest
+          - name: Linux x64
+            os: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements.lock
+
+      # Qt needs the same X/EGL/ALSA libraries to run offscreen that the
+      # packaged app needs to run for real, so this list matches the release build job.
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2 \
+            libegl1 \
+            libgl1 \
+            libportaudio2 \
+            libpulse0 \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0
+
+      # Tests deliberately install the declared ranges rather than
+      # requirements.lock: the lock is what we ship, this is what warns us early
+      # that a floating upstream release is about to break the app.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      # Runs first so a change to a measured response is the first, clearly
+      # labelled failure. See tests/test_golden_measurement.py to regenerate.
+      - name: Golden measurement check
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_golden_measurement.py tests/test_measurement_path.py
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: .
+        run: python -m pytest -q -n auto

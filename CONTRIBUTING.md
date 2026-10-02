@@ -22,6 +22,11 @@ formatting commit is listed in `.git-blame-ignore-revs`; run
 - **Tests for every value change on the measurement path.** If a change
   touches anything named in `docs/MEASUREMENT_DATA_PATH.md`, update that
   document and the test it cites.
+- **Golden measurement.** `tests/test_golden_measurement.py` fails when a change
+  alters a measured response. If you intend to change a measurement result,
+  regenerate the golden reference with
+  `FASTGRAPH_UPDATE_GOLDEN=1 python -m pytest tests/test_golden_measurement.py`
+  and explain why in the commit.
 - **Render and look.** A green test is not proof for UI work. Run
   `QT_QPA_PLATFORM=offscreen python tools/render_tabs.py before build/renders`
   on the old code and `... after ...` on the new, and compare the PNGs with

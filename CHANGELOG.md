@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## [0.5.0] - 2026-10-01
+
+A reliability and foundation release. The highlights:
+
+- **Measurements you can trust.** Every sweep is checked for integrity in
+  every mode, so a silent or noise-only recording is rejected instead of
+  drawn; Bluetooth captures recover from weak timing markers; failed
+  recordings can be saved for diagnosis.
+- **Better signal processing.** Impulse-response windowing, a harmonic
+  distortion overlay, band-averaged resampling and an absolute dB SPL level
+  mode. Exports now write exactly what the screen shows.
+- **Measure sessions.** Save, load and crash-recover a Measure workspace;
+  compare against a target or a reference, score the deviation and get a
+  parametric EQ suggestion.
+- **Present mode.** A presentation window for the Curator with drawing,
+  measuring tape, crosshair and laser tools.
+- **Population bands.** Variation bands carry the minimum and maximum as a
+  faint outer envelope, and a new 1,690-ear in-ear population band is
+  included.
+- **Safer files and uploads.** Settings, sessions and calibration are
+  written atomically with a backup when a file is corrupt; Squiglink uploads
+  verify the server's host key and run in the background.
+- **Windows.** Saving an R&D session that contains photos works again.
+- **Under the hood.** The code was reorganised into small modules, and every
+  change is now checked automatically on macOS, Windows and Linux, including
+  an end-to-end test that fails if a measured response changes.
+
 ### Fixed
 
 - R&D: saving a session that has photos no longer fails on Windows (the photo copy flushed a read-only handle, which Windows rejects).

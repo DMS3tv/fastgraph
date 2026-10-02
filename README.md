@@ -31,7 +31,7 @@ values. The generator starts at a 500 Hz sine and uses the current Measure
 output level. Fastgraph stops the generator when the mode, tab, or audio device
 changes and when the application closes.
 
-Current beta version: `0.4.2`
+Current beta version: `0.5.0`
 
 ## Release Notes
 
@@ -439,11 +439,11 @@ Linux x64. The workflow runs as three jobs in sequence:
 Update `dms/version.py` and `CHANGELOG.md`, push the release commit to `main`,
 then choose one of these release paths:
 
-- Push a tag such as `v0.4.2`; the workflow builds all three packages and
+- Push a tag such as `v0.5.0`; the workflow builds all three packages and
   publishes a GitHub release automatically.
 - In **Actions → Release builds → Run workflow**, choose the source ref, enable
   **Create or update a GitHub release**, and enter a release tag such as
-  `v0.4.2`. This creates the tag at the selected ref and publishes the release.
+  `v0.5.0`. This creates the tag at the selected ref and publishes the release.
 
 Leaving **Create or update a GitHub release** disabled runs the test and build
 jobs only. Their downloadable artifacts are useful for testing before
@@ -510,8 +510,8 @@ The feed URL should return JSON like:
 
 ```json
 {
-  "version": "0.4.2",
-  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.4.2",
-  "summary": "Adds paired two-channel measurement and Channel Balance"
+  "version": "0.5.0",
+  "url": "https://github.com/DMS3tv/fastgraph/releases/tag/v0.5.0",
+  "summary": "Measurement integrity checks, Measure sessions, Present mode"
 }
 ```

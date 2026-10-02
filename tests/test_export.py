@@ -225,14 +225,14 @@ def test_exports_match_the_former_writers_byte_for_byte(tmp_path: Path, monkeypa
         smoothing_fraction=48,
     )
 
-    assert (tmp_path / "curve.txt").read_bytes().decode("utf-8") == (
+    assert (tmp_path / "curve.txt").read_text(encoding="utf-8") == (
         _GOLDEN_SESSION_HEADER + "* Export Date: 2026-01-02 03:04:05\n* Compensated: Yes\n"
         "* Average Sweeps: 5\n* HRTF File: Fixture\n* Smoothing: 1/12 octave\n"
         "* Offset: -1.5 dB\n* Level: dB SPL (calibrated)\n* Points: log-spaced\n*\n"
         "* Frequency(Hz)\tMagnitude(dB)\n"
         "20.0000\t-3.141593\n1000.0000\t0.000000\n19999.8765\t2.718282\n"
     )
-    assert (tmp_path / "var.txt").read_bytes().decode("utf-8") == (
+    assert (tmp_path / "var.txt").read_text(encoding="utf-8") == (
         _GOLDEN_SESSION_HEADER + "* Export Type: Variation Band\n"
         "* Export Date: 2026-01-02 03:04:05\n* Compensated: No\n* Variation Sweeps: 4\n"
         "* Smoothing: 1/48 octave\n"

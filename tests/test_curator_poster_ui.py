@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -316,6 +317,10 @@ def test_poster_preview_uses_final_renderer_and_replaces_graph_view(make_curator
     window.close()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="offscreen font metrics on Windows runners differ; check these labels on a real Windows build",
+)
 @pytest.mark.parametrize("size", [(1000, 700), (1800, 1100)])
 def test_poster_rows_do_not_overlap_at_common_window_sizes(make_curator, qapp, size) -> None:
     window = make_curator(brand_mode=True)

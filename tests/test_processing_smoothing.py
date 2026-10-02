@@ -1,6 +1,7 @@
 """Fractional-octave smoothing on log and non-log frequency grids."""
 
 import numpy as np
+import pytest
 
 from dms.processing import smooth_fractional_octave
 
@@ -40,12 +41,12 @@ def test_log_spaced_regression_values_are_unchanged() -> None:
 
     _, smoothed = smooth_fractional_octave(freqs, values, fraction=12)
 
-    assert smoothed[:3].tolist() == [
-        -0.20694204097495492,
-        -0.46566632738355096,
-        -0.7754552495519318,
-    ]
-    assert float(np.sum(smoothed)) == -242.21730712461624
+    # 1e-12: identical to the last digit on one machine, but numpy builds on
+    # other platforms differ in the final bits.
+    assert smoothed[:3].tolist() == pytest.approx(
+        [-0.20694204097495492, -0.46566632738355096, -0.7754552495519318], abs=1e-12
+    )
+    assert float(np.sum(smoothed)) == pytest.approx(-242.21730712461624, abs=1e-9)
 
 
 def test_the_600_point_export_grid_is_treated_as_log_spaced() -> None:

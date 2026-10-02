@@ -1,7 +1,9 @@
 import json
 import stat
+import sys
 from pathlib import Path
 
+import pytest
 from helpers import corrupt_backups
 
 import dms.settings_manager as settings_module
@@ -221,6 +223,7 @@ def test_settings_manager_has_no_load_error_for_a_healthy_file(monkeypatch, tmp_
     assert reloaded.get("theme") == "light"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits do not exist on Windows")
 def test_settings_file_is_written_owner_only(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings_module, "_config_dir", lambda: tmp_path)
     SettingsManager().set("theme", "light")

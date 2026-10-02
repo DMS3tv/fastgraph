@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ def test_atomic_write_json_creates_parents_and_round_trips(tmp_path: Path) -> No
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1, "b": [2, 3]}
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits do not exist on Windows")
 def test_atomic_write_json_applies_owner_only_mode(tmp_path: Path) -> None:
     target = tmp_path / "secret.json"
     atomic_write_json(target, {"token": "x"}, mode=0o600)

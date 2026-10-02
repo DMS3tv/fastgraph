@@ -170,7 +170,8 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     temp_path = Path(temp_name)
     try:
         shutil.copy2(source, temp_path)
-        with temp_path.open("rb") as handle:
+        # "rb+": Windows refuses to flush a handle opened read-only.
+        with temp_path.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(temp_path, destination)
     finally:

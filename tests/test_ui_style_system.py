@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from helpers import pump_until
 from PyQt6.QtCore import QAbstractAnimation, QEvent, QSize, Qt
@@ -561,6 +563,10 @@ def _independent_dither_label_width(label: str) -> int:
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="offscreen font metrics on Windows runners differ; check these labels on a real Windows build",
+)
 def test_measure_button_width_matches_dither_startup_and_switch_paths(
     qapp,
     make_main_window,

@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- R&D: saving a session that has photos no longer fails on Windows (the photo copy flushed a read-only handle, which Windows rejects).
+
 - Console logging: every console message now goes through Python's standard
   logging (one handler feeds the console and its log file), including worker
   threads, the Curator and Squiglink upload diagnostics. Any ERROR that reaches

@@ -6,8 +6,9 @@ MeasurementSignalLayout. They intentionally avoid Qt and sounddevice so timing
 behavior can be characterized with synthetic Bluetooth-like recordings.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import NoReturn
 
 import numpy as np
 
@@ -48,6 +49,8 @@ class MeasurementFailureReason(StrEnum):
     LOW_SNR = "low_snr"
     INCOMPLETE_SWEEP = "incomplete_sweep"
     INVALID_RECORDING = "invalid_recording"
+    # Two-channel only: the sweep reached the opposite ear's input.
+    CHANNELS_CROSSED = "channels_crossed"
 
 
 class MeasurementWarningReason(StrEnum):
@@ -136,6 +139,12 @@ class MeasurementDiagnostics:
     midband_margin_db: float | None = None
     coverage_db: tuple[float, ...] | None = None
     sweep_noise_margin_min_db: float | None = None
+    # Two-channel stages also record the opposite ear's input to check routing.
+    monitor_input: int | None = None  # 1-based, as the user numbers inputs
+    monitor_start_confidence: float | None = None
+    monitor_snr_db: float | None = None
+    # Monitor mid-band level relative to the expected input, same window.
+    monitor_relative_level_db: float | None = None
 
 
 class MeasurementAlignmentError(ValueError):
@@ -337,6 +346,13 @@ def format_diagnostics_summary(diagnostics: MeasurementDiagnostics) -> str:  # n
             ]
         )
     lines.append(f"- SNR: {fmt_float(diagnostics.snr_db, ' dB')}")
+    if diagnostics.monitor_input is not None:
+        lines.append(
+            f"- Opposite input {diagnostics.monitor_input}: start confidence "
+            f"{fmt_float(diagnostics.monitor_start_confidence)}, SNR "
+            f"{fmt_float(diagnostics.monitor_snr_db, ' dB')}, level vs expected "
+            f"{fmt_float(diagnostics.monitor_relative_level_db, ' dB')}"
+        )
     if diagnostics.marker_agreement is not None:
         if diagnostics.raw_marker_confidence is not None:
             lines.append(f"- Raw end confidence: {diagnostics.raw_marker_confidence:.1f}")
@@ -1298,6 +1314,14 @@ def _noise_floor_rms(
     return _rms(np.concatenate(noise_parts))
 
 
+def _midband_rms(aligned: np.ndarray) -> float:
+    """RMS of the middle 60 % of an aligned sweep (about 63 Hz to 6.3 kHz)."""
+    n = len(aligned)
+    lo = int(round(0.2 * n))
+    hi = max(lo + 1, int(round(0.8 * n)))
+    return _rms(np.asarray(aligned)[lo:hi])
+
+
 def compute_sweep_integrity(
     aligned_recording: np.ndarray,
     noise_rms: float,
@@ -1323,9 +1347,7 @@ def compute_sweep_integrity(
             midband_margin_db=0.0,
             coverage_db=tuple(0.0 for _ in range(segments)),
         )
-    lo = int(round(0.2 * n))
-    hi = max(lo + 1, int(round(0.8 * n)))
-    midband_rms = _rms(aligned[lo:hi])
+    midband_rms = _midband_rms(aligned)
     edges = np.linspace(0, n, segments + 1, dtype=int)
     coverage = tuple(
         _ratio_db(_rms(aligned[edges[i] : edges[i + 1]]), noise_rms)
@@ -1656,3 +1678,95 @@ def align_recording_to_layout(
             integrity=integrity,
         ),
     )
+
+
+#: How much louder, in mid-band dB over the same aligned window, the opposite
+#: ear's input may be before a two-channel stage is called crossed. Interaural
+#: crosstalk through a headphone on a head simulator sits 30 dB or more below
+#: the driven ear, so a correctly routed stage never comes near this; the
+#: 10 dB of slack absorbs a preamp gain mismatch between the two inputs.
+ROUTING_CROSSED_MARGIN_DB = 10.0
+
+# Failures of the recording itself, not of what was heard; routing cannot
+# explain them, so they pass through unchanged.
+_NOT_ROUTING_FAILURES = {
+    MeasurementFailureReason.SHORT_RECORDING,
+    MeasurementFailureReason.INVALID_RECORDING,
+}
+
+
+def align_two_channel_recording(
+    rec_expected: np.ndarray,
+    rec_monitor: np.ndarray,
+    sweep: np.ndarray,
+    layout: MeasurementSignalLayout,
+    settings: AlignmentSettings,
+    *,
+    output_channel: int,
+    expected_input: int,
+    monitor_input: int,
+) -> MeasurementAlignmentResult:
+    """
+    Align a two-channel stage and check the sweep reached the expected input.
+
+    Channels are 0-based. ``rec_monitor`` is the opposite ear's input,
+    recorded only for this check; it never enters the response. On success the
+    result is exactly :func:`align_recording_to_layout` of ``rec_expected``,
+    with the monitor's figures added to the diagnostics.
+    """
+    monitor: MeasurementAlignmentResult | None
+    try:
+        monitor = align_recording_to_layout(rec_monitor, sweep, layout, settings)
+        monitor_diag = monitor.diagnostics
+    except MeasurementAlignmentError as exc:
+        monitor, monitor_diag = None, exc.diagnostics
+    extra: dict = {
+        "monitor_input": monitor_input + 1,
+        "monitor_start_confidence": monitor_diag.start_confidence,
+        "monitor_snr_db": monitor_diag.snr_db,
+    }
+
+    side = "L" if output_channel == 0 else "R"
+    played = f"Output {output_channel + 1} ({side})"
+    # Swap L/R inputs is on when the expected input is not the output's own.
+    toggle = "off" if expected_input != output_channel else "on"
+    crossed_message = (
+        f"{played} was heard on input {monitor_input + 1}, not input "
+        f"{expected_input + 1}. The headphone may be on backwards or the left and "
+        f"right ear inputs swapped. Turn {toggle} Swap L/R inputs (Inputs panel) "
+        "or fix the wiring."
+    )
+
+    def fail(base: MeasurementDiagnostics, message: str, reason: str) -> NoReturn:
+        raise MeasurementAlignmentError(
+            message,
+            reason,
+            replace(base, failure_reason=reason, failure_message=message, **extra),
+        )
+
+    try:
+        result = align_recording_to_layout(rec_expected, sweep, layout, settings)
+    except MeasurementAlignmentError as exc:
+        if exc.reason in _NOT_ROUTING_FAILURES:
+            raise
+        if monitor is not None:
+            fail(exc.diagnostics, crossed_message, MeasurementFailureReason.CHANNELS_CROSSED)
+        fail(
+            exc.diagnostics,
+            f"{played} was not heard on input {expected_input + 1} or input "
+            f"{monitor_input + 1}. Check that the selected output device is the one "
+            "the headphone is plugged into and that its first two channels reach "
+            "the headphone.",
+            exc.reason,
+        )
+
+    start = int(result.end.selected_sweep_start)
+    window = slice(start, start + len(result.aligned_recording))
+    relative_db = _ratio_db(
+        _midband_rms(np.asarray(rec_monitor)[window]),
+        _midband_rms(result.aligned_recording),
+    )
+    extra["monitor_relative_level_db"] = relative_db
+    if relative_db > ROUTING_CROSSED_MARGIN_DB:
+        fail(result.diagnostics, crossed_message, MeasurementFailureReason.CHANNELS_CROSSED)
+    return replace(result, diagnostics=replace(result.diagnostics, **extra))

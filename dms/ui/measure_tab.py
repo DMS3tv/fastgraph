@@ -89,6 +89,21 @@ class MeasureTab(QWidget):
         self.active_ch_label.setObjectName("label_channel_active")
         layout.addWidget(self.active_ch_label)
 
+        self.swap_inputs_toggle = ToggleSwitch("Swap L/R inputs")
+        self.swap_inputs_toggle.setChecked(
+            bool(self._window._settings.get("measure_two_channel_swap_inputs"))
+        )
+        self.swap_inputs_toggle.setToolTip(
+            "Two-channel only. Record output 1 (L) on input 2 and output 2 (R) on "
+            "input 1, for a headphone worn backwards or ear inputs wired the other "
+            "way round. Results stay labelled by the L/R driver."
+        )
+        self.swap_inputs_toggle.setVisible(self._window.measure.two_channel_enabled)
+        self.swap_inputs_toggle.toggled.connect(
+            lambda on: self._window._settings.set("measure_two_channel_swap_inputs", bool(on))
+        )
+        layout.addWidget(self.swap_inputs_toggle)
+
         self.advanced_windows_drivers_toggle = ToggleSwitch("Advanced Windows Drivers")
         self.advanced_windows_drivers_toggle.setChecked(
             bool(self._window._settings.get("windows_advanced_audio_drivers"))

@@ -43,7 +43,9 @@ function.
 in float32, keeps the selected input channel, and hands the raw recording to
 alignment. On success it emits `finished(aligned + tail, sweep)`: the aligned
 sweep-length slice, followed by the post-sweep tail that the impulse-response
-window may use. It concatenates; it does not scale.
+window may use. It concatenates; it does not scale. A two-channel stage also
+records the opposite input to check routing
+(`align_two_channel_recording`); it never enters the response.
 
 *Values changed:* none.
 *Tests:* `tests/test_measurement_path.py` (tail concatenation),

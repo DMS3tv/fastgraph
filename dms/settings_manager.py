@@ -21,6 +21,8 @@ _DEFAULTS: dict[str, Any] = {
     "input_channel": 0,
     "measure_two_channel_enabled": False,
     "measure_two_channel_bottom_mode": "combined",
+    # Two-channel: record output 1 (L) on input 2 and output 2 (R) on input 1.
+    "measure_two_channel_swap_inputs": False,
     # Draw THD/H2/H3 against a secondary axis in the bottom viewport.
     "measure_distortion_overlay": False,
     # "ref_1khz" normalizes every curve to 0 dB at 1 kHz; "dbspl" keeps the

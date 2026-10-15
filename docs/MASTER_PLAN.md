@@ -34,6 +34,9 @@ the in-repo summary and the progress log. One dated row per shipped slice.
 - macOS signing and notarization are deferred; a documented slot exists in CI.
 - Squiglink credentials stay in the file store, locked to mode 0600.
 - Ideas ported from GoldenSound's PR #9 are credited in commit messages.
+- The owner's daily build bundles a private brand plugin through the generic
+  `dms/branding.py` hook. The plugin's name, contents and build steps are kept
+  out of this repository; the local session records hold them.
 
 ## Progress log
 

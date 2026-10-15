@@ -19,6 +19,7 @@ from dms.measurement_alignment import (
     AlignmentSettings,
     MeasurementAlignmentError,
     align_recording_to_layout,
+    align_two_channel_recording,
 )
 from dms.measurement_layout import build_measurement_layout, build_output_signal
 from dms.processing import F_HIGH, F_LOW
@@ -681,6 +682,26 @@ class DevicePoller(QObject):
 # ---------------------------------------------------------------------------
 
 
+def _align_stage(
+    recording, sweep, layout, settings, input_channel, output_channel, monitor_channel
+):
+    """Align the recorded sweep; a two-channel stage also checks the routing."""
+    if monitor_channel is None:
+        return align_recording_to_layout(
+            rec_mono=recording[:, 0], sweep=sweep, layout=layout, settings=settings
+        )
+    return align_two_channel_recording(
+        recording[:, 0],
+        recording[:, 1],
+        sweep,
+        layout,
+        settings,
+        output_channel=output_channel,
+        expected_input=input_channel,
+        monitor_input=monitor_channel,
+    )
+
+
 class SweepWorker(QObject):
     finished = pyqtSignal(np.ndarray, np.ndarray)  # recording, sweep
     error = pyqtSignal(str)
@@ -720,8 +741,14 @@ class SweepWorker(QObject):
         failed_recording_dir: str | None = None,
         sweep_f_low: float = F_LOW,
         sweep_f_high: float = F_HIGH,
+        monitor_channel: int | None = None,
     ) -> None:
-        """Call from a QThread or thread pool."""
+        """Call from a QThread or thread pool.
+
+        ``monitor_channel`` (two-channel stages only) is a second 0-based input
+        recorded alongside ``input_channel`` to check routing; it never enters
+        the response.
+        """
         self._abort.clear()
         try:
             self._run_inner(
@@ -746,6 +773,7 @@ class SweepWorker(QObject):
                 failed_recording_dir,
                 sweep_f_low,
                 sweep_f_high,
+                monitor_channel,
             )
         except sd.PortAudioError as e:
             self.error.emit(f"PortAudio error: {e}")
@@ -776,6 +804,7 @@ class SweepWorker(QObject):
         failed_recording_dir=None,
         sweep_f_low=F_LOW,
         sweep_f_high=F_HIGH,
+        monitor_channel=None,
     ) -> None:
         input_device_label = input_device_label or str(input_device)
         output_device_label = output_device_label or str(output_device)
@@ -791,11 +820,14 @@ class SweepWorker(QObject):
         n_in_ch = in_dev["max_input_channels"]
         n_out_ch = out_dev["max_output_channels"]
 
-        if input_channel >= n_in_ch:
-            self.error.emit(
-                f"Input channel {input_channel} not available (device has {n_in_ch} ch)."
-            )
-            return
+        # A two-channel stage also records the opposite input to check routing.
+        in_channels = (
+            [input_channel] if monitor_channel is None else [input_channel, monitor_channel]
+        )
+        for channel in in_channels:
+            if channel >= n_in_ch:
+                self.error.emit(f"Input channel {channel} not available (device has {n_in_ch} ch).")
+                return
         if output_channel is not None and (output_channel < 0 or output_channel >= n_out_ch):
             self.error.emit(
                 f"Output channel {output_channel} not available (device has {n_out_ch} ch)."
@@ -823,7 +855,7 @@ class SweepWorker(QObject):
             recording = sd.playrec(
                 out_signal,
                 samplerate=fs,
-                input_mapping=[input_channel + 1],  # 1-based
+                input_mapping=[channel + 1 for channel in in_channels],  # 1-based
                 output_mapping=[output_channel + 1] if routed_output else None,
                 device=(input_device, output_device),
                 dtype="float32",
@@ -865,11 +897,14 @@ class SweepWorker(QObject):
             snr_warn_db=snr_warn_db,
         )
         try:
-            alignment = align_recording_to_layout(
-                rec_mono=rec_mono,
-                sweep=sweep,
-                layout=layout,
-                settings=alignment_settings,
+            alignment = _align_stage(
+                recording,
+                sweep,
+                layout,
+                alignment_settings,
+                input_channel,
+                output_channel,
+                monitor_channel,
             )
         except MeasurementAlignmentError as exc:
             diagnostics = replace(exc.diagnostics, buffer_size=int(buffer_size))
@@ -895,6 +930,7 @@ class SweepWorker(QObject):
                             "output_device": output_device_label,
                             "input_channel": int(input_channel),
                             "output_channel": output_channel,
+                            "monitor_channel": monitor_channel,
                             "buffer_size": int(buffer_size),
                         },
                     )

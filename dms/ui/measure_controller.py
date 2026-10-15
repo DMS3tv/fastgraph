@@ -29,6 +29,7 @@ from dms.curator.parser import load_two_column_txt_curve
 from dms.hrtf import HRTFCurve
 from dms.measure_queue import MAX_SWEEP_ATTEMPTS, MeasurementQueue, QueueState
 from dms.measurement_alignment import (
+    MeasurementFailureReason,
     MeasurementWarningReason,
     format_diagnostics_summary,
     is_device_failure,
@@ -167,6 +168,7 @@ class MeasureController(QObject):
         self._window.measure_tab.bottom_layout_label.setVisible(enabled)
         self._window.measure_tab.bottom_layout_combo.setVisible(enabled)
         self._window.measure_tab.ch_combo.setEnabled(not enabled)
+        self._window.measure_tab.swap_inputs_toggle.setVisible(enabled)
         self.update_queue_progress()
         self.curves_changed.emit(False)
         self._window.devices.start_level_monitor()
@@ -533,12 +535,18 @@ class MeasureController(QObject):
 
         output_device = self._window.devices.current_output_device()
         input_device = self._window.devices.current_input_device()
-        input_channel = (
-            self.queue.stage - 1
-            if self.two_channel_enabled
-            else self._window.devices.current_input_channel()
-        )
-        output_channel = input_channel if self.two_channel_enabled else None
+        output_channel: int | None = None
+        monitor_channel: int | None = None
+        if self.two_channel_enabled:
+            # Results stay keyed by the output (the L/R driver being measured);
+            # Swap L/R inputs only changes which ear input records it. The
+            # opposite input is recorded too, to check the routing.
+            output_channel = self.queue.stage - 1
+            swap = bool(self._window._settings.get("measure_two_channel_swap_inputs"))
+            input_channel = 1 - output_channel if swap else output_channel
+            monitor_channel = 1 - input_channel
+        else:
+            input_channel = self._window.devices.current_input_channel()
 
         if output_device is None or input_device is None:
             self.on_sweep_error("Selected device is unavailable.")
@@ -598,6 +606,7 @@ class MeasureController(QObject):
             failed_recording_dir=self.failed_recording_dir(),
             sweep_f_low=_MEASUREMENT_F_MIN,
             sweep_f_high=_MEASUREMENT_F_MAX,
+            monitor_channel=monitor_channel,
         )
         if not started:
             self.on_sweep_error(
@@ -623,6 +632,11 @@ class MeasureController(QObject):
                     "output_level_db": float(self._window.measure_tab.queue_level_spin.value()),
                     "input_channel": input_channel + 1,
                     "output_channel": (output_channel + 1) if output_channel is not None else None,
+                    "monitor_channel": (
+                        (monitor_channel + 1) if monitor_channel is not None else None
+                    ),
+                    "input_device": self._window.devices.current_input_device_label(),
+                    "output_device": self._window.devices.current_output_device_label(),
                 },
             },
         )
@@ -652,6 +666,10 @@ class MeasureController(QObject):
                 "warning_reason",
                 "bluetooth_headphone_mode",
                 "buffer_size",
+                "monitor_input",
+                "monitor_start_confidence",
+                "monitor_snr_db",
+                "monitor_relative_level_db",
             )
             if hasattr(diagnostics, name)
         }
@@ -803,12 +821,13 @@ class MeasureController(QObject):
             message=message,
             failure_reason=failure_reason,
         )
-        # A device or stream failure is terminal: retrying only repeats it, so
-        # two-channel mode must not offer a pair retry for it.
+        # A device failure or crossed routing is terminal: retrying only
+        # repeats it, so two-channel mode must not offer a pair retry for it.
         retry_complete_pair = bool(
             self.two_channel_enabled
             and self.queue_active()
             and not is_device_failure(message, failure_reason)
+            and failure_reason != MeasurementFailureReason.CHANNELS_CROSSED
         )
         if (
             self.queue_active()

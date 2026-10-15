@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- Two-channel measurement now records both ear inputs on every stage and
+  checks the routing. A sweep heard on the wrong input (headphone on
+  backwards, ear inputs swapped) is reported once as crossed channels instead
+  of a generic "no sweep detected" with three pair retries, and loud
+  crosstalk can no longer pass as a valid measurement. A new **Swap L/R
+  inputs** option fixes swapped inputs, and every sweep start now logs the
+  selected devices.
+
 ## [0.5.0] - 2026-10-01
 
 A reliability and foundation release. The highlights:

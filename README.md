@@ -31,6 +31,14 @@ values. The generator starts at a 500 Hz sine and uses the current Measure
 output level. Fastgraph stops the generator when the mode, tab, or audio device
 changes and when the application closes.
 
+Each two-channel stage also records the opposite ear's input to check the
+routing; that input never enters the result. If output 1 (L) is heard on
+input 2 instead of input 1, or far louder there, Fastgraph stops and says the
+channels are crossed instead of retrying. If the headphone is worn backwards
+or the ear inputs are wired the other way round, turn on **Swap L/R inputs**
+in the Inputs panel: output 1 (L) is then recorded on input 2 and output 2
+(R) on input 1, and results stay labelled by the L/R driver.
+
 Current beta version: `0.5.0`
 
 ## Release Notes

@@ -755,6 +755,7 @@ class MainWindow(QMainWindow):
         self.measure_tab.measure_submode_control.setEnabled(idle)
         self.measure_tab.bottom_layout_combo.setEnabled(idle)
         self.measure_tab.ch_combo.setEnabled(idle and not self.measure.two_channel_enabled)
+        self.measure_tab.swap_inputs_toggle.setEnabled(idle)
 
         self.measure_tab.hrtf_toggle.setEnabled(idle and self.measure.hrtf is not None)
         self._settings_widget.set_editing_enabled(idle)

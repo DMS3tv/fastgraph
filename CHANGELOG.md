@@ -5,6 +5,13 @@
 - **Joel themes.** Two minimal monochrome themes, Joel (black on white) and
   Joel Dark (white on charcoal): Inter, square corners, no borders, soft grey
   controls and a solid ink Measure button.
+- **One Measure graph.** Single-channel Measure shows one graph: kept sweeps in
+  grey with their average on top in the theme accent, or the variation band when
+  Variation is on. The sweep awaiting Keep or Fail is highlighted on top until
+  you decide. With HRTF on, the sweeps are compensated too. Two-channel Measure
+  is unchanged.
+- **Distortion hidden.** The Distortion switch is hidden and off for now, so no
+  harmonic analysis runs.
 
 ## [0.5.0] - 2026-10-01
 

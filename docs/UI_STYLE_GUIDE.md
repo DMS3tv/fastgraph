@@ -169,10 +169,12 @@ pixel.
 
 ## Measure Layout
 
-Keep the queue bar directly above the top viewport. Keep the input level meter,
-Variation controls, and HRTF controls between the two viewports. Keep export
-controls below the bottom viewport. The queue bar can move its progress displays
-to a second row at narrow widths.
+Single-channel Measure has one graph: kept sweeps in grey, their average in the
+theme accent (or the variation band when Variation is on), and the sweep awaiting
+Keep or Fail highlighted on top. Keep the queue bar at the top, then the input
+level meter, Variation and HRTF controls directly above the graph, and export
+controls below it. Two-channel Measure keeps its own top and bottom viewports.
+The queue bar can move its progress displays to a second row at narrow widths.
 
 ## Brand Mode
 

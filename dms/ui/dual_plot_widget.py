@@ -1,13 +1,9 @@
 """
-Two stacked pyqtgraph viewports.
+The single-channel Measure graph.
 
-Top viewport:
-  - All kept curves in grey
-  - Most recent kept curve in desaturated teal
-
-Bottom viewport:
-  - RMS average of ALL kept curves in #FCBE11
-
+Kept sweeps are drawn thin and grey with their RMS average on top in the
+theme accent. With Variation on, the band replaces both. A sweep awaiting
+pass/fail is drawn last, highlighted, until it is kept or failed.
 """
 
 import numpy as np
@@ -43,8 +39,8 @@ pg.setConfigOption("foreground", "#888888")
 pg.setConfigOption("antialias", True)
 
 
-_GREY = (130, 130, 130, 150)
 _TEAL = (80, 180, 170, 220)
+_TEAL_LIGHT = (35, 135, 128, 235)
 _GOLD = "#FCBE11"
 _BAND_OUTER = (110, 160, 220, 55)
 _BAND_INNER = (130, 185, 255, 90)
@@ -80,7 +76,8 @@ _REFERENCE_WIDTH = 1.3
 #: and forcing the response aspect on it would rescale the frequency axis.
 _DELTA_Y_LIMIT_DB = 12.0
 _DELTA_TITLE = "Delta vs Target (1/12 Oct)"
-_AVERAGE_TITLE = "Averaged Result (1/48 Oct RMS)"
+_AVERAGE_TITLE = "Measurements and Average (1/48 Oct RMS)"
+_VARIATION_TITLE = "Variation Band (Confidence Style)"
 
 
 class _NoWheelPlotWidget(pg.PlotWidget):
@@ -129,6 +126,13 @@ class _DropPlotWidget(_NoWheelPlotWidget):
         event.acceptProposedAction()
 
 
+def _full_x_range() -> tuple[float, float]:
+    log_min = np.log10(_FREQ_MIN)
+    log_max = np.log10(_FREQ_MAX)
+    margin = (log_max - log_min) * _X_RANGE_MARGIN
+    return log_min - margin, log_max + margin
+
+
 def _configure_plot_widget(pw: pg.PlotWidget) -> None:
     ax = pw.getAxis("bottom")
     ax.setLabel("Frequency", units="Hz")
@@ -138,23 +142,10 @@ def _configure_plot_widget(pw: pg.PlotWidget) -> None:
     pw.getAxis("left").setLabel("Magnitude", units="dB")
     pw.setLogMode(x=True, y=False)
     pw.showGrid(x=True, y=True, alpha=0.15)
-    log_min = np.log10(_FREQ_MIN)
-    log_max = np.log10(_FREQ_MAX)
-    log_span = log_max - log_min
-    pw.setXRange(
-        log_min - log_span * _X_RANGE_MARGIN,
-        log_max + log_span * _X_RANGE_MARGIN,
-        padding=0,
-    )
+    pw.setXRange(*_full_x_range(), padding=0)
     ax.setTicks([[(np.log10(freq), label) for freq, label in MEASURE_FREQUENCY_TICKS]])
     # Lock to 25 dB per decade (1 decade on x equals 25 dB on y).
     pw.getPlotItem().getViewBox().setAspectLocked(lock=True, ratio=25.0)
-
-
-def _make_plot_widget(title: str) -> pg.PlotWidget:
-    pw = _NoWheelPlotWidget(title=title)
-    _configure_plot_widget(pw)
-    return pw
 
 
 class DualPlotWidget(QWidget):
@@ -169,29 +160,28 @@ class DualPlotWidget(QWidget):
         self._last_variation: VariationBand | None = None
         self._last_bottom_mode = "average"
 
+        self._pending: tuple[np.ndarray, np.ndarray] | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._top_plot = _DropPlotWidget(
-            title="All Measurements (Top)",
+        self._bot_plot = _DropPlotWidget(
+            title=_AVERAGE_TITLE,
             on_paths_dropped=self._emit_measurement_files_dropped,
         )
-        _configure_plot_widget(self._top_plot)
-        self._bot_plot = _make_plot_widget("Averaged Result (1/48 Oct RMS)")
-        self._setup_plot_context_menu(self._top_plot, "top_plot")
-        self._setup_plot_context_menu(self._bot_plot, "bottom_plot")
+        _configure_plot_widget(self._bot_plot)
+        self._setup_plot_context_menu(self._bot_plot, "measure_plot")
 
-        self._top_frame = RoundedViewportFrame(self._top_plot)
         self._bot_frame = RoundedViewportFrame(self._bot_plot)
-        layout.addWidget(self._top_frame, 1)
         layout.addWidget(self._bot_frame, 1)
         self._header_widget: QWidget | None = None
         self._between_plots_widget: QWidget | None = None
         self._footer_widget: QWidget | None = None
 
-        self._top_items: list[pg.PlotDataItem] = []
+        self._sweep_items: list[pg.PlotDataItem] = []
         self._bot_item: pg.PlotDataItem | None = None
+        self._pending_item: pg.PlotDataItem | None = None
         self._bot_extra_items: list[object] = []
         # The distortion overlay lives in its own ViewBox, so its items are
         # tracked separately from ``_bot_extra_items``: removing them from the
@@ -215,9 +205,9 @@ class DualPlotWidget(QWidget):
         self._reveal_timer.setInterval(10)
         self._reveal_timer.timeout.connect(self._tick_reveal_animation)
 
-        # 1 kHz reference line (both plots)
+        # 1 kHz and 0 dB reference lines
         self._reference_lines: list[pg.InfiniteLine] = []
-        for pw in (self._top_plot, self._bot_plot):
+        for pw in (self._bot_plot,):
             ref = pg.InfiniteLine(
                 pos=np.log10(F_REF),
                 angle=90,
@@ -254,6 +244,33 @@ class DualPlotWidget(QWidget):
             background = theme_colors(self._theme)["plot_bg"]
         return ensure_graph_color(base, background).name()
 
+    def _pending_color(self) -> str:
+        """Highlight for the sweep awaiting pass/fail: distinct from the average."""
+        colors = colors_for(self._theme, brand_mode=self._brand_mode)
+        if self._brand_mode or tokens_for(self._theme).trace_palette:
+            base = theme_trace_palette(self._theme, brand_mode=self._brand_mode)[1]
+        elif self._theme == FASTGRAPH_95:
+            base = "#000080"
+        else:
+            base = QColor(*(_TEAL_LIGHT if self._uses_light_plot() else _TEAL))
+        return ensure_graph_color(base, colors["plot_bg"]).name()
+
+    def _sweep_pen(self, index: int):
+        color = QColor(colors_for(self._theme, brand_mode=self._brand_mode)["plot_fg"])
+        color.setAlpha(110)
+        return stipple_trace_pen(
+            pg.mkPen(color=color, width=1.0),
+            index,
+            tokens_for(self._theme, brand_mode=self._brand_mode),
+        )
+
+    def _accent_pen(self, color: str, width: float, index: int):
+        return stipple_trace_pen(
+            pg.mkPen(color=color, width=width),
+            index,
+            tokens_for(self._theme, brand_mode=self._brand_mode),
+        )
+
     def _uses_light_plot(self) -> bool:
         return self._theme in {LIGHT, FASTGRAPH_95}
 
@@ -272,7 +289,7 @@ class DualPlotWidget(QWidget):
         self._brand_mode = bool(brand_mode)
         colors = colors_for(self._theme, brand_mode=self._brand_mode)
         foreground = colors["plot_fg"]
-        for plot in (self._top_plot, self._bot_plot):
+        for plot in (self._bot_plot,):
             plot.setBackground(colors["plot_bg"])
             for axis_name in ("left", "bottom"):
                 axis = plot.getAxis(axis_name)
@@ -283,28 +300,7 @@ class DualPlotWidget(QWidget):
         reference = (128, 128, 128) if light_plot else (75, 75, 75)
         for line in self._reference_lines:
             line.setPen(pg.mkPen(color=reference, style=Qt.PenStyle.DashLine))
-        for index, item in enumerate(self._top_items):
-            is_last = index == len(self._top_items) - 1
-            if is_last:
-                color = (
-                    (0, 0, 128, 235)
-                    if self._theme == FASTGRAPH_95
-                    else ((35, 135, 128, 235) if light_plot else _TEAL)
-                )
-                width = 1.7 if light_plot else 1.5
-            else:
-                color = (90, 98, 108, 180) if light_plot else _GREY
-                width = 1.0
-            item.setPen(pg.mkPen(color=color, width=width))
-        if self._bot_item is not None:
-            self._bot_item.setPen(pg.mkPen(color=self._bottom_accent_color(), width=2.0))
-        if self._kept_curves or self._last_average is not None or self._last_variation is not None:
-            self._redraw_top(self._kept_curves)
-            self._redraw_bottom(
-                average=self._last_average,
-                variation=self._last_variation,
-                mode=self._last_bottom_mode,
-            )
+        self._redraw()
         if self._last_distortion is not None:
             right = self._bot_plot.getPlotItem().getAxis("right")
             right.setPen(pg.mkPen(foreground))
@@ -322,20 +318,21 @@ class DualPlotWidget(QWidget):
         average: tuple[np.ndarray, np.ndarray] | None,
         variation: VariationBand | None = None,
         bottom_mode: str = "average",
-        animate_last: bool = False,
+        pending: tuple[np.ndarray, np.ndarray] | None = None,
+        animate_pending: bool = False,
     ) -> None:
-        """Redraw both viewports. Call from main thread only."""
-        self._reveal_timer.stop()
-        self._reveal_item = None
-        self._reveal_curve = None
+        """Redraw the graph. ``pending`` is the sweep awaiting pass/fail.
+
+        Call from the main thread only.
+        """
         self._kept_curves = kept
         self._last_average = average
         self._last_variation = variation
         self._last_bottom_mode = bottom_mode
-        self._redraw_top(kept)
-        self._redraw_bottom(average=average, variation=variation, mode=bottom_mode)
-        if animate_last and kept and self._top_items:
-            self._start_last_curve_reveal(kept[-1], self._top_items[-1])
+        self._pending = pending
+        self._redraw()
+        if animate_pending and pending is not None and self._pending_item is not None:
+            self._start_last_curve_reveal(pending, self._pending_item)
 
     def clear_all(self) -> None:
         self._reveal_timer.stop()
@@ -345,15 +342,8 @@ class DualPlotWidget(QWidget):
         self._last_average = None
         self._last_variation = None
         self._last_bottom_mode = "average"
-        for item in self._top_items:
-            self._top_plot.removeItem(item)
-        self._top_items.clear()
-        if self._bot_item:
-            self._bot_plot.removeItem(self._bot_item)
-            self._bot_item = None
-        for item in self._bot_extra_items:
-            self._bot_plot.removeItem(item)
-        self._bot_extra_items.clear()
+        self._pending = None
+        self._clear_items()
         self.set_distortion_overlay(None, None)
         # A full reset takes the comparison layers down too. The window
         # re-pushes whatever target and references are still loaded right
@@ -427,11 +417,7 @@ class DualPlotWidget(QWidget):
                 self._bot_plot.removeItem(self._delta_zero_line)
                 self._delta_zero_line = None
         if changed:
-            self._redraw_bottom(
-                average=self._last_average,
-                variation=self._last_variation,
-                mode=self._last_bottom_mode,
-            )
+            self._redraw()
             self._redraw_compare_layers()
 
     def _redraw_compare_layers(self) -> None:
@@ -593,25 +579,23 @@ class DualPlotWidget(QWidget):
         vb.setYRange(_DISTORTION_Y_MIN, _DISTORTION_Y_MAX, padding=0)
 
     def set_between_plots_widget(self, widget: QWidget) -> None:
-        """Insert application controls between the top and bottom viewports."""
+        """Insert application controls immediately above the graph."""
         if self._between_plots_widget is not None:
             self.layout().removeWidget(self._between_plots_widget)
             self._between_plots_widget.setParent(None)
         self._between_plots_widget = widget
-        top_index = self.layout().indexOf(self._top_frame)
-        self.layout().insertWidget(top_index + 1, widget, 0)
+        self.layout().insertWidget(self.layout().indexOf(self._bot_frame), widget, 0)
 
     def set_header_widget(self, widget: QWidget) -> None:
-        """Insert application controls immediately above the top viewport."""
+        """Insert application controls at the very top, above the controls row."""
         if self._header_widget is not None:
             self.layout().removeWidget(self._header_widget)
             self._header_widget.setParent(None)
         self._header_widget = widget
-        top_index = self.layout().indexOf(self._top_frame)
-        self.layout().insertWidget(top_index, widget, 0)
+        self.layout().insertWidget(0, widget, 0)
 
     def set_footer_widget(self, widget: QWidget) -> None:
-        """Insert application controls immediately below the bottom viewport."""
+        """Insert application controls immediately below the graph."""
         if self._footer_widget is not None:
             self.layout().removeWidget(self._footer_widget)
             self._footer_widget.setParent(None)
@@ -680,98 +664,76 @@ class DualPlotWidget(QWidget):
     # Internal drawing
     # ------------------------------------------------------------------
 
-    def _redraw_top(self, kept: list[tuple[np.ndarray, np.ndarray]]) -> None:
-        # Remove all old items
-        for item in self._top_items:
-            self._top_plot.removeItem(item)
-        self._top_items.clear()
-
-        for i, (freqs, mag_db) in enumerate(kept):
-            is_last = i == len(kept) - 1
-            custom_palette = tokens_for(self._theme).trace_palette if not self._brand_mode else ()
-            if custom_palette:
-                color = QColor(custom_palette[i % len(custom_palette)])
-                color.setAlpha(235 if is_last else 190)
-                pen = pg.mkPen(color=color, width=1.7 if is_last else 1.15)
-            elif is_last:
-                light_plot = self._uses_light_plot()
-                color = (
-                    (0, 0, 128, 235)
-                    if self._theme == FASTGRAPH_95
-                    else ((35, 135, 128, 235) if light_plot else _TEAL)
-                )
-                pen = pg.mkPen(color=color, width=1.7 if light_plot else 1.5)
-            else:
-                color = (90, 98, 108, 180) if self._uses_light_plot() else _GREY
-                pen = pg.mkPen(color=color, width=1.0)
-            pen = stipple_trace_pen(
-                pen,
-                i,
-                tokens_for(self._theme, brand_mode=self._brand_mode),
-            )
-            display_freqs, display_mag = self._display_curve(freqs, mag_db)
-            item = self._top_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
-            self._top_items.append(item)
-
-        self._auto_center_y(self._top_plot, kept)
-
-    def _clear_bottom_items(self) -> None:
-        if self._bot_item:
-            self._bot_plot.removeItem(self._bot_item)
-            self._bot_item = None
-        for item in self._bot_extra_items:
-            self._bot_plot.removeItem(item)
+    def _clear_items(self) -> None:
+        self._reveal_timer.stop()
+        self._reveal_item = None
+        self._reveal_curve = None
+        for item in [
+            *self._sweep_items,
+            self._bot_item,
+            self._pending_item,
+            *self._bot_extra_items,
+        ]:
+            if item is not None:
+                self._bot_plot.removeItem(item)
+        self._sweep_items.clear()
+        self._bot_item = None
+        self._pending_item = None
         self._bot_extra_items.clear()
 
-    def _redraw_bottom(
-        self,
-        average: tuple[np.ndarray, np.ndarray] | None,
-        variation: VariationBand | None,
-        mode: str,
-    ) -> None:
-        self._clear_bottom_items()
+    def _plot(self, curve: tuple[np.ndarray, np.ndarray], pen) -> pg.PlotDataItem:
+        display_freqs, display_mag = self._display_curve(*curve)
+        return self._bot_plot.plot(display_freqs, display_mag, pen=pen, antialias=True)
+
+    @staticmethod
+    def _has_points(curve: tuple[np.ndarray, np.ndarray] | None) -> bool:
+        return curve is not None and len(curve[0]) > 0
+
+    def _redraw(self) -> None:
+        self._clear_items()
+        average = self._last_average
+        framed: list[tuple[np.ndarray, np.ndarray]] = []
         if self._delta_mode:
-            # The caller hands the delta curve in through ``average``; the
-            # variation band is meaningless against a target and is skipped.
+            # The caller hands the delta curve in through ``average`` (and the
+            # pending sweep as a delta); sweeps and the band are meaningless
+            # against a target and are skipped.
             self._bot_plot.setTitle(_DELTA_TITLE)
-            if average is not None and len(average[0]) > 0:
-                freqs, mag_db = average
-                display_freqs, display_mag = self._display_curve(freqs, mag_db)
-                pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
-                pen = stipple_trace_pen(
-                    pen,
-                    0,
-                    tokens_for(self._theme, brand_mode=self._brand_mode),
+            if self._has_points(average):
+                self._bot_item = self._plot(
+                    average, self._accent_pen(self._bottom_accent_color(), 2.0, 0)
                 )
-                self._bot_item = self._bot_plot.plot(
-                    display_freqs, display_mag, pen=pen, antialias=True
+        elif self._last_bottom_mode == "variation":
+            self._bot_plot.setTitle(_VARIATION_TITLE)
+            framed = self._draw_variation_bottom(self._last_variation)
+        else:
+            self._bot_plot.setTitle(_AVERAGE_TITLE)
+            for index, curve in enumerate(self._kept_curves):
+                self._sweep_items.append(self._plot(curve, self._sweep_pen(index)))
+            framed = list(self._kept_curves)
+            if self._has_points(average):
+                self._bot_item = self._plot(
+                    average, self._accent_pen(self._bottom_accent_color(), 2.2, 0)
                 )
+                framed.append(average)
+
+        if self._has_points(self._pending):
+            self._pending_item = self._plot(
+                self._pending, self._accent_pen(self._pending_color(), 2.0, 1)
+            )
+            self._pending_item.setZValue(5)
+            framed.append(self._pending)
+
+        if self._delta_mode:
             self._bot_plot.setYRange(-_DELTA_Y_LIMIT_DB, _DELTA_Y_LIMIT_DB, padding=0)
-            return
+        else:
+            self._auto_center_y(self._bot_plot, framed)
 
-        if mode == "variation":
-            self._bot_plot.setTitle("Variation Band (Confidence Style)")
-            self._draw_variation_bottom(variation)
-            return
-
-        self._bot_plot.setTitle(_AVERAGE_TITLE)
-        if average is not None and len(average[0]) > 0:
-            freqs, mag_db = average
-            display_freqs, display_mag = self._display_curve(freqs, mag_db)
-            pen = pg.mkPen(color=self._bottom_accent_color(), width=2.0)
-            pen = stipple_trace_pen(
-                pen,
-                0,
-                tokens_for(self._theme, brand_mode=self._brand_mode),
-            )
-            self._bot_item = self._bot_plot.plot(
-                display_freqs, display_mag, pen=pen, antialias=True
-            )
-            self._auto_center_y(self._bot_plot, [average])
-
-    def _draw_variation_bottom(self, band: VariationBand | None) -> None:
+    def _draw_variation_bottom(
+        self, band: VariationBand | None
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Draw the band; return the curves that frame it for the y range."""
         if band is None or len(band.freqs) == 0:
-            return
+            return []
         if self._uses_retro_steps():
             band = retro_step_band(band)
 
@@ -804,27 +766,22 @@ class DualPlotWidget(QWidget):
                 extrema_brush=extrema_color,
             )
         )
-        self._auto_center_y(self._bot_plot, [(band.freqs, band.p10), (band.freqs, band.p90)])
+        return [(band.freqs, band.p10), (band.freqs, band.p90)]
 
     def _auto_center_y(
         self,
         pw: pg.PlotWidget,
         curves: list[tuple[np.ndarray, np.ndarray]],
     ) -> None:
-        if not curves:
-            pw.setYRange(_Y_DEFAULT_TOP_DB - _Y_WINDOW_DB, _Y_DEFAULT_TOP_DB, padding=0)
-            return
-        all_db = np.concatenate([m for _, m in curves])
-        if len(all_db) == 0:
-            pw.setYRange(_Y_DEFAULT_TOP_DB - _Y_WINDOW_DB, _Y_DEFAULT_TOP_DB, padding=0)
-            return
-
-        # Default framing is -15..+15 dB around 0 dB.
-        # If peaks exceed the top, shift the fixed 30 dB window upward.
-        data_top = float(np.nanmax(all_db)) + _Y_TOP_HEADROOM_DB
-        hi = max(_Y_DEFAULT_TOP_DB, data_top)
-        lo = hi - _Y_WINDOW_DB
-        pw.setYRange(lo, hi, padding=0)
+        # Default framing is -15..+15 dB around 0 dB. If peaks exceed the top,
+        # shift the 30 dB window upward. Both ranges are set together so the
+        # aspect lock widens the dB window on a tall graph instead of cropping
+        # the frequency axis.
+        all_db = np.concatenate([m for _, m in curves]) if curves else np.array([])
+        hi = _Y_DEFAULT_TOP_DB
+        if len(all_db) > 0:
+            hi = max(hi, float(np.nanmax(all_db)) + _Y_TOP_HEADROOM_DB)
+        pw.setRange(xRange=_full_x_range(), yRange=(hi - _Y_WINDOW_DB, hi), padding=0)
 
     def _start_last_curve_reveal(
         self,

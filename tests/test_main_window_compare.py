@@ -247,3 +247,31 @@ def test_missing_remembered_target_is_dropped_silently(tmp_path, make_main_windo
 
     assert window.measure_compare._measure_target is None
     assert window._settings.get("measure_target_path") == ""
+
+
+def test_pending_sweep_stays_highlighted_until_keep_and_distortion_is_hidden(
+    make_main_window,
+) -> None:
+    window = make_main_window()
+    measure = window.measure
+    plots = window._plots.single
+    measure.kept_curves.append(_shaped_curve())
+    measure.kept_sweep_meta.append({})
+    measure.recompute_average()
+    freqs, mag = _shaped_curve()
+    measure.queue.pending_curve = (freqs, mag + 2.0)
+    measure.queue.state = QueueState.PASS_FAIL
+
+    # A plain refresh (theme, toggle) keeps the pending sweep on screen.
+    measure.refresh()
+    assert plots._pending_item is not None
+    window.measure_tab.variation_toggle.setChecked(True)
+    assert plots._pending_item is not None
+
+    measure.queue.pending_curve = None
+    measure.queue.state = QueueState.IDLE
+    measure.refresh()
+    assert plots._pending_item is None
+
+    assert window.measure_tab.distortion_toggle.isHidden()
+    assert not window.measure_tab.distortion_toggle.isChecked()

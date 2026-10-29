@@ -194,7 +194,6 @@ class MeasureController(QObject):
             self.two_channel_enabled and not balance
         )
         self._window.measure_tab.variation_toggle.setVisible(not balance)
-        self._window.measure_tab.distortion_toggle.setVisible(not balance)
         self._window.measure_tab.hrtf_toggle.setVisible(not balance)
         self._window.measure_tab.hrtf_combo.setVisible(not balance)
         self._window.measure_tab.hrtf_label.setVisible(not balance)
@@ -1293,27 +1292,38 @@ class MeasureController(QObject):
         avg = self.bottom_curve_for_display()
         self.recompute_variation()
 
-        kept = list(self.kept_curves)
-        if show_pending and self.queue.pending_curve is not None:
-            kept = kept + [self.queue.pending_curve]
+        # One graph: sweeps, average and the sweep awaiting pass/fail share a
+        # scale, so the HRTF applied to the average applies to them too. The
+        # pending sweep stays drawn through any redraw until Keep or Fail.
+        active_hrtf = self.hrtf if self.is_hrtf_active() else None
+        kept = [
+            (freqs, active_hrtf.apply(freqs, mag_db) if active_hrtf else mag_db)
+            for freqs, mag_db in self.kept_curves
+        ]
+        pending = self.queue.pending_curve if self.queue.state == QueueState.PASS_FAIL else None
+        if pending is not None and active_hrtf is not None:
+            pending = (pending[0], active_hrtf.apply(*pending))
 
         bottom_mode = self.bottom_view_mode()
         if delta_on:
-            # The bottom viewport shows measurement - target instead of the
-            # average, so the variation band has nothing to describe.
+            # The graph shows measurement - target instead of the average, so
+            # the sweeps and the variation band have nothing to describe.
             delta = self._window.measure_compare.delta_result(
                 self.bottom_curve_for_display_and_export()
             )
             if delta is not None:
                 avg = (delta.freqs, delta.delta_db)
                 bottom_mode = "average"
+            pending_delta = self._window.measure_compare.delta_result(pending)
+            pending = (pending_delta.freqs, pending_delta.delta_db) if pending_delta else None
 
         self._window._plots.update_curves(
             kept=kept,
             average=avg,
             variation=self.variation,
             bottom_mode=bottom_mode,
-            animate_last=show_pending and self.queue.pending_curve is not None,
+            pending=pending,
+            animate_pending=show_pending and pending is not None,
         )
         self._window.measure_io.sync_export_button()
 

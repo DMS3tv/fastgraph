@@ -54,7 +54,7 @@ def test_rnd_rearranged_controls_notes_and_channel_sync(make_main_window) -> Non
     assert isinstance(window.measure_tab.queue_n_spin, ModernSpinBox)
     assert isinstance(window.measure_tab.queue_level_spin, ModernDoubleSpinBox)
     assert isinstance(window._rnd_widget._target_offset_spin, ModernDoubleSpinBox)
-    assert window._plots.single._top_frame.radius == 10
+    assert window._plots.single._bot_frame.radius == 10
     assert window._rnd_widget._plots.top_frame.radius == 10
     window._rnd_widget._notes_toggle.setChecked(False)
     window._rnd_widget._notes_toggle.clicked.emit(False)

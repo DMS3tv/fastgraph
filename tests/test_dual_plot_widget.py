@@ -3,6 +3,7 @@
 import numpy as np
 from helpers import ramp_curve
 
+from dms.processing import VariationBand
 from dms.theme import DARK, FASTGRAPH_95, HACKERMAN_95, LIGHT
 from dms.ui.dual_plot_widget import _AVERAGE_TITLE, _DELTA_TITLE, _DELTA_Y_LIMIT_DB, DualPlotWidget
 
@@ -107,25 +108,54 @@ def test_plot_theme_change_preserves_curves(qapp) -> None:
     widget = DualPlotWidget()
     curve = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
     widget.update_curves([curve], curve)
-    top_count = len(widget._top_items)
+    top_count = len(widget._sweep_items)
 
     widget.apply_theme(LIGHT)
     widget.apply_theme(FASTGRAPH_95)
-    assert all(item.opts["antialias"] is True for item in widget._top_items)
+    assert all(item.opts["antialias"] is True for item in widget._sweep_items)
     assert widget._bot_item is not None and widget._bot_item.opts["antialias"] is True
-    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
-    np.testing.assert_array_equal(widget._top_items[0].yData, [1.0, 1.0, 0.0])
+    np.testing.assert_array_equal(widget._sweep_items[0].xData, [100.0, 1000.0, 1000.0])
+    np.testing.assert_array_equal(widget._sweep_items[0].yData, [1.0, 1.0, 0.0])
     np.testing.assert_array_equal(widget._kept_curves[0][0], curve[0])
     np.testing.assert_array_equal(widget._kept_curves[0][1], curve[1])
     widget.apply_theme(HACKERMAN_95)
-    assert widget._top_items[0].opts["pen"].color().name().upper() == "#39FF14"
     assert widget._bot_item is not None
     assert widget._bot_item.opts["pen"].color().name().upper() == "#39FF14"
-    np.testing.assert_array_equal(widget._top_items[0].xData, [100.0, 1000.0, 1000.0])
+    np.testing.assert_array_equal(widget._sweep_items[0].xData, [100.0, 1000.0, 1000.0])
     widget.apply_theme(DARK)
 
-    assert len(widget._top_items) == top_count
-    assert all(item.opts["antialias"] is True for item in widget._top_items)
-    np.testing.assert_array_equal(widget._top_items[0].xData, curve[0])
-    np.testing.assert_array_equal(widget._top_items[0].yData, curve[1])
-    assert widget._top_plot.backgroundBrush().color().name() == "#1a1a1a"
+    assert len(widget._sweep_items) == top_count
+    assert all(item.opts["antialias"] is True for item in widget._sweep_items)
+    np.testing.assert_array_equal(widget._sweep_items[0].xData, curve[0])
+    np.testing.assert_array_equal(widget._sweep_items[0].yData, curve[1])
+    assert widget._bot_plot.backgroundBrush().color().name() == "#1a1a1a"
+
+
+def test_sweeps_average_and_pending_share_one_graph(qapp) -> None:
+    widget = DualPlotWidget()
+    try:
+        sweep = (np.array([100.0, 1000.0]), np.array([1.0, 0.0]))
+        pending = (np.array([100.0, 1000.0]), np.array([3.0, 0.0]))
+        widget.update_curves([sweep, sweep], sweep, pending=pending)
+
+        assert widget._bot_plot.getPlotItem().titleLabel.text == _AVERAGE_TITLE
+        assert len(widget._sweep_items) == 2
+        assert widget._bot_item is not None
+        assert widget._pending_item is not None
+        assert widget._pending_item.zValue() > widget._bot_item.zValue()
+        assert widget._pending_item.opts["pen"].color() != widget._bot_item.opts["pen"].color()
+
+        # Variation replaces sweeps and average; the pending sweep stays on top.
+        flat = np.zeros(2)
+        band = VariationBand(
+            freqs=np.array([100.0, 1000.0]), p10=flat, p25=flat, median=flat, p75=flat, p90=flat
+        )
+        widget.update_curves([sweep], sweep, band, "variation", pending=pending)
+        assert widget._sweep_items == [] and widget._bot_item is None
+        assert widget._pending_item is not None
+
+        # Keep or Fail clears it.
+        widget.update_curves([sweep, sweep], sweep)
+        assert widget._pending_item is None
+    finally:
+        widget.deleteLater()

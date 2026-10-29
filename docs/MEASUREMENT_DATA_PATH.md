@@ -158,7 +158,9 @@ no arithmetic. In the retro themes it passes the curve through
 `retro_step_series`, which keeps a subset of the original samples (extremes
 preserved) and draws them as a staircase; it invents no values.
 
-*Values changed:* smoothing only, and only on the bottom plot.
+*Values changed:* smoothing only, and only on the average (sweeps are drawn
+unsmoothed). With HRTF on, the same compensation is applied to the drawn
+sweeps as to the average, so they share one scale.
 *Tests:* `tests/test_processing_smoothing.py` (byte-identical regression),
 `tests/test_graph_display.py`.
 

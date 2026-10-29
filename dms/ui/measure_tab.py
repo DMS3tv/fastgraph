@@ -327,7 +327,7 @@ class MeasureTab(QWidget):
 
         self.variation_toggle = ToggleSwitch("Variation")
         self.variation_toggle.setToolTip(
-            "Show confidence-style spread of kept measurements in the bottom viewport."
+            "Show the confidence-style spread of kept measurements instead of the sweeps."
         )
         self.variation_toggle.stateChanged.connect(self._window.measure.refresh)
         row.addWidget(self.variation_toggle)
@@ -338,16 +338,16 @@ class MeasureTab(QWidget):
             "secondary axis in the bottom viewport. Needs at least "
             f"{_DISTORTION_MIN_SNR_DB:.0f} dB SNR."
         )
-        self.distortion_toggle.setChecked(
-            bool(self._window._settings.get("measure_distortion_overlay"))
-        )
         self.distortion_toggle.stateChanged.connect(
             self._window.measure.on_distortion_overlay_changed
         )
         row.addWidget(self.distortion_toggle)
+        # Distortion is not measured for now: the switch stays off and hidden,
+        # which also skips the harmonic analysis. Show it again to restore.
+        self.distortion_toggle.hide()
 
         self.hrtf_toggle = ToggleSwitch("HRTF")
-        self.hrtf_toggle.setToolTip("Apply the selected HRTF to the bottom viewport.")
+        self.hrtf_toggle.setToolTip("Apply the selected HRTF to the measurements.")
         self.hrtf_toggle.stateChanged.connect(self._window.measure.refresh)
         row.addWidget(self.hrtf_toggle)
 

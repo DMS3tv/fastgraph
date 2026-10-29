@@ -84,6 +84,8 @@ class ThemeTokens:
     terminal_chrome: bool = False
     dither_chrome: bool = False
     stipple_traces: bool = False
+    # Monochrome: square viewports, ink toggles and ink primary buttons.
+    ink_controls: bool = False
     trace_palette: tuple[str, ...] = ()
 
 
@@ -377,6 +379,87 @@ DITHER_TOKENS = ThemeTokens(
     ),
 )
 
+JOEL_TOKENS = ThemeTokens(
+    name="joel",
+    background="#FFFFFF",
+    viewport="#FFFFFF",
+    panel="#FFFFFF",
+    raised="#F2F2F2",
+    control="#F2F2F2",
+    control_hover="#E4E4E4",
+    alternate="#EBEBEB",
+    text="#000000",
+    muted="#5C5C5C",
+    disabled="#A3A3A3",
+    # Borderless: outlines take the page colour, fills separate controls.
+    border="#FFFFFF",
+    selected="#E4E4E4",
+    accent="#000000",
+    focus="#000000",
+    shadow="#000000",
+    danger="#B00020",
+    positive="#1A7F37",
+    warning="#8A5A00",
+    plot_bg="#FFFFFF",
+    plot_fg="#5C5C5C",
+    plot_grid="#E4E4E4",
+    typography=STANDARD_TYPOGRAPHY,
+    geometry=DITHER_GEOMETRY,
+    motion=DITHER_MOTION,
+    flat_controls=True,
+    ink_controls=True,
+    trace_palette=(
+        "#000000",
+        "#D0021B",
+        "#0050C8",
+        "#B35900",
+        "#1B7F3B",
+        "#7B2FBE",
+        "#00727A",
+        "#B0177A",
+    ),
+)
+
+JOEL_DARK_TOKENS = ThemeTokens(
+    name="joel_dark",
+    background="#1C1C1C",
+    viewport="#1C1C1C",
+    panel="#1C1C1C",
+    raised="#2A2A2A",
+    control="#2A2A2A",
+    control_hover="#383838",
+    alternate="#323232",
+    text="#FFFFFF",
+    muted="#A3A3A3",
+    disabled="#666666",
+    border="#1C1C1C",
+    selected="#3A3A3A",
+    accent="#FFFFFF",
+    focus="#FFFFFF",
+    shadow="#000000",
+    danger="#FF6B6B",
+    positive="#5FD38A",
+    warning="#E8C060",
+    plot_bg="#1C1C1C",
+    plot_fg="#A3A3A3",
+    plot_grid="#333333",
+    typography=STANDARD_TYPOGRAPHY,
+    geometry=DITHER_GEOMETRY,
+    motion=DITHER_MOTION,
+    flat_controls=True,
+    ink_controls=True,
+    trace_palette=(
+        "#FFFFFF",
+        "#FF5A5F",
+        "#5AA9FF",
+        "#FFB020",
+        "#3DDC84",
+        "#C38BFF",
+        "#3ED6E0",
+        "#FF7AC6",
+    ),
+)
+
 # Trace cycle for themes without their own palette (Curator, R&D).
 DEFAULT_TRACE_COLORS = [
     "#15f4ee",
@@ -400,6 +483,8 @@ THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
     ),
     ThemeDefinition("hackerman95", "Hackerman 95", HACKERMAN_95_TOKENS, "hackerman95"),
     ThemeDefinition("dither", "Dither", DITHER_TOKENS, "dither"),
+    ThemeDefinition("joel", "Joel", JOEL_TOKENS, "joel"),
+    ThemeDefinition("joel_dark", "Joel Dark", JOEL_DARK_TOKENS, "joel"),
 )
 
 _THEMES_BY_KEY = {definition.key: definition for definition in THEME_DEFINITIONS}

@@ -3,13 +3,15 @@ from pathlib import Path
 
 import dms.settings_manager as settings_module
 from dms.settings_manager import SettingsManager
-from dms.style_tokens import DARK_TOKENS, DITHER_TOKENS, tokens_for
+from dms.style_tokens import DARK_TOKENS, DITHER_TOKENS, JOEL_DARK_TOKENS, JOEL_TOKENS, tokens_for
 from dms.theme import (
     DARK,
     DITHER,
     FASTGRAPH_95,
     FASTGRAPH_95_DARK,
     HACKERMAN_95,
+    JOEL,
+    JOEL_DARK,
     LIGHT,
     ThemeController,
     _status_accent_colors,
@@ -152,3 +154,14 @@ def test_brand_mode_is_refused_without_a_brand(qapp, monkeypatch, tmp_path: Path
     controller.set_brand_mode(True, persist=False)
     assert controller.brand_mode is False
     assert qapp.styleSheet() == application_stylesheet(controller.theme)
+
+
+def test_joel_themes_are_monochrome_with_readable_traces() -> None:
+    for theme, tokens in ((JOEL, JOEL_TOKENS), (JOEL_DARK, JOEL_DARK_TOKENS)):
+        palette = theme_trace_palette(theme)
+
+        assert palette[0] == tokens.text == tokens.accent
+        assert len(set(palette)) == 8
+        assert all(graph_contrast_ratio(color, tokens.plot_bg) >= 4.5 for color in palette)
+        assert "border-radius: 8px" not in application_stylesheet(theme)
+        assert _status_accent_colors(tokens)["start"][0] == tokens.text

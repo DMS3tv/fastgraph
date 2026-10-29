@@ -23,6 +23,8 @@ FASTGRAPH_95 = "fastgraph95"
 FASTGRAPH_95_DARK = "fastgraph95_dark"
 HACKERMAN_95 = "hackerman95"
 DITHER = "dither"
+JOEL = "joel"
+JOEL_DARK = "joel_dark"
 VALID_THEMES = {definition.key for definition in THEME_DEFINITIONS}
 
 
@@ -94,7 +96,7 @@ def ensure_graph_color(
 
 def theme_colors(theme: str) -> dict[str, str]:
     token = tokens_for(normalize_theme(theme))
-    light = token.name == LIGHT
+    light = token.name in {LIGHT, JOEL}
     return _color_dict(
         token,
         meter_bg="#e1e5ea" if light else "#111111",
@@ -158,6 +160,17 @@ def _status_accent_colors(tokens: ThemeTokens) -> dict[str, tuple[str, str, str]
             "start": ("#4A2318", "#5C2D1E", "#E8845C"),
             "cancel": ("#4E3520", "#603F26", "#E0A87A"),
             "amber": ("#453A1C", "#554823", "#E3C67C"),
+        }
+    if tokens.name in {JOEL, JOEL_DARK}:
+        # Monochrome: start is the inverted ink button, the rest stay paper
+        # with only keep/fail text carrying colour.
+        ink, paper, hover = tokens.text, tokens.background, tokens.control_hover
+        return {
+            "keep": (paper, hover, tokens.positive),
+            "fail": (paper, hover, tokens.danger),
+            "start": (ink, tokens.muted, paper),
+            "cancel": (paper, hover, ink),
+            "amber": (paper, hover, ink),
         }
     if tokens.name == LIGHT:
         return {
@@ -695,11 +708,40 @@ def _dither_stylesheet(c: dict[str, str]) -> str:
     """
 
 
+def _joel_stylesheet(c: dict[str, str]) -> str:
+    """Borderless monochrome overrides: soft fills, underlined tabs, no rounding."""
+    return f"""
+    QToolTip {{ border: none; background-color: {c["text"]}; color: {c["window"]}; }}
+    QWidget[surfaceLevel="viewport"], QWidget[surfaceLevel="panel"],
+    QWidget[surfaceLevel="raised"] {{ border: none; background-color: {c["window"]}; }}
+    QProgressBar {{ border: none; background-color: {c["alternate"]}; text-align: center; }}
+    QAbstractItemView, QListWidget {{ border: none; }}
+    QPushButton, QToolButton[menuButton="true"] {{ border: none; }}
+    QPushButton:pressed {{ background-color: {c["text"]}; color: {c["window"]}; padding-top: 6px; }}
+    QWidget#tab_header_controls QPushButton, QPushButton#btn_feedback {{ border-radius: 0px; }}
+    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {{ border: none; }}
+    QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus,
+    QPlainTextEdit:focus {{ border-bottom: 1px solid {c["text"]}; }}
+    QGroupBox {{ border: none; border-radius: 0px; }}
+    QGroupBox::title {{ left: 0px; padding: 0 6px 0 0; }}
+    QTabWidget::pane {{ border: none; border-radius: 0px; }}
+    QTabBar::tab {{ background: transparent; border: none; border-radius: 0px; margin-right: 0px; padding: 9px 14px; color: {c["muted"]}; font-weight: 500; }}
+    QTabBar::tab:hover {{ background: transparent; color: {c["text"]}; }}
+    QTabBar::tab:selected {{ background: transparent; color: {c["text"]}; font-weight: 600; border-bottom: 2px solid {c["text"]}; }}
+    QCheckBox::indicator {{ border: none; border-radius: 0px; background: {c["alternate"]}; }}
+    QCheckBox::indicator:checked {{ background: {c["text"]}; border-color: {c["text"]}; }}
+    QScrollBar:vertical, QScrollBar:horizontal {{ background: transparent; border-radius: 0px; }}
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{ border-radius: 0px; background: {c["alternate"]}; }}
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: {c["muted"]}; }}
+    """
+
+
 _STYLE_FAMILY_BUILDERS = {
     "fastgraph95": _fastgraph95_stylesheet,
     "fastgraph95_dark": _fastgraph95_dark_stylesheet,
     "hackerman95": _hackerman95_stylesheet,
     "dither": _dither_stylesheet,
+    "joel": _joel_stylesheet,
 }
 
 
@@ -956,12 +998,13 @@ class ThemeController(QObject):
             mode = "brand"
             palette = _palette_from_colors(brand.theme_colors)
             stylesheet = brand_application_stylesheet(brand)
-            flat_controls = False
+            print_fonts = False
         else:
             mode = self._theme
             palette = _palette(self._theme)
             stylesheet = application_stylesheet(self._theme)
-            flat_controls = tokens_for(self._theme).flat_controls
+            tokens = tokens_for(self._theme)
+            print_fonts = tokens.flat_controls and tokens.dither_chrome
 
         # Qt re-polishes every live widget on setStyleSheet even when the
         # sheet is unchanged, so skip the whole application when nothing
@@ -975,4 +1018,4 @@ class ThemeController(QObject):
         self._app.setProperty("fastgraphVisualMode", mode)
         self._app.setPalette(palette)
         self._app.setStyleSheet(stylesheet)
-        configure_dither_typography(self._app, flat_controls)
+        configure_dither_typography(self._app, print_fonts)

@@ -312,8 +312,9 @@ class ModernButton(QPushButton):
             minimum = geometry.button_height
         hint.setHeight(max(hint.height(), minimum + 4))
         if tokens.flat_controls and role != "swatch":
-            font = dither_heading_font(self.font())
-            label_width = QFontMetrics(font).horizontalAdvance(self.text().upper())
+            font = dither_heading_font(self.font()) if tokens.dither_chrome else self.font()
+            label = self.text().upper() if tokens.dither_chrome else self.text()
+            label_width = QFontMetrics(font).horizontalAdvance(label)
             border_width = max(geometry.border_px, geometry.focus_border_px)
             painted_width = label_width + 2 * _FLAT_LABEL_HORIZONTAL_INSET + 2 * border_width
             hint.setWidth(max(hint.width(), painted_width + _FLAT_PAINT_RECT_WIDTH_LOSS))
@@ -452,7 +453,7 @@ class ModernButton(QPushButton):
         if not self.isEnabled():
             face = QColor(tokens.alternate)
             label = QColor(tokens.disabled)
-        elif pressed:
+        elif pressed or (tokens.ink_controls and self.objectName() == "btn_start"):
             face = role_color
             label = QColor(tokens.background)
         else:
@@ -460,7 +461,7 @@ class ModernButton(QPushButton):
             label = QColor(tokens.muted if self.role() == "ghost" else tokens.text)
 
         painter.fillRect(rect, face)
-        if hovered:
+        if hovered and tokens.dither_chrome:
             density, sweep_fraction = self._flat_hover_dither_state()
             dither_rect = rect.adjusted(1, 1, -1, -1)
             visible_height = math.ceil(dither_rect.height() * sweep_fraction)
@@ -478,7 +479,10 @@ class ModernButton(QPushButton):
                     density=density,
                 )
 
-        border = QColor(tokens.text if hovered else tokens.border)
+        if hovered and tokens.ink_controls and face == QColor(tokens.control):
+            face = QColor(tokens.control_hover)
+            painter.fillRect(rect, face)
+        border = QColor(tokens.text if hovered and not tokens.ink_controls else tokens.border)
         border_width = tokens.geometry.border_px
         if self.hasFocus() and self.isEnabled():
             border = QColor(tokens.focus)
@@ -495,7 +499,7 @@ class ModernButton(QPushButton):
             )
         )
 
-        font = dither_heading_font(self.font())
+        font = dither_heading_font(self.font()) if tokens.dither_chrome else self.font()
         painter.setFont(font)
         option = QStyleOptionButton()
         option.initFrom(self)

@@ -283,13 +283,20 @@ class LevelMeterWidget(QWidget):
         painter.fillRect(track, QColor(tokens.alternate))
 
         fraction = self._fraction(self._display_db)
-        if fraction > 0.0:
+        if fraction > 0.0 and tokens.dither_chrome:
             paint_dither(
                 painter,
                 track.adjusted(1, 1, -1, -1),
                 foreground=self._glow_color(tokens, self._display_db),
                 density=fraction,
             )
+        elif fraction > 0.0:
+            fill = track.adjusted(1, 1, -1, -1)
+            if self._orientation == Qt.Orientation.Horizontal:
+                fill.setWidth(max(1, round(fill.width() * fraction)))
+            else:
+                fill.setTop(fill.bottom() - max(1, round(fill.height() * fraction)) + 1)
+            painter.fillRect(fill, self._glow_color(tokens, self._display_db))
 
         border = QColor(
             tokens.danger if self._display_db >= self._DANGER_BLEND_DB else tokens.border

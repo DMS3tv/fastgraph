@@ -24,7 +24,7 @@ class _RoundedViewportOverlay(QWidget):
         app = QApplication.instance()
         mode = app.property("fastgraphVisualMode") if app is not None else "dark"
         tokens = mode_tokens(mode)
-        radius = 0 if tokens.classic_controls else self._radius
+        radius = 0 if tokens.classic_controls or tokens.ink_controls else self._radius
         rect = self.rect().adjusted(0, 0, -1, -1)
         if rect.width() <= 0 or rect.height() <= 0:
             return

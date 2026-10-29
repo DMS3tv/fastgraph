@@ -90,9 +90,9 @@ class ToggleSwitch(QCheckBox):
 
         palette = self.palette()
         off_color = palette.color(QPalette.ColorRole.AlternateBase)
-        on_color = QColor("#2f7f49")
+        on_color = QColor(tokens.text if tokens.ink_controls else "#2f7f49")
         border_off = palette.color(QPalette.ColorRole.Mid)
-        border_on = QColor("#47a164")
+        border_on = QColor(tokens.text if tokens.ink_controls else "#47a164")
 
         bg = on_color if self.isChecked() else off_color
         border = border_on if self.isChecked() else border_off

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Joel themes.** Two minimal monochrome themes, Joel (black on white) and
+  Joel Dark (white on charcoal): Inter, square corners, no borders, soft grey
+  controls and a solid ink Measure button.
+
 ## [0.5.0] - 2026-10-01
 
 A reliability and foundation release. The highlights:

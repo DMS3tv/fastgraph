@@ -81,6 +81,8 @@ def test_theme_surface_tokens_and_brand_values() -> None:
         "FastGraph 95 Dark",
         "Hackerman 95",
         "Dither",
+        "Joel",
+        "Joel Dark",
     ]
 
 
@@ -98,7 +100,7 @@ def test_dither_is_registered_with_reusable_behavior_flags() -> None:
     assert all(
         not definition.tokens.dither_chrome
         and not definition.tokens.stipple_traces
-        and not definition.tokens.flat_controls
+        and definition.tokens.flat_controls == definition.key.startswith("joel")
         for definition in definitions
         if definition.key != "dither"
     )

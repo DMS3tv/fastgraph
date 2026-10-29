@@ -100,8 +100,10 @@ Add the definition to `THEME_DEFINITIONS` in `dms/style_tokens.py`:
 
 ```python
 THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
-    ThemeDefinition("dark", "Default dark", DARK_TOKENS),
-    ThemeDefinition("light", "Default light", LIGHT_TOKENS),
+    ThemeDefinition("joel", "Joel", JOEL_TOKENS, "joel"),
+    ThemeDefinition("joel_dark", "Joel Dark", JOEL_DARK_TOKENS, "joel"),
+    ThemeDefinition("dark", "Glow Dark", DARK_TOKENS),
+    ThemeDefinition("light", "Glow Light", LIGHT_TOKENS),
     # Keep the existing definitions here.
     ThemeDefinition("my_theme", "My Theme", MY_THEME_TOKENS),
 )
@@ -110,7 +112,7 @@ THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
 The registry order is the Settings order. This entry also makes the key valid
 for `normalize_theme()`. No separate Settings dialog change is necessary.
 
-Do not add duplicate keys. An unknown saved key falls back to Default dark.
+Do not add duplicate keys. An unknown saved key falls back to Joel, the default.
 
 ## 4. Select Optional Theme Behavior
 

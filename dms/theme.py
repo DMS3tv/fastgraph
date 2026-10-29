@@ -30,7 +30,7 @@ VALID_THEMES = {definition.key for definition in THEME_DEFINITIONS}
 
 def normalize_theme(value: object) -> str:
     value = str(value or "").strip().lower()
-    return value if value in VALID_THEMES else DARK
+    return value if value in VALID_THEMES else JOEL
 
 
 def _relative_luminance(color: QColor) -> float:

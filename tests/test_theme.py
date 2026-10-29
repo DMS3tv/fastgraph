@@ -24,8 +24,8 @@ from dms.theme import (
 
 
 def test_theme_defaults_and_validation() -> None:
-    assert normalize_theme(None) == DARK
-    assert normalize_theme("unexpected") == DARK
+    assert normalize_theme(None) == JOEL
+    assert normalize_theme("unexpected") == JOEL
     assert normalize_theme("LIGHT") == LIGHT
     assert normalize_theme("FastGraph95") == FASTGRAPH_95
     assert normalize_theme("FastGraph95_Dark") == FASTGRAPH_95_DARK
@@ -107,7 +107,7 @@ def test_theme_controller_applies_and_persists(qapp, monkeypatch, tmp_path: Path
     settings = SettingsManager()
     controller = ThemeController(qapp, settings)
 
-    assert controller.theme == DARK
+    assert controller.theme == JOEL
     controller.set_theme(LIGHT)
 
     assert controller.theme == LIGHT

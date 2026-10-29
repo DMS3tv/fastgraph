@@ -5,6 +5,9 @@
 - **Joel themes.** Two minimal monochrome themes, Joel (black on white) and
   Joel Dark (white on charcoal): Inter, square corners, no borders, soft grey
   controls and a solid ink Measure button.
+- **Joel is the default.** New installs start in Joel, and Joel and Joel Dark
+  lead the theme list. The former default themes are renamed Glow Dark and
+  Glow Light; saved selections are unaffected.
 - **One Measure graph.** Single-channel Measure shows one graph: kept sweeps in
   grey with their average on top in the theme accent, or the variation band when
   Variation is on. The sweep awaiting Keep or Fail is highlighted on top until

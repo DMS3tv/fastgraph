@@ -472,8 +472,11 @@ DEFAULT_TRACE_COLORS = [
 
 
 THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
-    ThemeDefinition("dark", "Default dark", DARK_TOKENS),
-    ThemeDefinition("light", "Default light", LIGHT_TOKENS),
+    ThemeDefinition("joel", "Joel", JOEL_TOKENS, "joel"),
+    ThemeDefinition("joel_dark", "Joel Dark", JOEL_DARK_TOKENS, "joel"),
+    # Keys stay "dark"/"light" so saved settings keep working.
+    ThemeDefinition("dark", "Glow Dark", DARK_TOKENS),
+    ThemeDefinition("light", "Glow Light", LIGHT_TOKENS),
     ThemeDefinition("fastgraph95", "FastGraph 95", FASTGRAPH_95_TOKENS, "fastgraph95"),
     ThemeDefinition(
         "fastgraph95_dark",
@@ -483,17 +486,15 @@ THEME_DEFINITIONS: tuple[ThemeDefinition, ...] = (
     ),
     ThemeDefinition("hackerman95", "Hackerman 95", HACKERMAN_95_TOKENS, "hackerman95"),
     ThemeDefinition("dither", "Dither", DITHER_TOKENS, "dither"),
-    ThemeDefinition("joel", "Joel", JOEL_TOKENS, "joel"),
-    ThemeDefinition("joel_dark", "Joel Dark", JOEL_DARK_TOKENS, "joel"),
 )
 
 _THEMES_BY_KEY = {definition.key: definition for definition in THEME_DEFINITIONS}
 
 
 def theme_definition(theme: object) -> ThemeDefinition:
-    """Return a registered theme, or the default dark theme."""
+    """Return a registered theme, or the default Joel theme."""
     key = str(theme or "").strip().lower()
-    return _THEMES_BY_KEY.get(key, _THEMES_BY_KEY["dark"])
+    return _THEMES_BY_KEY.get(key, _THEMES_BY_KEY["joel"])
 
 
 def tokens_for(theme: str = "dark", *, brand_mode: bool = False) -> ThemeTokens:

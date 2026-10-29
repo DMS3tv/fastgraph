@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULTS: dict[str, Any] = {
     "settings_schema_version": 3,
-    "theme": "dark",
+    "theme": "joel",
     "brand_mode": False,
     "sweep_duration": 2.0,
     "sample_rate": 48000,

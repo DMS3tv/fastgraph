@@ -75,14 +75,14 @@ def test_theme_surface_tokens_and_brand_values() -> None:
     assert tokens_for(DITHER) is DITHER_TOKENS
     assert tokens_for(DARK, brand_mode=True) is DARK_TOKENS
     assert [definition.label for definition in THEME_DEFINITIONS] == [
-        "Default dark",
-        "Default light",
+        "Joel",
+        "Joel Dark",
+        "Glow Dark",
+        "Glow Light",
         "FastGraph 95",
         "FastGraph 95 Dark",
         "Hackerman 95",
         "Dither",
-        "Joel",
-        "Joel Dark",
     ]
 
 
